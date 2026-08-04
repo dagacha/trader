@@ -58,6 +58,8 @@ from packages.valory.skills.decision_maker_abci.states.final_states import (
     BenchmarkingModeDisabledRound,
     FinishedDecisionMakerRound,
     FinishedDecisionRequestRound,
+    FinishedMechOnlyRequestRound,
+    FinishedMechOnlyRound,
     FinishedOmenWithdrawRound,
     FinishedPolymarketBetPlacementRound,
     FinishedPolymarketRedeemRound,
@@ -74,6 +76,9 @@ from packages.valory.skills.decision_maker_abci.states.final_states import (
 )
 from packages.valory.skills.decision_maker_abci.states.handle_failed_tx import (
     HandleFailedTxRound,
+)
+from packages.valory.skills.decision_maker_abci.states.mech_only import (
+    MechResponseRouterRound,
 )
 from packages.valory.skills.decision_maker_abci.states.omen_withdraw import (
     OmenWithdrawRound,
@@ -100,6 +105,7 @@ from packages.valory.skills.decision_maker_abci.states.randomness import Randomn
 from packages.valory.skills.decision_maker_abci.states.redeem_router import (
     RedeemRouterRound,
 )
+from packages.valory.skills.decision_maker_abci.states.trade_count import TradeCountRound
 from packages.valory.skills.decision_maker_abci.states.withdrawal_idle import (
     WithdrawalIdleRound,
 )
@@ -210,7 +216,7 @@ abci_app_transition_mapping: AbciAppTransitionMapping = {
     FinishedDecisionRequestRound: MechRequestRound,
     FinishedMechRequestRound: PreTxSettlementRound,
     FinishedMechRequestTxRound: MechResponseRound,
-    FinishedMechResponseRound: DecisionReceiveRound,
+    FinishedMechResponseRound: MechResponseRouterRound,
     FinishedMechResponseTimeoutRound: HandleFailedTxRound,
     # Mech-request skip, no-decision, and the off-chain Polymarket bet exit
     # all go straight to the staking checkpoint; any winnings produced this
@@ -227,13 +233,13 @@ abci_app_transition_mapping: AbciAppTransitionMapping = {
     FinishedOffchainMechDepositNeededRound: PreTxSettlementRound,
     FinishedOffchainMechDepositSettledRound: MechRequestRound,
     FailedOffchainMechRequestRound: HandleFailedTxRound,
-    # Omen on-chain bet placement and sell-outcome-tokens go through
-    # `PostBetUpdateRound` first, which runs the local-state bookkeeping
-    # (advancing the bet's queue status, processed timestamp, invested
-    # amount, and strategy) that the legacy design used to do as a side
-    # effect of the post-bet `RedeemBehaviour.async_act`. After bookkeeping,
-    # the cycle wraps up via the staking checkpoint.
-    FinishedBetPlacementTxRound: PostBetUpdateRound,
+    # Omen on-chain bet placement goes through TradeCountRound first (to
+    # increment the successful-placement counter), then PostBetUpdateRound
+    # runs the local-state bookkeeping (advancing the bet's queue status,
+    # processed timestamp, invested amount, and strategy). Sell-outcome-tokens
+    # bypass the counter and go straight to PostBetUpdateRound. After
+    # bookkeeping, the cycle wraps up via the staking checkpoint.
+    FinishedBetPlacementTxRound: TradeCountRound,
     FinishedSellOutcomeTokensTxRound: PostBetUpdateRound,
     FinishedPostBetUpdateRound: CallCheckpointRound,
     # Redeem terminals (Omen on-chain via tx settlement, Polymarket
@@ -269,6 +275,10 @@ abci_app_transition_mapping: AbciAppTransitionMapping = {
     # state=errored re-diverts into another sweep (auto-retry), so a
     # transient liquidity outage self-heals once the book refills.
     WithdrawalIdleRound: ResetAndPauseRound,
+    # Post-cap Mech-only flow: request batch enters the mech-interact flow;
+    # exhausted queue routes the cycle to the staking checkpoint.
+    FinishedMechOnlyRequestRound: MechRequestRound,
+    FinishedMechOnlyRound: CallCheckpointRound,
     FinishedPolymarketSwapTxPreparationRound: PreTxSettlementRound,
     FinishedPolymarketSwapTxRound: DecisionRequestRound,
     # Wrap is prepared by the decision_maker_abci, settled by the multiplexer,
@@ -298,6 +308,8 @@ abci_app_transition_mapping: AbciAppTransitionMapping = {
     # this has no effect, because the `BenchmarkingDoneRound` is terminal
     BenchmarkingDoneRound: ResetAndPauseRound,
     FinishedMechPurchaseSubscriptionRound: PreTxSettlementRound,
+    FinishedMechOnlyRequestRound: MechRequestRound,
+    FinishedMechOnlyRound: CallCheckpointRound,
 }
 
 termination_config = BackgroundAppConfig(

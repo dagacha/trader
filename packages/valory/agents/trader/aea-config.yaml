@@ -70,10 +70,10 @@ skills:
 - valory/reset_pause_abci:0.1.0:bafybeifrnmlscfiki7wojs6zasppefupd2wkjyq6orhdllfppjud7isrxi
 - valory/termination_abci:0.1.0:bafybeih6sa2ttcvvjk7rcfn7ure2ws23kcfufssb4qmluzcfvednkfpvoi
 - valory/transaction_settlement_abci:0.1.0:bafybeihizaapype5sz7vlosms3nfo6jzfj4ujycuf5uthviq2otvmw6f6m
-- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeih4yuwo3y7qxtdd56n3gtqs4ajuudsme5clbvkjlncc4revdb3cx4
+- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeihdxqlsnq6thlbowsi2yti5af7pphp6bsryltscmrw2orclj23v4u
 - valory/market_manager_abci:0.1.0:bafybeig3ak2eoimxwuupybde4napyi2jlf7pxk35se2zclikete2ni5hti
-- valory/decision_maker_abci:0.1.0:bafybeia7kthilv43ryg4hvg6v5ytexn4z6cucnuenqz7fiiviggaeup27m
-- valory/trader_abci:0.1.0:bafybeifu2bjzp5kf4op74wc6ymr34yennkolgffvomogvx56b72sj5arkq
+- valory/decision_maker_abci:0.1.0:bafybeiabqmww5wuld3n5lnyocdc6h3st6jpztn5znywslv6scwlo3tncei
+- valory/trader_abci:0.1.0:bafybeidmcjhmkedazekhwkgiocnysayp3bis42bp2b62s3qtscfaupkfry
 - valory/staking_abci:0.1.0:bafybeia6csjgex5zxdt6vymiaengu75lyzjdgfrnp65ewlghthiniquhje
 - valory/check_stop_trading_abci:0.1.0:bafybeieceomplkpt7ltjwm4piu7alm7ngx3pvqzpbuokm4smewz4373eua
 - valory/mech_interact_abci:0.1.0:bafybeifbkpgivxjexlhrptn2iaju7vyzeusevvucsin6tbjwveniykad2q
@@ -214,6 +214,8 @@ models:
       mech_activity_checker_contract: ${str:0x0000000000000000000000000000000000000000}
       mech_wrapped_native_token_address: ${MECH_WRAPPED_NATIVE_TOKEN_ADDRESS:str:0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d}
       sample_bets_closing_days: ${int:10}
+      max_trades: ${MAX_TRADES:int:0}
+      max_mech_requests_per_cycle: ${MAX_MECH_REQUESTS_PER_CYCLE:int:10}
       polymarket_spread_min: ${float:0.0}
       polymarket_spread_max: ${float:1.0}
       trading_strategy: ${str:kelly_criterion}

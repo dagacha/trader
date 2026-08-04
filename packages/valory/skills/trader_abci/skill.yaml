@@ -9,15 +9,15 @@ fingerprint:
   README.md: bafybeiab4xgadptz4mhvno4p6xvkh7p4peg7iuhotabydriu74dmj6ljga
   __init__.py: bafybeidp3c6ychle2a6gvrzznmgvkgtzkcxras42gmq3kfey4xwmxa3rom
   behaviours.py: bafybeigz7mlskyhiusv7rhon7dalzyx7w5yd64nyyjy4bmz2mju72nm7jy
-  composition.py: bafybeifelwc7ugcvtffbnqkbtxpicgbvh7ih3hu4y7e5kju5uxj4ncmave
+  composition.py: bafybeigxcxg6xtvkkniwttrs3ryohxzhtlubygrrspl4d75uwqytebkfrm
   dialogues.py: bafybeifoywfxhnowfy2ofkltizyhuiuv3tgqakwjzm7vj4y4gb2ozhjpey
-  fsm_specification.yaml: bafybeig7fywd26sybd7edhrhnyeqcyo5rfi7hdhy75eiozakmft77xinsi
+  fsm_specification.yaml: bafybeignehv2jebodhx3g4fkrd6dvyin4txlkfsunzghdpprip3azm434i
   handlers.py: bafybeidefu2bxiadnxbnlaiz2e4ntrcrraxhrvmvyd7uce3e274lfdodti
   models.py: bafybeiai3vxuyl2ydfxocaygnhbno2ef3lw4ag63turmd7fqpaleixc2xy
   tests/__init__.py: bafybeiadatapyjh3e7ucg2ehz77oms3ihrbutwb2cs2tkjehy54utwvuyi
   tests/test_agent_config_resolution.py: bafybeiflcotz6gq2dgtnzptlyyhu5fryg3c6z7gosoqmln2tlci3v4odqa
   tests/test_behaviours.py: bafybeicovtjruufnh2yd5lhfvc6pgcletuyj2s3jaz5sz55wsdo2w22xle
-  tests/test_composition.py: bafybeig36t6xlip4xyylis3n7t6wx45zftfpfk75fztlz3fgycrd3ad7na
+  tests/test_composition.py: bafybeifzufhvjuv2fxoeool2eznxj7c2q3utt5ims7crzut67dl7iaoi5q
   tests/test_dialogues.py: bafybeibatogwoj6ieapcbiwonij6vskhogc65vfv53tyauqzeyiwmnd2im
   tests/test_handlers.py: bafybeiewoqdpdnjvjirx2vpwt5u5m4qwba4easgivgsikqk7tbcp2abisq
   tests/test_models.py: bafybeianja6z3rspswf4cag3pnq2hgtsbc3hq7ndggyr2p3q6ye34wnoqq
@@ -57,8 +57,8 @@ skills:
 - valory/transaction_settlement_abci:0.1.0:bafybeihizaapype5sz7vlosms3nfo6jzfj4ujycuf5uthviq2otvmw6f6m
 - valory/termination_abci:0.1.0:bafybeih6sa2ttcvvjk7rcfn7ure2ws23kcfufssb4qmluzcfvednkfpvoi
 - valory/market_manager_abci:0.1.0:bafybeig3ak2eoimxwuupybde4napyi2jlf7pxk35se2zclikete2ni5hti
-- valory/decision_maker_abci:0.1.0:bafybeia7kthilv43ryg4hvg6v5ytexn4z6cucnuenqz7fiiviggaeup27m
-- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeih4yuwo3y7qxtdd56n3gtqs4ajuudsme5clbvkjlncc4revdb3cx4
+- valory/decision_maker_abci:0.1.0:bafybeiabqmww5wuld3n5lnyocdc6h3st6jpztn5znywslv6scwlo3tncei
+- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeihdxqlsnq6thlbowsi2yti5af7pphp6bsryltscmrw2orclj23v4u
 - valory/staking_abci:0.1.0:bafybeia6csjgex5zxdt6vymiaengu75lyzjdgfrnp65ewlghthiniquhje
 - valory/check_stop_trading_abci:0.1.0:bafybeieceomplkpt7ltjwm4piu7alm7ngx3pvqzpbuokm4smewz4373eua
 - valory/mech_interact_abci:0.1.0:bafybeifbkpgivxjexlhrptn2iaju7vyzeusevvucsin6tbjwveniykad2q
@@ -238,6 +238,8 @@ models:
       mech_chain_id: gnosis
       mech_wrapped_native_token_address: '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d'
       sample_bets_closing_days: 10
+      max_trades: 0
+      max_mech_requests_per_cycle: 10
       polymarket_spread_min: 0.0
       polymarket_spread_max: 1.0
       trading_strategy: strategy_name

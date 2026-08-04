@@ -281,6 +281,31 @@ ROUNDS_INFO = {
         "description": "Fetches the mech's information",
         "transitions": {},
     },
+    "mech_only_selection_round": {
+        "name": "Selecting open markets for post-cap Mech analysis",
+        "description": "Builds a bounded Mech request batch for open markets after the trade cap is reached.",
+        "transitions": {},
+    },
+    "mech_only_receive_round": {
+        "name": "Receiving a post-cap Mech response",
+        "description": "Consumes a Mech delivery on the capped path without opening a position.",
+        "transitions": {},
+    },
+    "mech_response_router_round": {
+        "name": "Routing a Mech response",
+        "description": "Routes a Mech delivery to the normal or the post-cap consumer based on the cap flag.",
+        "transitions": {},
+    },
+    "finished_mech_only_request_round": {
+        "name": "Post-cap Mech request batch ready",
+        "description": "A post-cap Mech request batch is ready for the mech-interact flow.",
+        "transitions": {},
+    },
+    "finished_mech_only_round": {
+        "name": "Post-cap Mech analysis complete",
+        "description": "Post-cap Mech analysis is complete and the cycle may checkpoint.",
+        "transitions": {},
+    },
     "mech_version_detection_round": {
         "name": "Detecting the priority mech's version.",
         "description": "Detect the version of the priority mech (Legacy, Legacy Mech Marketplace, Mech Marketplace)",
@@ -299,6 +324,16 @@ ROUNDS_INFO = {
     "update_achievements_round": {
         "name": "Updating agent achievements",
         "description": "Updates the achievements earned by the agent based on its performance.",
+        "transitions": {},
+    },
+    "trade_count_round": {
+        "name": "Recording a successful placement",
+        "description": "Persists the count of successfully settled Omen placements before redemption.",
+        "transitions": {},
+    },
+    "trade_cap_round": {
+        "name": "Checking the trade cap",
+        "description": "Determines whether the successful-placement cap has been reached and selects normal or capped mode.",
         "transitions": {},
     },
     "polymarket_withdraw_round": {

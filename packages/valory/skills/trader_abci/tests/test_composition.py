@@ -25,10 +25,15 @@ import pytest
 
 from packages.valory.skills.check_stop_trading_abci.rounds import CheckStopTradingRound
 from packages.valory.skills.decision_maker_abci.states.final_states import (
+    FinishedMechOnlyRequestRound,
+    FinishedMechOnlyRound,
     FinishedPostBetUpdateRound,
 )
 from packages.valory.skills.decision_maker_abci.states.handle_failed_tx import (
     HandleFailedTxRound,
+)
+from packages.valory.skills.decision_maker_abci.states.mech_only import (
+    MechResponseRouterRound,
 )
 from packages.valory.skills.decision_maker_abci.states.post_bet_update import (
     PostBetUpdateRound,
@@ -36,6 +41,7 @@ from packages.valory.skills.decision_maker_abci.states.post_bet_update import (
 from packages.valory.skills.decision_maker_abci.states.redeem_router import (
     RedeemRouterRound,
 )
+from packages.valory.skills.decision_maker_abci.states.trade_count import TradeCountRound
 from packages.valory.skills.market_manager_abci.rounds import (
     FetchMarketsRouterRound,
     FinishedMarketManagerRound,
@@ -68,7 +74,7 @@ from packages.valory.skills.tx_settlement_multiplexer_abci.rounds import (
     PreTxSettlementRound,
 )
 
-EXPECTED_TRANSITION_MAPPING_LENGTH = 61
+EXPECTED_TRANSITION_MAPPING_LENGTH = 63
 
 # Transitions introduced or rewired by the always-redeem-first /
 # `PostBetUpdateRound` FSM restructure (PR #904). Each pair must hold
@@ -83,10 +89,10 @@ RESTRUCTURE_TRANSITIONS = {
     # Redeem terminals now feed CheckStopTrading (previously the other
     # way around).
     FinishedRedeemingTxRound: CheckStopTradingRound,
-    # Omen on-chain bet / sell settle into the new PostBetUpdateRound
-    # which runs the local-state bookkeeping that legacy RedeemBehaviour
-    # used to do as a post-tx side effect.
-    FinishedBetPlacementTxRound: PostBetUpdateRound,
+    # Omen on-chain bet settlement now goes through TradeCountRound first
+    # (to increment the trade counter), which then routes to PostBetUpdateRound
+    # internally via DecisionMakerAbciApp's transition function.
+    FinishedBetPlacementTxRound: TradeCountRound,
     FinishedSellOutcomeTokensTxRound: PostBetUpdateRound,
     FinishedPostBetUpdateRound: CallCheckpointRound,
 }
@@ -159,8 +165,10 @@ def test_only_expected_edges_enter_post_bet_update() -> None:
         for src, dst in abci_app_transition_mapping.items()
         if dst is PostBetUpdateRound
     }
+    # In the merged FSM, FinishedBetPlacementTxRound goes through TradeCountRound
+    # first (to increment the counter), then TradeCountRound DONE -> PostBetUpdateRound.
+    # Only FinishedSellOutcomeTokensTxRound enters PostBetUpdateRound directly.
     assert edges_into == {
-        FinishedBetPlacementTxRound,
         FinishedSellOutcomeTokensTxRound,
     }
 
@@ -208,3 +216,46 @@ def test_termination_config_abci_app() -> None:
 def test_trader_abci_app_is_type() -> None:
     """Test that TraderAbciApp is a type (class), not an instance."""
     assert isinstance(TraderAbciApp, type)
+
+
+def test_only_omen_placement_reaches_trade_count() -> None:
+    """Only a settled Omen placement (FinishedBetPlacementTxRound) routes to the counter."""
+    assert abci_app_transition_mapping[FinishedBetPlacementTxRound] is TradeCountRound
+
+
+def test_sell_does_not_reach_trade_count() -> None:
+    """A settled sell (FinishedSellOutcomeTokensTxRound) bypasses the counter, routing to PostBetUpdateRound."""
+    assert abci_app_transition_mapping[FinishedSellOutcomeTokensTxRound] is PostBetUpdateRound
+
+
+def test_trade_count_is_only_entry_into_counter() -> None:
+    """No other finished round besides FinishedBetPlacementTxRound routes to TradeCountRound."""
+    routes_to_counter = [
+        round_cls
+        for round_cls, target in abci_app_transition_mapping.items()
+        if target is TradeCountRound
+    ]
+    assert routes_to_counter == [FinishedBetPlacementTxRound]
+
+
+def test_mech_only_request_routes_to_mech_request() -> None:
+    """The capped Mech request batch routes into the mech-interact request flow."""
+    from packages.valory.skills.mech_interact_abci.states.request import MechRequestRound
+
+    assert abci_app_transition_mapping[FinishedMechOnlyRequestRound] is MechRequestRound
+
+
+def test_mech_only_finished_routes_to_checkpoint() -> None:
+    """An exhausted post-cap queue routes the cycle to the staking checkpoint."""
+    from packages.valory.skills.staking_abci.rounds import CallCheckpointRound
+
+    assert abci_app_transition_mapping[FinishedMechOnlyRound] is CallCheckpointRound
+
+
+def test_mech_response_routes_through_router() -> None:
+    """Mech responses now enter the decision maker through the response router, not directly."""
+    from packages.valory.skills.mech_interact_abci.states.final_states import (
+        FinishedMechResponseRound,
+    )
+
+    assert abci_app_transition_mapping[FinishedMechResponseRound] is MechResponseRouterRound
