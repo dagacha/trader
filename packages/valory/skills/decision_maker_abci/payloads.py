@@ -91,11 +91,13 @@ class VotingPayload(BaseTxPayload):
 
     vote: bool
 
+
 @dataclass(frozen=True)
 class TradeCountPayload(BaseTxPayload):
     """Consensus payload recording a successfully settled Omen trade."""
 
     successful_trade_count: int
+
 
 @dataclass(frozen=True)
 class TradeCapPayload(BaseTxPayload):

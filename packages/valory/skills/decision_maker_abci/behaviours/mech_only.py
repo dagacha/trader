@@ -122,6 +122,11 @@ class MechOnlySelectionBehaviour(DecisionMakerBaseBehaviour):
                 # persisted queue from a previous period was exhausted
                 queue = self._build_queue()
 
+            # ``multisend_batch_size`` is the correct batch size here because
+            # ``MechRequestBehaviour`` processes at most that many requests per
+            # multisend tx.  Putting more in ``mech_requests`` would cause the
+            # excess to be dropped.  ``max_mech_requests_per_cycle`` caps the
+            # *total* per cycle (via the queue length), not the per-tx batch.
             batch_size = max(1, self.params.multisend_batch_size)
             batch = queue[:batch_size]
             remaining = queue[batch_size:]
@@ -132,8 +137,10 @@ class MechOnlySelectionBehaviour(DecisionMakerBaseBehaviour):
                     [asdict(m) for m in metadata], sort_keys=True
                 )
             else:
+                # The batch was non-empty but every market has disappeared
+                # (resolved between periods).  Drop the dead batch so the
+                # queue drains instead of livelocking on unrecoverable ids.
                 serialized_requests = None
-                remaining = queue  # nothing consumed; keep the queue intact
 
             serialized_queue = json.dumps(remaining)
 
@@ -173,9 +180,18 @@ class MechResponseRouterBehaviour(DecisionMakerBaseBehaviour):
     matching_round = MechResponseRouterRound
 
     def async_act(self) -> Generator:
-        """Submit the deterministic routing vote based on the persisted cap flag."""
+        """Submit a positive consensus vote; the routing decision is made in end_block.
+
+        All agents vote ``True`` so that ``VotingRound`` reaches the positive
+        threshold and emits ``done_event`` (``Event.DONE``).  The actual
+        capped-vs-normal branch is then decided in
+        ``MechResponseRouterRound.end_block`` based on the consensus-confirmed
+        ``mech_only_mode`` flag — the vote itself does not carry the routing
+        decision.  This mirrors ``RedeemRouterBehaviour`` which also always
+        votes ``True`` and lets ``end_block`` do the routing.
+        """
         payload = RedeemRouterPayload(
             sender=self.context.agent_address,
-            vote=self.synchronized_data.mech_only_mode,
+            vote=True,
         )
         yield from self.finish_behaviour(payload)

@@ -19,7 +19,7 @@ fingerprint:
   behaviours/decision_receive.py: bafybeibkjxr7th7vphmhzybaota4w7qu26mylcazuxn63q27awfbgy2mei
   behaviours/decision_request.py: bafybeicqygaiieqnjgawlrm7qo65sgncpuujw2zolmgvjjupnchtoua35q
   behaviours/handle_failed_tx.py: bafybeib7yjysksnc7azr3okvskb62svlyj2qt2t4tsiaiosi3dumdrm6d4
-  behaviours/mech_only.py: bafybeigldpiktiurt2nfnzgkyl6v2a5vjcwhmwz3m4nt4my3pwetsfed6q
+  behaviours/mech_only.py: bafybeibjc7esz7xq33ae4om3ymny36vorbixhpscf7thgz66lqhskeacqm
   behaviours/polymarket_bet_placement.py: bafybeibjkijmrcwcbh7dkulwlwutfk3m3bqoqoroggwkvpd2e7kviq2egm
   behaviours/polymarket_post_set_approval.py: bafybeihcgxt4uupyjjvrecac7ggtdanob4xmbxm3l5pzwqzjyh55nkt6ly
   behaviours/polymarket_reedem.py: bafybeiaqznmnyvnkcqq7evw6iihqm57d4qqzzclyflbqksrqggvb53lmii
@@ -41,7 +41,7 @@ fingerprint:
   io_/__init__.py: bafybeifxgmmwjqzezzn3e6keh2bfo4cyo7y5dq2ept3stfmgglbrzfl5rq
   io_/loader.py: bafybeidxedelj7gmprur3oriwdinxjnutroxttt5ltnhi6uglhxfawzgmq
   models.py: bafybeic7pzntzdd3donhh7azplgcgyklmtiwl6osiiaiiv5cq4ium4cguy
-  payloads.py: bafybeigoo2yev65smt43f5aw44jquvb5bmtrvpaas6tew4vawlt47ksroy
+  payloads.py: bafybeiaflrquaeloamodikgm4xtlkc5z6mpxdfkknybtuqdfigo372iqwm
   policy.py: bafybeici2ywdlwzpftbibv2uyzymdlraj6wovjana37ujkdwn5wna6bbvq
   redeem_info.py: bafybeibkeer54i2td5bibpu2mvf6iblnxqaaevuaa7t575y2ygkwopiofe
   rounds.py: bafybeidw7sw2i7pre3qfyz45c7t62vhx7c4pubgsxx5fz5e3lj2ujgnteq
@@ -81,7 +81,7 @@ fingerprint:
   tests/behaviours/test_decision_receive.py: bafybeid5uya3w4uipai6jsrygk7rzepth4rafejd52iih5lx2yadmmlfpq
   tests/behaviours/test_decision_request.py: bafybeiacd7ji65apfapxongatdljsne6kl3q3sgmzgkgihtevgz5hfppky
   tests/behaviours/test_handle_failed_tx.py: bafybeicu7km3os7kdlwvvmkj6avscj2gbjwtylpue7o4huiqi4pyb62p7a
-  tests/behaviours/test_mech_only.py: bafybeibr2fflru5q6ts3prn3ic5tfs3d5paoyhrjt5l7m3bxa3vfowlmcy
+  tests/behaviours/test_mech_only.py: bafybeifythbxu4gzh2ecfu4drssrgynnxxavv7hzpp6mu7ke2wpdofs73a
   tests/behaviours/test_polymarket_bet_placement.py: bafybeiey7vvk4rz2eatil4a4xukly5zjeypnbblucuxo5pmnx66dqcqfkq
   tests/behaviours/test_polymarket_post_set_approval.py: bafybeiaotjhqbay62hz4rxk2glqsqvooxdhyyskibupsimzskusmx2omau
   tests/behaviours/test_polymarket_redeem_accuracy.py: bafybeiek363wvv3tmijumamfydej42m2i3qyr35jgdmrhedqeepkypq24e

@@ -137,29 +137,11 @@ class TestMechResponseRouterBehaviour:
         """The behaviour is bound to MechResponseRouterRound."""
         assert MechResponseRouterBehaviour.matching_round is MechResponseRouterRound
 
-    def test_votes_true_when_capped(self) -> None:
-        """When mech_only_mode is True, the router votes True."""
+    def test_always_votes_true(self) -> None:
+        """The router always votes True; the routing decision is made in end_block."""
         behaviour = _make_behaviour(MechResponseRouterBehaviour)
-        with patch.object(
-            type(behaviour), "synchronized_data", new_callable=PropertyMock
-        ) as mock_sd:
-            sd = MagicMock()
-            sd.mech_only_mode = True
-            mock_sd.return_value = sd
-            payload = _run_async_act(behaviour)
+        payload = _run_async_act(behaviour)
         assert payload.vote is True
-
-    def test_votes_false_when_not_capped(self) -> None:
-        """When mech_only_mode is False, the router votes False."""
-        behaviour = _make_behaviour(MechResponseRouterBehaviour)
-        with patch.object(
-            type(behaviour), "synchronized_data", new_callable=PropertyMock
-        ) as mock_sd:
-            sd = MagicMock()
-            sd.mech_only_mode = False
-            mock_sd.return_value = sd
-            payload = _run_async_act(behaviour)
-        assert payload.vote is False
 
 
 # ---------------------------------------------------------------------------
@@ -353,4 +335,36 @@ class TestMechOnlySelectionBehaviourAsyncAct:
 
             payload = _run_async_act(behaviour)
 
+        assert payload.mech_requests is None
+
+    def test_dead_batch_dropped_not_retained(self) -> None:
+        """When batch markets have disappeared, the batch is dropped to avoid livelock."""
+        behaviour = _make_behaviour(MechOnlySelectionBehaviour)
+        behaviour.context.params.opening_margin = 100
+        behaviour.context.params.safe_voting_range = 3600
+        behaviour.context.params.multisend_batch_size = 1
+        behaviour.context.params.max_mech_requests_per_cycle = 10
+        behaviour.context.params.prompt_template.substitute.return_value = "prompt"
+
+        # bets list does NOT contain "m_gone" — the market was resolved
+        behaviour.read_bets = MagicMock()  # type: ignore[method-assign]
+        behaviour.bets = [_mock_bet(bet_id="m_alive")]
+
+        with patch.object(
+            type(behaviour), "synchronized_data", new_callable=PropertyMock
+        ) as mock_sd, patch.object(
+            type(behaviour), "synced_timestamp", new_callable=PropertyMock
+        ) as mock_ts:
+            sd = MagicMock()
+            sd.mech_only_queue = ["m_gone", "m_alive"]
+            sd.mech_tool = "tool1"
+            mock_sd.return_value = sd
+            mock_ts.return_value = 0
+
+            payload = _run_async_act(behaviour)
+
+        # "m_gone" was at the front of the queue but couldn't be resolved;
+        # it must be dropped, leaving ["m_alive"] — not retained as ["m_gone", "m_alive"]
+        remaining = json.loads(payload.mech_only_queue)
+        assert remaining == ["m_alive"]
         assert payload.mech_requests is None
