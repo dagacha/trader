@@ -44,8 +44,9 @@ from packages.valory.skills.decision_maker_abci.behaviours.base import (
     BET_AMOUNT_FIELD,
     DecisionMakerBaseBehaviour,
     MultisendBatch,
+    PUSD_POLYGON,
     TradingOperation,
-    USCDE_POLYGON,
+    USDC_E_POLYGON,
     USDC_POLYGON,
     WXDAI,
     remove_fraction_wei,
@@ -201,8 +202,8 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
                     "args": {
                         "use_acn_for_delivers": True,
                         "penalize_mech_time_window": 0,
-                        "irrelevant_tools": [],
-                        "ignored_mechs": [],
+                        "valid_mechs": [],
+                        "mech_marketplace_v1_suitable_tools": [],
                         "deliveries_lookback_days": 30,
                         "store_path": tempfile.gettempdir(),
                     }
@@ -221,6 +222,11 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
         context_mock.state.synchronized_data.db.get_strict = lambda _: 0
         self.round_sequence_mock.block_stall_deadline_expired = False
         self.behaviour = BlacklistingBehaviour(name="", skill_context=context_mock)
+        # Default to Omen — Polymarket-specific tests set this to True explicitly.
+        # Without this, the truthy MagicMock default routes `collateral_token`
+        # through the Polymarket branch and returns a MagicMock instead of the
+        # bet's field.
+        self.behaviour.params.is_running_on_polymarket = False
         self.benchmark_dir = MagicMock()
 
     @given(strategy_executables())
@@ -293,6 +299,33 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
         result = DecisionMakerBaseBehaviour.wei_to_native(wei)
         assert isinstance(result, float)
         assert result == wei / 10**18
+
+    def test_collateral_token_polymarket_uses_param(self) -> None:
+        """On Polymarket, collateral_token returns the configured pUSD param and ignores any bet.collateralToken value."""
+        behaviour = self.behaviour
+        behaviour.params.is_running_on_polymarket = True
+        behaviour.params.polymarket_collateral_address = PUSD_POLYGON
+        with mock.patch.object(behaviour, "read_bets"):
+            # Stale v1-era bet with USDC.e — must be ignored.
+            behaviour.bets = [MagicMock(collateralToken=USDC_E_POLYGON)]
+            assert behaviour.collateral_token == PUSD_POLYGON
+
+    def test_collateral_token_omen_uses_bet(self) -> None:
+        """On Omen, collateral_token returns the sampled bet's collateralToken (per-market)."""
+        behaviour = self.behaviour
+        behaviour.params.is_running_on_polymarket = False
+        with mock.patch.object(behaviour, "read_bets"):
+            behaviour.bets = [MagicMock(collateralToken=WXDAI)]
+            assert behaviour.collateral_token == WXDAI
+
+    def test_collateral_token_polymarket_no_bets(self) -> None:
+        """On Polymarket, collateral_token resolves from the param without needing a sampled bet."""
+        behaviour = self.behaviour
+        behaviour.params.is_running_on_polymarket = True
+        behaviour.params.polymarket_collateral_address = PUSD_POLYGON
+        with mock.patch.object(behaviour, "read_bets"):
+            behaviour.bets = []
+            assert behaviour.collateral_token == PUSD_POLYGON
 
     @given(st.integers(), st.booleans(), st.booleans())
     def test_collateral_amount_info(
@@ -580,24 +613,81 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
         behaviour._policy = mock_policy
         assert behaviour.policy == mock_policy
 
-    def test_is_first_period_true(self) -> None:
-        """Test `is_first_period` property when it is the first period."""
+    def _set_period_count(self, behaviour: Any, value: int) -> None:
+        """Set the period count via the `db.reset_index` attribute it actually reads."""
+        behaviour.synchronized_data.db.reset_index = value
+        # Guard: `synchronized_data.db` is a MagicMock that accepts any attribute
+        # write. If this test ever runs against a real `AbciAppDB` (where
+        # `reset_index` is a read-only @property), the assignment above would
+        # raise AttributeError. Either way, this assert keeps the test honest
+        # about which value `is_first_period` will actually read.
+        assert behaviour.synchronized_data.period_count == value
+
+    def test_is_first_period_production_first(self) -> None:
+        """In production (benchmarking disabled), period_count==0 means first period."""
         behaviour = self.behaviour
         behaviour.benchmarking_mode.enabled = False
         behaviour.shared_state.mock_data = None
-        behaviour.synchronized_data.db.get_strict = lambda key: 0  # type: ignore[method-assign]
-        result = behaviour.is_first_period
-        assert result is True
+        self._set_period_count(behaviour, 0)
+        assert behaviour.is_first_period is True
 
-    def test_is_first_period_false(self) -> None:
-        """Test `is_first_period` property when it is not the first period."""
+    def test_is_first_period_production_later(self) -> None:
+        """Production + mock_data=None + period_count>=1 must return False.
+
+        H-1 regression lock-in. Under the original buggy expression
+        ``(period_count == 0 and not enabled) or mock_data is None``
+        this returned True (the trailing OR fired unconditionally because
+        mock_data is permanently None outside benchmarking). The fixed
+        mode-split ignores mock_data in production mode, so the result
+        depends only on period_count.
+        """
+        behaviour = self.behaviour
+        behaviour.benchmarking_mode.enabled = False
+        behaviour.shared_state.mock_data = None
+        self._set_period_count(behaviour, 1)
+        assert behaviour.is_first_period is False
+
+    def test_is_first_period_production_ignores_mock_data(self) -> None:
+        """When benchmarking is disabled, the result depends only on period_count.
+
+        Setting mock_data to a non-None value must not flip is_first_period
+        in either direction.
+        """
         behaviour = self.behaviour
         behaviour.benchmarking_mode.enabled = False
         behaviour.shared_state.mock_data = MagicMock()
-        db_values = {"period_count": 1}
-        behaviour.synchronized_data.db.get_strict = lambda key: db_values.get(key, 0)  # type: ignore[method-assign]
-        result = behaviour.is_first_period
-        assert result is False
+        self._set_period_count(behaviour, 0)
+        assert behaviour.is_first_period is True
+        self._set_period_count(behaviour, 1)
+        assert behaviour.is_first_period is False
+
+    @pytest.mark.parametrize(
+        "mock_data, period_count, expected",
+        [
+            (None, 0, True),
+            (None, 5, True),
+            ("non-none-sentinel", 0, False),
+            ("non-none-sentinel", 5, False),
+        ],
+    )
+    def test_is_first_period_benchmarking(
+        self, mock_data: Any, period_count: int, expected: bool
+    ) -> None:
+        """In benchmarking, the result depends only on whether mock_data is set.
+
+        period_count is ignored on this branch — benchmarking cycles many
+        periods through mock markets, so it stops being a useful "first
+        period" signal there. mock_data is None is the uninitialised signal.
+
+        :param mock_data: value to assign to shared_state.mock_data.
+        :param period_count: value to write to db.reset_index.
+        :param expected: expected return of `is_first_period`.
+        """
+        behaviour = self.behaviour
+        behaviour.benchmarking_mode.enabled = True
+        behaviour.shared_state.mock_data = mock_data
+        self._set_period_count(behaviour, period_count)
+        assert behaviour.is_first_period is expected
 
     def test_usdc_to_native(self) -> None:
         """Test the `usdc_to_native` static method."""  # type: ignore[method-assign]
@@ -1069,7 +1159,7 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
         """Test `_get_decimals_for_token` for USDC."""
         behaviour = self.behaviour
         assert behaviour._get_decimals_for_token(USDC_POLYGON) == 6
-        assert behaviour._get_decimals_for_token(USCDE_POLYGON) == 6
+        assert behaviour._get_decimals_for_token(USDC_E_POLYGON) == 6
 
     def test_get_decimals_for_token_wxdai(self) -> None:
         """Test `_get_decimals_for_token` for wxDAI."""
@@ -1638,18 +1728,25 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
 
         behaviour.get_contract_api_response = mock_get_contract_api  # type: ignore[assignment, method-assign]
 
-        with mock.patch.object(
-            type(behaviour),
-            "market_maker_contract_address",
-            new_callable=PropertyMock,
-            return_value="0xmarket",
-        ), mock.patch.object(
-            type(behaviour), "outcome_index", new_callable=PropertyMock, return_value=0
-        ), mock.patch.object(
-            type(behaviour),  # type: ignore[no-untyped-def]
-            "investment_amount",
-            new_callable=PropertyMock,
-            return_value=1000,
+        with (
+            mock.patch.object(
+                type(behaviour),
+                "market_maker_contract_address",
+                new_callable=PropertyMock,
+                return_value="0xmarket",
+            ),
+            mock.patch.object(
+                type(behaviour),
+                "outcome_index",
+                new_callable=PropertyMock,
+                return_value=0,
+            ),
+            mock.patch.object(
+                type(behaviour),  # type: ignore[no-untyped-def]
+                "investment_amount",
+                new_callable=PropertyMock,
+                return_value=1000,
+            ),
         ):
             gen = behaviour._calc_token_amount(
                 operation=TradingOperation.BUY,
@@ -1681,18 +1778,25 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
 
         behaviour.get_contract_api_response = mock_get_contract_api  # type: ignore[assignment, method-assign]
 
-        with mock.patch.object(
-            type(behaviour),
-            "market_maker_contract_address",
-            new_callable=PropertyMock,
-            return_value="0xmarket",
-        ), mock.patch.object(
-            type(behaviour), "outcome_index", new_callable=PropertyMock, return_value=0
-        ), mock.patch.object(
-            type(behaviour),  # type: ignore[no-untyped-def]
-            "investment_amount",
-            new_callable=PropertyMock,
-            return_value=1000,
+        with (
+            mock.patch.object(
+                type(behaviour),
+                "market_maker_contract_address",
+                new_callable=PropertyMock,
+                return_value="0xmarket",
+            ),
+            mock.patch.object(
+                type(behaviour),
+                "outcome_index",
+                new_callable=PropertyMock,
+                return_value=0,
+            ),
+            mock.patch.object(
+                type(behaviour),  # type: ignore[no-untyped-def]
+                "investment_amount",
+                new_callable=PropertyMock,
+                return_value=1000,
+            ),
         ):
             gen = behaviour._calc_token_amount(
                 operation=TradingOperation.SELL,
@@ -1723,18 +1827,25 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
 
         behaviour.get_contract_api_response = mock_get_contract_api  # type: ignore[assignment, method-assign]
 
-        with mock.patch.object(
-            type(behaviour),
-            "market_maker_contract_address",
-            new_callable=PropertyMock,
-            return_value="0xmarket",
-        ), mock.patch.object(
-            type(behaviour), "outcome_index", new_callable=PropertyMock, return_value=0
-        ), mock.patch.object(
-            type(behaviour),  # type: ignore[no-untyped-def]
-            "investment_amount",
-            new_callable=PropertyMock,
-            return_value=1000,
+        with (
+            mock.patch.object(
+                type(behaviour),
+                "market_maker_contract_address",
+                new_callable=PropertyMock,
+                return_value="0xmarket",
+            ),
+            mock.patch.object(
+                type(behaviour),
+                "outcome_index",
+                new_callable=PropertyMock,
+                return_value=0,
+            ),
+            mock.patch.object(
+                type(behaviour),  # type: ignore[no-untyped-def]
+                "investment_amount",
+                new_callable=PropertyMock,
+                return_value=1000,
+            ),
         ):
             gen = behaviour._calc_token_amount(
                 operation=TradingOperation.BUY,
@@ -1764,18 +1875,25 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
 
         behaviour.get_contract_api_response = mock_get_contract_api  # type: ignore[assignment, method-assign]
 
-        with mock.patch.object(
-            type(behaviour),
-            "market_maker_contract_address",
-            new_callable=PropertyMock,
-            return_value="0xmarket",
-        ), mock.patch.object(
-            type(behaviour), "outcome_index", new_callable=PropertyMock, return_value=0
-        ), mock.patch.object(
-            type(behaviour),  # type: ignore[no-untyped-def]
-            "investment_amount",
-            new_callable=PropertyMock,
-            return_value=1000,
+        with (
+            mock.patch.object(
+                type(behaviour),
+                "market_maker_contract_address",
+                new_callable=PropertyMock,
+                return_value="0xmarket",
+            ),
+            mock.patch.object(
+                type(behaviour),
+                "outcome_index",
+                new_callable=PropertyMock,
+                return_value=0,
+            ),
+            mock.patch.object(
+                type(behaviour),  # type: ignore[no-untyped-def]
+                "investment_amount",
+                new_callable=PropertyMock,
+                return_value=1000,
+            ),
         ):
             gen = behaviour._calc_token_amount(
                 operation=TradingOperation.BUY,
@@ -1834,18 +1952,25 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
 
         behaviour.get_contract_api_response = mock_get_contract_api  # type: ignore[assignment, method-assign]
 
-        with mock.patch.object(
-            type(behaviour),
-            "market_maker_contract_address",
-            new_callable=PropertyMock,
-            return_value="0xmarket",
-        ), mock.patch.object(
-            type(behaviour), "outcome_index", new_callable=PropertyMock, return_value=0
-        ), mock.patch.object(
-            type(behaviour),  # type: ignore[no-untyped-def]
-            "investment_amount",
-            new_callable=PropertyMock,
-            return_value=1000,
+        with (
+            mock.patch.object(
+                type(behaviour),
+                "market_maker_contract_address",
+                new_callable=PropertyMock,
+                return_value="0xmarket",
+            ),
+            mock.patch.object(
+                type(behaviour),
+                "outcome_index",
+                new_callable=PropertyMock,
+                return_value=0,
+            ),
+            mock.patch.object(
+                type(behaviour),  # type: ignore[no-untyped-def]
+                "investment_amount",
+                new_callable=PropertyMock,
+                return_value=1000,
+            ),
         ):
             gen = behaviour._build_token_tx(TradingOperation.BUY)
             next(gen)
@@ -1874,18 +1999,25 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
 
         behaviour.get_contract_api_response = mock_get_contract_api  # type: ignore[assignment, method-assign]
 
-        with mock.patch.object(
-            type(behaviour),
-            "market_maker_contract_address",
-            new_callable=PropertyMock,
-            return_value="0xmarket",
-        ), mock.patch.object(
-            type(behaviour), "outcome_index", new_callable=PropertyMock, return_value=0
-        ), mock.patch.object(
-            type(behaviour),  # type: ignore[no-untyped-def]
-            "return_amount",
-            new_callable=PropertyMock,
-            return_value=2000,
+        with (
+            mock.patch.object(
+                type(behaviour),
+                "market_maker_contract_address",
+                new_callable=PropertyMock,
+                return_value="0xmarket",
+            ),
+            mock.patch.object(
+                type(behaviour),
+                "outcome_index",
+                new_callable=PropertyMock,
+                return_value=0,
+            ),
+            mock.patch.object(
+                type(behaviour),  # type: ignore[no-untyped-def]
+                "return_amount",
+                new_callable=PropertyMock,
+                return_value=2000,
+            ),
         ):
             gen = behaviour._build_token_tx(TradingOperation.SELL)
             next(gen)
@@ -1913,18 +2045,25 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
 
         behaviour.get_contract_api_response = mock_get_contract_api  # type: ignore[assignment, method-assign]
 
-        with mock.patch.object(
-            type(behaviour),
-            "market_maker_contract_address",
-            new_callable=PropertyMock,
-            return_value="0xmarket",
-        ), mock.patch.object(
-            type(behaviour), "outcome_index", new_callable=PropertyMock, return_value=0
-        ), mock.patch.object(
-            type(behaviour),  # type: ignore[no-untyped-def]
-            "investment_amount",
-            new_callable=PropertyMock,
-            return_value=1000,
+        with (
+            mock.patch.object(
+                type(behaviour),
+                "market_maker_contract_address",
+                new_callable=PropertyMock,
+                return_value="0xmarket",
+            ),
+            mock.patch.object(
+                type(behaviour),
+                "outcome_index",
+                new_callable=PropertyMock,
+                return_value=0,
+            ),
+            mock.patch.object(
+                type(behaviour),  # type: ignore[no-untyped-def]
+                "investment_amount",
+                new_callable=PropertyMock,
+                return_value=1000,
+            ),
         ):
             gen = behaviour._build_token_tx(TradingOperation.BUY)
             next(gen)
@@ -1951,18 +2090,25 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
 
         behaviour.get_contract_api_response = mock_get_contract_api  # type: ignore[assignment, method-assign]
 
-        with mock.patch.object(
-            type(behaviour),
-            "market_maker_contract_address",
-            new_callable=PropertyMock,
-            return_value="0xmarket",
-        ), mock.patch.object(
-            type(behaviour), "outcome_index", new_callable=PropertyMock, return_value=0
-        ), mock.patch.object(
-            type(behaviour),  # type: ignore[no-untyped-def]
-            "investment_amount",
-            new_callable=PropertyMock,
-            return_value=1000,
+        with (
+            mock.patch.object(
+                type(behaviour),
+                "market_maker_contract_address",
+                new_callable=PropertyMock,
+                return_value="0xmarket",
+            ),
+            mock.patch.object(
+                type(behaviour),
+                "outcome_index",
+                new_callable=PropertyMock,
+                return_value=0,
+            ),
+            mock.patch.object(
+                type(behaviour),  # type: ignore[no-untyped-def]
+                "investment_amount",
+                new_callable=PropertyMock,
+                return_value=1000,
+            ),
         ):
             gen = behaviour._build_token_tx(TradingOperation.BUY)
             next(gen)
@@ -2152,13 +2298,24 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
         behaviour.context.logger.info.assert_called()
 
     def test_collateral_amount_info_usdc(self) -> None:
-        """Test `_collateral_amount_info` with USDC token."""
+        """Test `_collateral_amount_info` with USDC.e token (v1 Polymarket collateral)."""
         behaviour = self.behaviour
         behaviour.benchmarking_mode.enabled = False
         with mock.patch.object(behaviour, "read_bets"):
-            behaviour.bets = [MagicMock(collateralToken=USDC_POLYGON)]
+            behaviour.bets = [MagicMock(collateralToken=USDC_E_POLYGON)]
             result = behaviour._collateral_amount_info(10**6)
         assert "USDC.e" in result
+
+    def test_collateral_amount_info_pusd(self) -> None:
+        """Test `_collateral_amount_info` with pUSD token (v2 Polymarket collateral)."""
+        behaviour = self.behaviour
+        behaviour.benchmarking_mode.enabled = False
+        behaviour.params.is_running_on_polymarket = True
+        behaviour.params.polymarket_collateral_address = PUSD_POLYGON
+        with mock.patch.object(behaviour, "read_bets"):
+            behaviour.bets = [MagicMock(collateralToken=PUSD_POLYGON)]
+            result = behaviour._collateral_amount_info(10**6)
+        assert "pUSD" in result
 
     def test_get_bet_amount_with_fallback_strategy(self) -> None:
         """Test `get_bet_amount` using a fallback strategy."""
@@ -2272,7 +2429,7 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
         """Test `_is_usdc` for USDC Polygon addresses."""
         behaviour = self.behaviour
         assert behaviour._is_usdc(USDC_POLYGON) is True
-        assert behaviour._is_usdc(USCDE_POLYGON) is True
+        assert behaviour._is_usdc(USDC_E_POLYGON) is True
         assert behaviour._is_usdc(WXDAI) is False
         assert behaviour._is_usdc("0xrandom") is False
 

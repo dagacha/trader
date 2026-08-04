@@ -50,6 +50,8 @@ from packages.valory.skills.decision_maker_abci.states.final_states import (
     FinishedDecisionRequestRound,
     FinishedMechOnlyRequestRound,
     FinishedMechOnlyRound,
+    FinishedPolymarketBetPlacementRound,
+    FinishedPostBetUpdateRound,
     FinishedWithoutDecisionRound,
 )
 from packages.valory.skills.decision_maker_abci.states.handle_failed_tx import (
@@ -65,6 +67,15 @@ from packages.valory.skills.decision_maker_abci.states.polymarket_bet_placement 
 )
 from packages.valory.skills.decision_maker_abci.states.polymarket_swap import (
     PolymarketSwapUsdcRound,
+)
+from packages.valory.skills.decision_maker_abci.states.polymarket_sweep import (
+    PolymarketSweepRound,
+)
+from packages.valory.skills.decision_maker_abci.states.polymarket_wrap_collateral import (
+    PolymarketWrapCollateralRound,
+)
+from packages.valory.skills.decision_maker_abci.states.post_bet_update import (
+    PostBetUpdateRound,
 )
 from packages.valory.skills.decision_maker_abci.states.randomness import (
     BenchmarkingRandomnessRound,
@@ -113,10 +124,12 @@ def test_check_benchmarking_transition(setup_app: DecisionMakerAbciApp) -> None:
         transition_function[Event.BENCHMARKING_ENABLED] == BenchmarkingRandomnessRound
     )
 
-    # Transition on benchmarking disabled
+    # Transition on benchmarking disabled routes through the wrap round so
+    # any USDC.e in the Safe is converted to pUSD before the trading cycle
+    # checks bankroll.
     assert (
         transition_function[Event.BENCHMARKING_DISABLED]
-        == BenchmarkingModeDisabledRound
+        == PolymarketWrapCollateralRound
     )
 
     # Test no majority
@@ -185,8 +198,9 @@ def test_trade_count_round_transition(setup_app: DecisionMakerAbciApp) -> None:
     """Test transitions from TradeCountRound."""
     transition_function = setup_app.transition_function[TradeCountRound]
 
-    # A successful count advances to redemption, never back to sampling or betting
-    assert transition_function[Event.DONE] == RedeemRouterRound
+    # A successful count advances to PostBetUpdateRound (post-bet bookkeeping),
+    # never back to sampling or betting
+    assert transition_function[Event.DONE] == PostBetUpdateRound
     assert transition_function[Event.NO_MAJORITY] == TradeCountRound
     assert transition_function[Event.ROUND_TIMEOUT] == TradeCountRound
 
@@ -240,12 +254,23 @@ def test_decision_receive_round_transition(setup_app: DecisionMakerAbciApp) -> N
 
 
 def test_blacklisting_round_transition(setup_app: DecisionMakerAbciApp) -> None:
-    """Test transitions from BlacklistingRound."""
+    """Test transitions from BlacklistingRound.
+
+    After the always-redeem-first restructure, blacklisting wraps up the
+    cycle directly via `FinishedWithoutDecisionRound` (which is mapped to
+    `CallCheckpointRound` at the chain level) instead of detouring through
+    the redeem router. Redemption now runs at the start of every cycle,
+    so the legacy "redeem after blacklist" detour would be a wasteful
+    no-op and would also re-enter the trading flow within the same
+    period, breaking the one-bet-attempt-per-cycle invariant.
+
+    :param setup_app: the DecisionMakerAbciApp fixture.
+    """
     app = setup_app
     transition_function = app.transition_function[BlacklistingRound]
 
-    # Test transition on done
-    assert transition_function[Event.DONE] == RedeemRouterRound
+    assert transition_function[Event.DONE] == FinishedWithoutDecisionRound
+    assert transition_function[Event.MOCK_TX] == FinishedWithoutDecisionRound
 
 
 def test_bet_placement_round_transition(setup_app: DecisionMakerAbciApp) -> None:
@@ -257,6 +282,33 @@ def test_bet_placement_round_transition(setup_app: DecisionMakerAbciApp) -> None
     assert transition_function[Event.DONE] == FinishedDecisionMakerRound
 
 
+def test_polymarket_bet_placement_round_transition(
+    setup_app: DecisionMakerAbciApp,
+) -> None:
+    """Test transitions from PolymarketBetPlacementRound.
+
+    Polymarket bets are placed off-chain via py-clob-client and therefore
+    have no on-chain tx for the multiplexer to route. After the always-
+    redeem-first restructure, the post-bet exits go directly to the new
+    `FinishedPolymarketBetPlacementRound` final state (mapped to
+    `CallCheckpointRound` at the chain level) instead of detouring
+    through the redeem router. Any winnings produced by the just-placed
+    bet will be picked up by the early-redeem at the start of the next
+    cycle.
+
+    :param setup_app: the DecisionMakerAbciApp fixture.
+    """
+    app = setup_app
+    transition_function = app.transition_function[PolymarketBetPlacementRound]
+
+    # CLOB v2: a matched order leaves funds in the DepositWallet, so success
+    # routes through the sweep round (which returns them to the Safe) before
+    # the cycle wraps up. A mocked tx still exits directly.
+    assert transition_function[Event.DONE] == PolymarketSweepRound
+    assert transition_function[Event.BET_PLACEMENT_DONE] == PolymarketSweepRound
+    assert transition_function[Event.MOCK_TX] == FinishedPolymarketBetPlacementRound
+
+
 def test_redeem_round_transition(setup_app: DecisionMakerAbciApp) -> None:
     """Test transitions from RedeemRound."""
     app = setup_app
@@ -266,12 +318,32 @@ def test_redeem_round_transition(setup_app: DecisionMakerAbciApp) -> None:
     assert transition_function[Event.DONE] == FinishedDecisionMakerRound
 
 
+def test_post_bet_update_round_transition(
+    setup_app: DecisionMakerAbciApp,
+) -> None:
+    """Test transitions from PostBetUpdateRound.
+
+    PostBetUpdateRound is the post-tx-settlement bookkeeping hook for
+    Omen `BetPlacementRound` and `SellOutcomeTokensRound`. Its DONE exit
+    must reach `FinishedPostBetUpdateRound`, which the trader_abci
+    composition then maps to `CallCheckpointRound`.
+
+    :param setup_app: the DecisionMakerAbciApp fixture.
+    """
+    app = setup_app
+    transition_function = app.transition_function[PostBetUpdateRound]
+
+    assert transition_function[Event.DONE] == FinishedPostBetUpdateRound
+
+
 def test_final_states(setup_app: DecisionMakerAbciApp) -> None:
     """Test the final states of the application."""
     app = setup_app
     assert FinishedDecisionMakerRound in app.final_states
     assert BenchmarkingModeDisabledRound in app.final_states
     assert FinishedWithoutDecisionRound in app.final_states
+    assert FinishedPolymarketBetPlacementRound in app.final_states
+    assert FinishedPostBetUpdateRound in app.final_states
 
 
 def test_mech_only_finished_rounds_are_final(setup_app: DecisionMakerAbciApp) -> None:

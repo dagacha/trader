@@ -112,6 +112,17 @@ AUTONOMY_VERSION := v$(shell autonomy --version | grep -oP '(?<=version\s)\S+')
 AEA_VERSION := v$(shell aea --version | grep -oP '(?<=version\s)\S+')
 MECH_INTERACT_VERSION := $(shell git ls-remote --tags --sort="v:refname" https://github.com/valory-xyz/mech-interact.git | tail -n1 | sed 's|.*refs/tags/||')
 
+# PyInstaller appends ``.exe`` to ``--name`` on Windows; on Linux/macOS the
+# output is extension-less. ``$(OS)`` is set to ``Windows_NT`` by Windows
+# itself (visible in cmd.exe and Git Bash) and is unset elsewhere, so this
+# keeps the path references consistent across platforms.
+EXE_SUFFIX := $(if $(filter Windows_NT,$(OS)),.exe,)
+
+# Writable scratch dir for the ``check-agent-runner`` smoke test. ``/tmp``
+# doesn't exist on native Windows, so fall back to ``%TEMP%`` (inherited
+# as ``$(TEMP)``) — both are absolute, writable, and guaranteed to exist.
+STORE_PATH_VALUE := $(if $(filter Windows_NT,$(OS)),$(TEMP),/tmp)
+
 .PHONY: sync-packages
 sync-packages:
 	@echo "Syncing packages with versions:"
@@ -126,15 +137,13 @@ sync-packages:
 
 
 
-.PHONY: poetry-install
-poetry-install: 
-
-	PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring poetry install
-	PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring poetry run pip install --upgrade --force-reinstall setuptools==59.5.0  # fix for KeyError: 'setuptools._distutils.compilers'
+.PHONY: uv-install
+uv-install:
+	uv sync --all-groups
 
 .PHONY: build-agent-runner
-build-agent-runner: poetry-install  agent
-	poetry run pyinstaller \
+build-agent-runner: uv-install  agent
+	uv run pyinstaller \
 	--collect-data eth_account \
 	--collect-all aea \
 	--collect-all autonomy \
@@ -144,15 +153,16 @@ build-agent-runner: poetry-install  agent
 	--hidden-import aea_ledger_ethereum \
 	--hidden-import aea_ledger_cosmos \
 	--hidden-import aea_ledger_ethereum_flashbots \
-	$(shell poetry run python get_pyinstaller_dependencies.py) \
-	--onefile pyinstaller/trader_bin.py \
+	$(shell uv run aea-helpers build-binary-deps ./agent) \
+	--onefile $(shell uv run python -c "import aea_helpers, os; print(os.path.join(os.path.dirname(aea_helpers.__file__), 'bin_template.py'))") \
 	--name agent_runner_bin
-	./dist/agent_runner_bin --version 
-	
+	./dist/agent_runner_bin$(EXE_SUFFIX) --help 1>/dev/null
+	./dist/agent_runner_bin$(EXE_SUFFIX) --version
+
 
 .PHONY: build-agent-runner-mac
-build-agent-runner-mac: poetry-install  agent
-	poetry run pyinstaller \
+build-agent-runner-mac: uv-install  agent
+	uv run pyinstaller \
 	--collect-data eth_account \
 	--collect-all aea \
 	--collect-all autonomy \
@@ -162,11 +172,12 @@ build-agent-runner-mac: poetry-install  agent
 	--hidden-import aea_ledger_ethereum \
 	--hidden-import aea_ledger_cosmos \
 	--hidden-import aea_ledger_ethereum_flashbots \
-	$(shell poetry run python get_pyinstaller_dependencies.py) \
-	--onefile pyinstaller/trader_bin.py \
+	$(shell uv run aea-helpers build-binary-deps ./agent) \
+	--onefile $(shell uv run python -c "import aea_helpers, os; print(os.path.join(os.path.dirname(aea_helpers.__file__), 'bin_template.py'))") \
 	--codesign-identity "${SIGN_ID}" \
 	--name agent_runner_bin
-	./dist/agent_runner_bin --version
+	./dist/agent_runner_bin$(EXE_SUFFIX) --help 1>/dev/null
+	./dist/agent_runner_bin$(EXE_SUFFIX) --version
 
 
 ./hash_id: ./packages/packages.json
@@ -175,9 +186,9 @@ build-agent-runner-mac: poetry-install  agent
 ./agent_id: ./packages/packages.json
 	cat ./packages/packages.json | jq -r '.dev | to_entries[] | select(.key | startswith("agent/")) | .key | sub("^agent/"; "")' > ./agent_id
 
-./agent:  poetry-install ./hash_id
+./agent:  uv-install ./hash_id
 	@if [ ! -d "agent" ]; then \
-		poetry run autonomy -s fetch --remote `cat ./hash_id` --alias agent; \
+		uv run autonomy -s fetch --remote `cat ./hash_id` --alias agent; \
 	fi \
 
 
@@ -188,31 +199,17 @@ build-agent-runner-mac: poetry-install  agent
 	tar czf ./agent.tar.gz ./agent
 
 ./agent/ethereum_private_key.txt: ./agent
-	poetry run bash -c "cd ./agent; autonomy  -s generate-key ethereum; autonomy -s add-key ethereum ethereum_private_key.txt; autonomy -s add-key ethereum ethereum_private_key.txt --connection; autonomy -s issue-certificates;"
+	uv run bash -c "cd ./agent; autonomy  -s generate-key ethereum; autonomy -s add-key ethereum ethereum_private_key.txt; autonomy -s add-key ethereum ethereum_private_key.txt --connection; autonomy -s issue-certificates;"
 
-
-# Configuration
-TIMEOUT := 20
-COMMAND := cd ./agent && SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_STORE_PATH=/tmp ../dist/agent_runner_bin -s run
-SEARCH_STRING := Starting AEA
-
-
-# Determine OS and set appropriate options
-UNAME_S := $(shell uname -s)
-ifeq ($(UNAME_S),Darwin)
-    # macOS specific settings
-    MKTEMP = mktemp -t tmp
-else ifeq ($(OS),Windows_NT)
-    # Windows specific settings
-    MKTEMP = echo $$(cygpath -m "$$(mktemp -t tmp.XXXXXX)")
-else
-    # Linux and other Unix-like systems
-    MKTEMP = mktemp
-endif
 
 .PHONY: check-agent-runner
 check-agent-runner:
-	python check_agent_runner.py
+	# aea-config.yaml uses a named env-var template ($${STORE_PATH:str:/data/})
+	# for the skill's store_path, so a single STORE_PATH override drives it.
+	# Path-based env vars like SKILL_..._STORE_PATH are the fallback when the
+	# template lacks an explicit var name and are silently ignored here.
+	uv run aea-helpers check-binary ./dist/agent_runner_bin$(EXE_SUFFIX) ./agent \
+	--env-var STORE_PATH=$(STORE_PATH_VALUE)
 
 .PHONY: ci-linter-checks
 ci-linter-checks:
@@ -238,8 +235,6 @@ run-agent:
 	LOG_FILE="./logs/agent_log_$$TIMESTAMP.log"; \
 	LATEST_LOG_FILE="./logs/agent_log_latest.log"; \
 	echo "Running agent and logging to $$LOG_FILE"; \
-	aea-helpers run-agent \
+	uv run aea-helpers run-agent \
 	--name valory/trader \
-	--config-replace \
-	--config-mapping config-mapping.json \
 	--connection-key 2>&1 | tee $$LOG_FILE $$LATEST_LOG_FILE'

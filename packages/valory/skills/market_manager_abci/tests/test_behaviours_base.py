@@ -256,6 +256,18 @@ class TestSendPolymarketConnectionRequest:
         assert result == response_payload
         b.context.logger.info.assert_called_once()
 
+    def test_none_response_returns_none(self) -> None:
+        """A dispatch/timeout failure (no response) returns None, not a crash."""
+        b = _make_behaviour()
+        b.context.srr_dialogues.create.return_value = (MagicMock(), MagicMock())
+        b.do_connection_request = _return_gen(None)  # type: ignore[method-assign]
+
+        gen = b.send_polymarket_connection_request({"method": "x"})
+        result = _exhaust(gen)
+
+        assert result is None
+        b.context.logger.warning.assert_called_once()
+
 
 # ===========================================================================
 # Tests for store_bets
@@ -305,10 +317,13 @@ class TestStoreBets:
         mock_file.__enter__ = MagicMock(return_value=mock_file)
         mock_file.__exit__ = MagicMock(return_value=False)
 
-        with patch(
-            "packages.valory.skills.market_manager_abci.behaviours.base.serialize_bets",
-            return_value=serialized,
-        ), patch("builtins.open", return_value=mock_file):
+        with (
+            patch(
+                "packages.valory.skills.market_manager_abci.behaviours.base.serialize_bets",
+                return_value=serialized,
+            ),
+            patch("builtins.open", return_value=mock_file),
+        ):
             b.store_bets()
 
         b.context.logger.error.assert_called_once()
@@ -321,10 +336,13 @@ class TestStoreBets:
         b.bets = [MagicMock()]
 
         serialized = '{"bets": "data"}'
-        with patch(
-            "packages.valory.skills.market_manager_abci.behaviours.base.serialize_bets",
-            return_value=serialized,
-        ), patch("builtins.open", side_effect=FileNotFoundError("no such dir")):
+        with (
+            patch(
+                "packages.valory.skills.market_manager_abci.behaviours.base.serialize_bets",
+                return_value=serialized,
+            ),
+            patch("builtins.open", side_effect=FileNotFoundError("no such dir")),
+        ):
             b.store_bets()
 
         b.context.logger.error.assert_called_once()
@@ -336,10 +354,13 @@ class TestStoreBets:
         b.bets = [MagicMock()]
 
         serialized = '{"bets": "data"}'
-        with patch(
-            "packages.valory.skills.market_manager_abci.behaviours.base.serialize_bets",
-            return_value=serialized,
-        ), patch("builtins.open", side_effect=PermissionError("forbidden")):
+        with (
+            patch(
+                "packages.valory.skills.market_manager_abci.behaviours.base.serialize_bets",
+                return_value=serialized,
+            ),
+            patch("builtins.open", side_effect=PermissionError("forbidden")),
+        ):
             b.store_bets()
 
         b.context.logger.error.assert_called_once()
@@ -351,10 +372,13 @@ class TestStoreBets:
         b.bets = [MagicMock()]
 
         serialized = '{"bets": "data"}'
-        with patch(
-            "packages.valory.skills.market_manager_abci.behaviours.base.serialize_bets",
-            return_value=serialized,
-        ), patch("builtins.open", side_effect=OSError("generic os error")):
+        with (
+            patch(
+                "packages.valory.skills.market_manager_abci.behaviours.base.serialize_bets",
+                return_value=serialized,
+            ),
+            patch("builtins.open", side_effect=OSError("generic os error")),
+        ):
             b.store_bets()
 
         b.context.logger.error.assert_called_once()
@@ -371,10 +395,13 @@ class TestStoreBets:
         mock_file.__enter__ = MagicMock(return_value=mock_file)
         mock_file.__exit__ = MagicMock(return_value=False)
 
-        with patch(
-            "packages.valory.skills.market_manager_abci.behaviours.base.serialize_bets",
-            return_value=serialized,
-        ), patch("builtins.open", return_value=mock_file):
+        with (
+            patch(
+                "packages.valory.skills.market_manager_abci.behaviours.base.serialize_bets",
+                return_value=serialized,
+            ),
+            patch("builtins.open", return_value=mock_file),
+        ):
             b.store_bets()
 
         b.context.logger.error.assert_called_once()
@@ -483,8 +510,9 @@ class TestReadBets:
         """Test that read_bets handles error opening file."""
         b = _make_behaviour()
 
-        with patch("os.path.isfile", return_value=True), patch(
-            "builtins.open", side_effect=FileNotFoundError("gone")
+        with (
+            patch("os.path.isfile", return_value=True),
+            patch("builtins.open", side_effect=FileNotFoundError("gone")),
         ):
             b.read_bets()
 
@@ -496,8 +524,9 @@ class TestReadBets:
         """Test that read_bets handles PermissionError when opening file."""
         b = _make_behaviour()
 
-        with patch("os.path.isfile", return_value=True), patch(
-            "builtins.open", side_effect=PermissionError("no access")
+        with (
+            patch("os.path.isfile", return_value=True),
+            patch("builtins.open", side_effect=PermissionError("no access")),
         ):
             b.read_bets()
 
@@ -509,14 +538,59 @@ class TestReadBets:
         """Test that read_bets handles OSError when opening file."""
         b = _make_behaviour()
 
-        with patch("os.path.isfile", return_value=True), patch(
-            "builtins.open", side_effect=OSError("os error")
+        with (
+            patch("os.path.isfile", return_value=True),
+            patch("builtins.open", side_effect=OSError("os error")),
         ):
             b.read_bets()
 
         assert b.bets == []
         b.context.logger.error.assert_called_once()
         assert "Error opening" in b.context.logger.error.call_args[0][0]
+
+    def test_read_bets_polymarket_blanks_collateral_token(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        """On Polymarket, nonempty collateralToken on loaded bets is blanked in memory.
+
+        Covers the migration case where cached v1 bets carry USDC.e and
+        transitional v2 bets carry pUSD — both become meaningless once the
+        param is the single source of truth.
+
+        :param tmp_path: pytest-provided temporary directory fixture.
+        """
+        b = _make_behaviour(tmp_path=tmp_path)  # type: ignore[no-untyped-def]
+        b.context.params.is_running_on_polymarket = True
+
+        usdc_e = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+        pusd = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB"
+        loaded = [
+            MagicMock(collateralToken=usdc_e),
+            MagicMock(collateralToken=pusd),
+        ]
+        multi_path = tmp_path / MULTI_BETS_FILENAME
+        multi_path.write_text("[]")
+
+        with patch("json.load", return_value=loaded):
+            b.read_bets()
+
+        assert [bet.collateralToken for bet in b.bets] == ["", ""]
+
+    def test_read_bets_omen_collateral_token_unchanged(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        """On Omen, collateralToken on loaded bets is preserved (per-market truth).
+
+        :param tmp_path: pytest-provided temporary directory fixture.
+        """
+        b = _make_behaviour(tmp_path=tmp_path)  # type: ignore[no-untyped-def]
+        b.context.params.is_running_on_polymarket = False
+
+        wxdai = "0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d"
+        loaded = [MagicMock(collateralToken=wxdai)]
+        multi_path = tmp_path / MULTI_BETS_FILENAME
+        multi_path.write_text("[]")
+
+        with patch("json.load", return_value=loaded):
+            b.read_bets()
+
+        assert b.bets[0].collateralToken == wxdai
 
 
 # ===========================================================================

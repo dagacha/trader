@@ -26,7 +26,7 @@ query GetOlasTraderAgent($id: ID!) {
     serviceId
     totalTraded
     totalTradedSettled
-    totalPayout
+    totalExpectedPayout
     totalFees
     totalFeesSettled
   }
@@ -65,6 +65,9 @@ query StakingService($id: ID!) {
 }
 """
 
+# ZD#919: finalization/arbitration fields are NOT on the olas_agents
+# predict-omen subgraph; they are enriched from omen_subgraph via
+# GET_OMEN_FINALIZATION_QUERY after this query returns.
 GET_TRADER_AGENT_BETS_QUERY = """
 query GetOlasTraderAgentBets($id: ID!) {
     traderAgent(id: $id) {
@@ -95,21 +98,29 @@ query GetTraderAgentPerformance($id: ID!, $first: Int, $skip: Int) {
     id
     totalTraded
     totalTradedSettled
-    totalPayout
+    totalExpectedPayout
     totalFees
     totalFeesSettled
     totalBets
     bets(first: $first, skip: $skip, orderBy: timestamp, orderDirection: desc) {
+      id
       amount
+      outcomeTokenAmount
+      blockTimestamp
       outcomeIndex
       fixedProductMarketMaker {
+        id
         currentAnswer
+        conditionIds
       }
     }
   }
 }
 """
 
+# ZD#919: finalization/arbitration fields are NOT on the olas_agents
+# predict-omen subgraph; they are enriched from omen_subgraph via
+# GET_OMEN_FINALIZATION_QUERY after this query returns.
 GET_PREDICTION_HISTORY_QUERY = """
 query GetPredictionHistory($id: ID!, $first: Int!, $skip: Int!) {
   marketParticipants(
@@ -136,7 +147,9 @@ query GetPredictionHistory($id: ID!, $first: Int!, $skip: Int!) {
     bets {
       id
       timestamp
+      blockTimestamp
       amount
+      outcomeTokenAmount
       feeAmount
       outcomeIndex
     }
@@ -296,7 +309,7 @@ query GetPolymarketTraderAgentPerformance($id: ID!) {
   traderAgent(id: $id) {
     serviceId
     totalBets
-    totalPayout
+    totalExpectedPayout
     totalTraded
     totalTradedSettled
   }
@@ -318,6 +331,7 @@ query GetPolymarketPredictionHistory($id: ID!, $first: Int!, $skip: Int!) {
       outcomeIndex
       amount
       shares
+      isBuy
       blockTimestamp
       transactionHash
       question {
@@ -388,7 +402,9 @@ query GetSpecificMarketBets($id: ID!, $betId: ID!) {
             bets(where: { id: $betId }, orderBy: timestamp, orderDirection: desc) {
               id
               timestamp
+              blockTimestamp
               amount
+              outcomeTokenAmount
               feeAmount
               outcomeIndex
               fixedProductMarketMaker {
@@ -404,7 +420,9 @@ query GetSpecificMarketBets($id: ID!, $betId: ID!) {
                   totalFees
                   bets(first: 1000) {
                     id
+                    blockTimestamp
                     amount
+                    outcomeTokenAmount
                     outcomeIndex
                   }
                 }
@@ -458,11 +476,12 @@ query GetPolymarketSpecificBet($id: ID!, $betId: ID!) {
     where: {traderAgent_: {id: $id}}
   ) {
     totalPayout
-    bets(where: {id: $betId}) {
+    bets {
       id
       outcomeIndex
       amount
       shares
+      isBuy
       blockTimestamp
       transactionHash
       question {
@@ -479,6 +498,24 @@ query GetPolymarketSpecificBet($id: ID!, $betId: ID!) {
         }
       }
     }
+  }
+}
+"""
+
+# ZD#919: Reality.eth finalization and arbitration fields are not indexed
+# on the olas_agents predict-omen subgraph (its fpmm entity is
+# FixedProductMarketMakerCreation, which has no answerFinalizedTimestamp
+# or isPendingArbitration). They are indexed on omen_subgraph
+# (omen.subgraph.autonolas.tech). Query is keyed by a list of fpmm ids
+# collected from the olas_agents response; callers chunk at 1000 (the
+# Graph id_in hard cap) and merge results back into each bet's
+# fixedProductMarketMaker dict before status helpers read them.
+GET_OMEN_FINALIZATION_QUERY = """
+query GetOmenFinalization($ids: [ID!]!) {
+  fixedProductMarketMakers(where: { id_in: $ids }, first: 1000) {
+    id
+    answerFinalizedTimestamp
+    isPendingArbitration
   }
 }
 """

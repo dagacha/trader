@@ -28,9 +28,10 @@ from unittest.mock import MagicMock, PropertyMock, patch
 from packages.valory.skills.market_manager_abci.behaviours.polymarket_fetch_market import (
     EXTREME_PRICE_THRESHOLD,
     POLYMARKET_CATEGORY_KEYWORDS,
+    PUSD_POLYGON,
     PolymarketFetchMarketBehaviour,
-    USCDE_POLYGON,
     USDC_DECIMALS,
+    USDC_E_POLYGON,
     ZERO_ADDRESS,
 )
 from packages.valory.skills.market_manager_abci.bets import Bet, QueueStatus
@@ -136,9 +137,13 @@ def _make_valid_market(**overrides: Any) -> Dict[str, Any]:
 class TestConstants:
     """Tests for module-level constants."""
 
-    def test_uscde_polygon(self) -> None:
-        """Test USCDE_POLYGON constant."""
-        assert USCDE_POLYGON == "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+    def test_usdc_e_polygon(self) -> None:
+        """USDC.e is kept as wrap source address."""
+        assert USDC_E_POLYGON == "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+
+    def test_pusd_polygon(self) -> None:
+        """Check pUSD is the v2 collateral."""
+        assert PUSD_POLYGON == "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB"
 
     def test_zero_address(self) -> None:
         """Test ZERO_ADDRESS constant."""
@@ -156,22 +161,6 @@ class TestConstants:
         """Test POLYMARKET_CATEGORY_KEYWORDS is a non-empty dict."""
         assert isinstance(POLYMARKET_CATEGORY_KEYWORDS, dict)
         assert len(POLYMARKET_CATEGORY_KEYWORDS) > 0
-
-    def test_polymarket_category_keywords_has_expected_keys(self) -> None:
-        """Test POLYMARKET_CATEGORY_KEYWORDS contains expected category keys."""
-        expected = {
-            "business",
-            "politics",
-            "science",
-            "technology",
-            "health",
-            "travel",
-            "entertainment",
-            "weather",
-            "finance",
-            "international",
-        }
-        assert set(POLYMARKET_CATEGORY_KEYWORDS.keys()) == expected
 
     def test_polymarket_category_keywords_values_are_lists(self) -> None:
         """Test that each category has a non-empty list of string keywords."""
@@ -408,6 +397,124 @@ class TestBlacklistExpiredBets:
         behaviour = self._setup([bet])
         behaviour._blacklist_expired_bets()
         assert bet.queue_status == QueueStatus.EXPIRED
+
+    def test_already_expired_bet_does_not_double_count_opening_margin(self) -> None:
+        """Pre-expired bet hitting opening_margin must NOT increment the drop counter."""
+        bet = _make_bet(id="b1", openingTimestamp=5000000500)  # within margin
+        bet.blacklist_forever()  # mark as already-expired BEFORE the call
+        behaviour = self._setup([bet])
+        behaviour._blacklist_expired_bets()
+        # bet stays expired; counter must NOT have incremented for it
+        assert bet.queue_status == QueueStatus.EXPIRED
+        log_calls = [str(c) for c in behaviour.context.logger.info.call_args_list]
+        assert any(
+            "filter=past_opening_margin_blacklist" in call and "dropped=0" in call
+            for call in log_calls
+        )
+
+    def test_already_expired_bet_does_not_double_count_extreme_price(self) -> None:
+        """Pre-expired bet hitting extreme_price must NOT increment the drop counter."""
+        bet = _make_bet(
+            id="b1",
+            openingTimestamp=9999999999,  # far future so RULE#3 doesn't fire
+            outcomeTokenMarginalPrices=[0.99, 0.01],
+        )
+        bet.blacklist_forever()
+        behaviour = self._setup([bet])
+        behaviour._blacklist_expired_bets()
+        assert bet.queue_status == QueueStatus.EXPIRED
+        log_calls = [str(c) for c in behaviour.context.logger.info.call_args_list]
+        assert any(
+            "filter=extreme_outcome_price_blacklist" in call and "dropped=0" in call
+            for call in log_calls
+        )
+
+
+# ===========================================================================
+# Tests for _is_null_or_mismatch_violation (static)
+# ===========================================================================
+
+
+class TestIsNullOrMismatchViolation:
+    """Tests for _is_null_or_mismatch_violation (mirrors Bet._validate)."""
+
+    @staticmethod
+    def _base_raw_bet() -> Dict[str, Any]:
+        """Minimal valid raw_bet that would NOT trip _validate."""
+        return dict(
+            id="b1",
+            title="Test?",
+            collateralToken="0xtoken",
+            creator="0xcreator",
+            fee=0,
+            openingTimestamp=9999999999,
+            outcomeSlotCount=2,
+            outcomeTokenAmounts=[100, 200],
+            outcomeTokenMarginalPrices=[0.5, 0.5],
+            outcomes=["Yes", "No"],
+            scaledLiquidityMeasure=10.0,
+        )
+
+    def test_valid_raw_bet_returns_false(self) -> None:
+        """A complete consistent raw_bet does NOT trip the violation check."""
+        assert (
+            PolymarketFetchMarketBehaviour._is_null_or_mismatch_violation(
+                self._base_raw_bet()
+            )
+            is False
+        )
+
+    def test_none_value_in_necessary_key_returns_true(self) -> None:
+        """A None value in any necessary key trips the check."""
+        raw = self._base_raw_bet()
+        raw["outcomes"] = None
+        assert (
+            PolymarketFetchMarketBehaviour._is_null_or_mismatch_violation(raw) is True
+        )
+
+    def test_string_null_value_returns_true(self) -> None:
+        """A literal 'null' string in any necessary key trips the check."""
+        raw = self._base_raw_bet()
+        raw["creator"] = "null"
+        assert (
+            PolymarketFetchMarketBehaviour._is_null_or_mismatch_violation(raw) is True
+        )
+
+    def test_outcomes_length_mismatch_returns_true(self) -> None:
+        """Length mismatch on outcomes vs outcomeSlotCount trips the check."""
+        raw = self._base_raw_bet()
+        raw["outcomes"] = ["Yes"]  # length 1 vs outcomeSlotCount=2
+        assert (
+            PolymarketFetchMarketBehaviour._is_null_or_mismatch_violation(raw) is True
+        )
+
+    def test_amounts_length_mismatch_returns_true(self) -> None:
+        """Length mismatch on outcomeTokenAmounts vs outcomeSlotCount trips the check."""
+        raw = self._base_raw_bet()
+        raw["outcomeTokenAmounts"] = [100]  # length 1 vs 2
+        assert (
+            PolymarketFetchMarketBehaviour._is_null_or_mismatch_violation(raw) is True
+        )
+
+    def test_prices_length_mismatch_returns_true(self) -> None:
+        """Length mismatch on outcomeTokenMarginalPrices vs outcomeSlotCount trips the check."""
+        raw = self._base_raw_bet()
+        raw["outcomeTokenMarginalPrices"] = [0.5]
+        assert (
+            PolymarketFetchMarketBehaviour._is_null_or_mismatch_violation(raw) is True
+        )
+
+    def test_zero_liquidity_alone_returns_false(self) -> None:
+        """scaledLiquidityMeasure=0 trips RULE#2, not RULE#1; check returns False."""
+        raw = self._base_raw_bet()
+        raw["scaledLiquidityMeasure"] = 0
+        # 0 is neither None nor 'null', and no length mismatch — so this
+        # classifier returns False; the bet would still be blacklisted by
+        # _check_usefulness, which is the zero-liquidity rule (counted in
+        # a separate filter row).
+        assert (
+            PolymarketFetchMarketBehaviour._is_null_or_mismatch_violation(raw) is False
+        )
 
 
 # ===========================================================================
@@ -829,6 +936,127 @@ class TestProcessChunk:
         )
         behaviour._process_chunk([raw_bet])
         assert behaviour.bets[0].market == "polymarket_client"
+
+    def test_new_bet_with_null_field_counted_as_null_or_mismatch(self) -> None:
+        """New bet blacklisted at __post_init__ via _validate goes into the null_or_mismatch bucket."""
+        behaviour = _make_behaviour()
+        behaviour._current_market = "polymarket"
+        # outcomes=None trips Bet._validate → blacklist_forever during __post_init__
+        raw_bet = dict(
+            id="b1",
+            title="Test?",
+            collateralToken="0xtoken",
+            creator="0xcreator",
+            fee=0,
+            openingTimestamp=9999999999,
+            outcomeSlotCount=2,
+            outcomeTokenAmounts=[100, 200],
+            outcomeTokenMarginalPrices=[0.5, 0.5],
+            outcomes=None,
+            scaledLiquidityMeasure=10.0,
+        )
+        behaviour._process_chunk([raw_bet])
+        assert len(behaviour.bets) == 1
+        assert behaviour.bets[0].queue_status == QueueStatus.EXPIRED
+        log_calls = [str(c) for c in behaviour.context.logger.info.call_args_list]
+        assert any(
+            "filter=null_or_mismatch_blacklist" in call and "dropped=1" in call
+            for call in log_calls
+        )
+        # And NOT counted in zero_liquidity
+        assert any(
+            "filter=zero_liquidity_blacklist" in call and "dropped=0" in call
+            for call in log_calls
+        )
+
+    def test_new_bet_with_zero_liquidity_counted_as_zero_liquidity(self) -> None:
+        """New bet blacklisted at __post_init__ via _check_usefulness goes into the zero_liquidity bucket."""
+        behaviour = _make_behaviour()
+        behaviour._current_market = "polymarket"
+        # scaledLiquidityMeasure=0 → _validate passes (no nulls / no length
+        # mismatch) but _check_usefulness blacklists during __post_init__
+        raw_bet = dict(
+            id="b1",
+            title="Test?",
+            collateralToken="0xtoken",
+            creator="0xcreator",
+            fee=0,
+            openingTimestamp=9999999999,
+            outcomeSlotCount=2,
+            outcomeTokenAmounts=[100, 200],
+            outcomeTokenMarginalPrices=[0.5, 0.5],
+            outcomes=["Yes", "No"],
+            scaledLiquidityMeasure=0.0,
+        )
+        behaviour._process_chunk([raw_bet])
+        assert len(behaviour.bets) == 1
+        assert behaviour.bets[0].queue_status == QueueStatus.EXPIRED
+        log_calls = [str(c) for c in behaviour.context.logger.info.call_args_list]
+        assert any(
+            "filter=zero_liquidity_blacklist" in call and "dropped=1" in call
+            for call in log_calls
+        )
+        assert any(
+            "filter=null_or_mismatch_blacklist" in call and "dropped=0" in call
+            for call in log_calls
+        )
+
+    def test_update_propagated_blacklist_counts(self) -> None:
+        """Alive existing + blacklisted incoming → existing is killed, counter increments."""
+        existing_bet = _make_bet(id="b1", scaledLiquidityMeasure=5.0)
+        # existing is alive at this point (not blacklisted)
+        assert existing_bet.queue_status != QueueStatus.EXPIRED
+        behaviour = _make_behaviour(bets=[existing_bet])
+        behaviour._current_market = "polymarket"
+        # Incoming bet is already blacklisted (processed_timestamp=sys.maxsize)
+        raw_bet = dict(
+            id="b1",
+            title="Test?",
+            collateralToken="0xtoken",
+            creator="0xcreator",
+            fee=0,
+            openingTimestamp=9999999999,
+            outcomeSlotCount=2,
+            outcomeTokenAmounts=[300, 400],
+            outcomeTokenMarginalPrices=[0.6, 0.4],
+            outcomes=["Yes", "No"],
+            scaledLiquidityMeasure=20.0,
+            processed_timestamp=sys.maxsize,
+        )
+        behaviour._process_chunk([raw_bet])
+        # Existing was alive; update_market_info propagated the blacklist
+        assert behaviour.bets[0].queue_status == QueueStatus.EXPIRED
+        log_calls = [str(c) for c in behaviour.context.logger.info.call_args_list]
+        assert any(
+            "filter=update_propagated_blacklist" in call and "dropped=1" in call
+            for call in log_calls
+        )
+
+    def test_update_does_not_recount_already_expired_existing(self) -> None:
+        """Already-expired existing → update_propagated counter does NOT increment."""
+        existing_bet = _make_bet(id="b1", scaledLiquidityMeasure=5.0)
+        existing_bet.blacklist_forever()  # pre-expire
+        behaviour = _make_behaviour(bets=[existing_bet])
+        behaviour._current_market = "polymarket"
+        raw_bet = dict(
+            id="b1",
+            title="Test?",
+            collateralToken="0xtoken",
+            creator="0xcreator",
+            fee=0,
+            openingTimestamp=9999999999,
+            outcomeSlotCount=2,
+            outcomeTokenAmounts=[300, 400],
+            outcomeTokenMarginalPrices=[0.6, 0.4],
+            outcomes=["Yes", "No"],
+            scaledLiquidityMeasure=20.0,
+        )
+        behaviour._process_chunk([raw_bet])
+        log_calls = [str(c) for c in behaviour.context.logger.info.call_args_list]
+        assert any(
+            "filter=update_propagated_blacklist" in call and "dropped=0" in call
+            for call in log_calls
+        )
 
 
 # ===========================================================================
@@ -1477,7 +1705,9 @@ class TestFetchMarketsFromPolymarket:
         assert result is not None
         assert len(result) == 1  # type: ignore[arg-type]
         assert result[0]["id"] == "market1"
-        assert result[0]["collateralToken"] == USCDE_POLYGON
+        # Polymarket v2: per-bet collateralToken is intentionally blank — the
+        # protocol invariant lives in `params.polymarket_collateral_address`.
+        assert result[0]["collateralToken"] == ""
 
     def test_market_missing_outcomes(self) -> None:
         """Test market with empty outcomes is skipped."""
@@ -1587,24 +1817,53 @@ class TestFetchMarketsFromPolymarket:
         assert len(result) == 1  # type: ignore[arg-type]
         assert result[0]["outcomes"] is None
         assert result[0]["queue_status"] == QueueStatus.EXPIRED
-
-    def test_invalid_category_market_blacklisted(self) -> None:
-        """Test market that fails category validation gets blacklisted."""
-        behaviour = self._setup_behaviour()
-        market = _make_valid_market(
-            question="Will cats fly?",  # not matching technology keywords
-            category_valid=False,
+        # closed_flag per-category row must carry stage=reason_bucket so
+        # downstream funnel parsers know it's a parallel reason row, not a
+        # chained filter row.
+        log_calls = [str(c) for c in behaviour.context.logger.info.call_args_list]
+        assert any(
+            "filter=closed_flag" in call and "stage=reason_bucket" in call
+            for call in log_calls
         )
-        response = {"technology": [market]}
+
+    def test_keyword_filter_disabled_warning_logged(self) -> None:
+        """Test that disabled-filter summary warning logs correct counts."""
+        # NOTE: Exists because the keyword category filter is temporarily disabled
+        # (see is_category_valid override in polymarket_fetch_market.py). The mix of
+        # valid + invalid markets exercises both branches of the would_pass_filter
+        # generator. When the filter is re-enabled, delete this test together with
+        # the disabled-filter log block.
+        behaviour = self._setup_behaviour()
+        valid = _make_valid_market(
+            question="Will AI replace jobs by 2030?"  # "ai" matches technology
+        )
+        invalid = _make_valid_market(
+            id="m2", question="Will cats fly?"  # no match in technology keywords
+        )
+        response = {"technology": [valid, invalid]}
         behaviour.send_polymarket_connection_request = _return_gen(response)  # type: ignore[method-assign]
 
-        gen = behaviour._fetch_markets_from_polymarket()
-        result = _exhaust_gen(gen)  # type: ignore[arg-type, method-assign]
+        with patch.object(behaviour.context.logger, "warning") as mock_warning:
+            gen = behaviour._fetch_markets_from_polymarket()
+            result = _exhaust_gen(gen)  # type: ignore[arg-type]
 
-        assert result is not None
-        assert len(result) == 1  # type: ignore[arg-type]
-        # _validate_markets_by_category will set category_valid based on actual check
-        # "cats fly" doesn't match technology keywords, so it will be invalid
+        disabled_calls = [
+            c
+            for c in mock_warning.call_args_list
+            if "Keyword category filter DISABLED" in str(c)
+        ]
+        assert len(disabled_calls) == 1
+        msg = str(disabled_calls[0])
+        assert "passing all 2 markets" in msg
+        assert "1/2 would pass" in msg
+
+        # Verify the disable itself — both markets must flow through as bettable.
+        # If the `is_category_valid = True` override were reverted, "Will cats fly?"
+        # would be blacklisted (outcomes=None, queue_status=EXPIRED) and these
+        # assertions would fail.
+        assert len(result) == 2  # type: ignore[arg-type]
+        assert all(r["outcomes"] is not None for r in result)  # type: ignore[index]
+        assert all(r["queue_status"] == QueueStatus.FRESH for r in result)  # type: ignore[index]
 
     def test_market_without_submitted_by_uses_zero_address(self) -> None:
         """Test that markets without submitted_by use ZERO_ADDRESS."""
@@ -1692,7 +1951,7 @@ class TestFetchMarketsFromPolymarket:
         assert bet_dict["title"] == "Will Tesla stock go up?"
         assert bet_dict["category"] == "technology"
         assert bet_dict["condition_id"] == "0xcond"
-        assert bet_dict["collateralToken"] == USCDE_POLYGON
+        assert bet_dict["collateralToken"] == ""
         assert bet_dict["creator"] == "0xsubmitter"
         assert bet_dict["fee"] == 0
         assert bet_dict["market_spread"] is None
@@ -1716,6 +1975,40 @@ class TestFetchMarketsFromPolymarket:
         assert len(result) == 1  # type: ignore[arg-type]
         bet_dict = result[0]
         assert bet_dict["market_spread"] == 0.04
+
+    def test_valid_market_reads_description(self) -> None:
+        """Test that description from the Gamma API response is included in bet_dict."""
+        behaviour = self._setup_behaviour()
+        market = _make_valid_market(
+            description="This market resolves YES if the event occurs."
+        )
+        response = {"technology": [market]}
+        behaviour.send_polymarket_connection_request = _return_gen(response)  # type: ignore[method-assign]
+
+        gen = behaviour._fetch_markets_from_polymarket()
+        result = _exhaust_gen(gen)  # type: ignore[arg-type, method-assign]
+
+        assert result is not None
+        assert len(result) == 1  # type: ignore[arg-type]
+        bet_dict = result[0]
+        assert (
+            bet_dict["description"] == "This market resolves YES if the event occurs."
+        )
+
+    def test_valid_market_missing_description_is_none(self) -> None:
+        """Test that a market without a description yields description=None in bet_dict."""
+        behaviour = self._setup_behaviour()
+        market = _make_valid_market()  # no description key
+        response = {"technology": [market]}
+        behaviour.send_polymarket_connection_request = _return_gen(response)  # type: ignore[method-assign]
+
+        gen = behaviour._fetch_markets_from_polymarket()
+        result = _exhaust_gen(gen)  # type: ignore[arg-type, method-assign]
+
+        assert result is not None
+        assert len(result) == 1  # type: ignore[arg-type]
+        bet_dict = result[0]
+        assert bet_dict["description"] is None
 
     def test_valid_market_invalid_spread_ignored(self) -> None:
         """Test that an invalid spread value results in None."""
@@ -1774,9 +2067,15 @@ class TestFetchMarketsFromPolymarket:
 
         assert result is not None
         assert len(result) == 1  # type: ignore[arg-type]
-        # Verify logger was called with category skip info
+        # Verify per-reason [POLYSTRAT] funnel line was emitted for the
+        # missing-conditionId skip (raises ValueError → invalid_or_missing
+        # bucket). The row must also carry stage=reason_bucket so downstream
+        # funnel parsers don't chain it with the main filter rows.
         log_calls = [str(c) for c in behaviour.context.logger.info.call_args_list]
-        assert any("skipped" in call.lower() for call in log_calls)
+        assert any(
+            "filter=invalid_or_missing" in call and "stage=reason_bucket" in call
+            for call in log_calls
+        )
 
     def test_market_without_id_uses_unknown(self) -> None:
         """Test market without id field uses 'unknown'."""
@@ -1862,6 +2161,7 @@ class TestUpdateBets:
         behaviour._fetch_markets_from_polymarket = _return_gen(bet_data)  # type: ignore[method-assign]
         behaviour._blacklist_expired_bets = MagicMock()  # type: ignore[method-assign]
         behaviour.context.params.opening_margin = 1000
+        behaviour.context.params.disabled_polymarket_tags = []
         type(behaviour).synced_time = PropertyMock(return_value=5000)  # type: ignore[method-assign]
         # type: ignore[method-assign]
         gen = behaviour._update_bets()
@@ -1869,6 +2169,40 @@ class TestUpdateBets:
 
         assert len(behaviour.bets) == 1
         behaviour._blacklist_expired_bets.assert_called_once()  # type: ignore[attr-defined]
+
+
+# ===========================================================================
+# Tests for poly_tags flowing from market dict to Bet object
+# ===========================================================================
+
+
+class TestPolyTagsFlowThrough:
+    """poly_tags must flow from the /events market dict onto the Bet object.
+
+    The disabled-tag policy filter lives in decision_maker_abci's sampling
+    behaviour; the data contract at this layer is that each Bet carries the
+    tags the connection attached, so the sampling filter has data to match.
+    """
+
+    def _setup_behaviour(self) -> PolymarketFetchMarketBehaviour:
+        behaviour = _make_behaviour()
+        behaviour.context.params.store_path = Path("/tmp")  # nosec B108
+        behaviour.send_polymarket_connection_request = MagicMock()  # type: ignore[method-assign]
+        return behaviour
+
+    def test_bet_dict_carries_poly_tags_from_market(self) -> None:
+        """Bet dicts built from markets include poly_tags from _poly_tags."""
+        behaviour = self._setup_behaviour()
+        market = _make_valid_market()
+        market["_poly_tags"] = ["politics", "elections"]
+        response = {"technology": [market]}
+        behaviour.send_polymarket_connection_request = _return_gen(response)  # type: ignore[method-assign]
+
+        gen = behaviour._fetch_markets_from_polymarket()
+        result = _exhaust_gen(gen)  # type: ignore[arg-type]
+        assert result is not None
+        assert len(result) == 1
+        assert result[0]["poly_tags"] == ["politics", "elections"]
 
 
 # ===========================================================================
@@ -2180,7 +2514,6 @@ class TestEdgeCases:
             "science": "NASA launched a new rocket",
             "technology": "AI is transforming the world",
             "health": "The vaccine rollout continues",
-            "travel": "The airline announced new routes",
             "entertainment": "The movie broke box office records",
             "weather": "A hurricane is approaching",
             "finance": "The stock market crashed today",

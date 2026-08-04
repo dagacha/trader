@@ -1,0 +1,33 @@
+name: genai
+author: dvilela
+version: 0.1.0
+type: connection
+description: A connection that provides a wrapper around the genai library.
+license: Apache-2.0
+aea_version: '>=2.0.0, <3.0.0'
+fingerprint:
+  __init__.py: bafybeibykfwzs46l5mrkoxqwo4toraj5us62666dqdolde5afkiajyfeua
+  connection.py: bafybeibt5hd4th3wd4zzoa2opygruonh6srvqdnycoclogkofzneugxeuq
+  readme.md: bafybeidfgj6cwh6z3jtr5wsss4f6gj37abwtknb5rm2aofyec4vympfzce
+  utils.py: bafybeig6s2c7tf67nlsou3cay4qpl6bqb6n54t4lyhihejrcdkrcapawx4
+fingerprint_ignore_patterns: []
+connections:
+- valory/x402:0.1.0:bafybeicqjg3d6pnlcsu4442qt5tmsjqkqdtc3ulvbjgoh53jyr7z3lbqqi
+protocols:
+- valory/srr:0.1.0:bafybeibfs6osw7guctdpollf4iwt4vhd6yk7ai34tqk5djuxtgowjwdjb4
+class_name: GenaiConnection
+config:
+  genai_api_key: null
+  use_x402: false
+  genai_x402_server_base_url: http://0.0.0.0:11300
+excluded_protocols: []
+restricted_to_protocols: []
+dependencies:
+  google-generativeai:
+    version: ==0.8.2
+  eth-account:
+    version: '>=0.13.0, <0.14.0'
+  pydantic:
+    version: '>=2.11.9,<3'
+is_abstract: false
+cert_requests: []

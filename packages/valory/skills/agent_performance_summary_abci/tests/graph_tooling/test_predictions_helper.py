@@ -31,6 +31,8 @@ from packages.valory.skills.agent_performance_summary_abci.graph_tooling.predict
     INVALID_ANSWER_HEX,
     PredictionsFetcher,
     WEI_TO_NATIVE,
+    allocate_fifo,
+    parse_current_answer,
 )
 
 # ---------------------------------------------------------------------------
@@ -43,6 +45,7 @@ def _make_fetcher() -> PredictionsFetcher:  # type: ignore[no-untyped-def]
     context = MagicMock()
     context.olas_agents_subgraph.url = "https://subgraph.test/olas"
     context.olas_mech_subgraph.url = "https://subgraph.test/mech"
+    context.omen_subgraph.url = "https://subgraph.test/omen"
     logger = MagicMock()
     fetcher = PredictionsFetcher(context, logger)
     return fetcher
@@ -57,10 +60,14 @@ def _make_bet(  # type: ignore[no-untyped-def]
     question: str = "Will it rain?",
     current_answer: str = "0x0000000000000000000000000000000000000000000000000000000000000000",
     current_answer_timestamp: str = "1700001000",
+    answer_finalized_timestamp: Optional[str] = "1000000000",
     outcomes: Optional[List[str]] = None,
     participants: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Create a mock bet dict for testing."""
+    # NB: default answer_finalized_timestamp is far in the past so the
+    # Bug A finalization gate is satisfied for all standard fixtures;
+    # tests that need pending-finalization should override it.
     if outcomes is None:
         outcomes = ["Yes", "No"]
     if participants is None:
@@ -72,19 +79,22 @@ def _make_bet(  # type: ignore[no-untyped-def]
                 "totalBets": 1,
             }
         ]
+    fpmm: Dict[str, Any] = {
+        "id": fpmm_id,
+        "question": question,
+        "currentAnswer": current_answer,
+        "currentAnswerTimestamp": current_answer_timestamp,
+        "outcomes": outcomes,
+        "participants": participants,
+    }
+    if answer_finalized_timestamp is not None:
+        fpmm["answerFinalizedTimestamp"] = answer_finalized_timestamp
     return {
         "id": bet_id,
         "amount": amount,
         "outcomeIndex": outcome_index,
         "timestamp": timestamp,
-        "fixedProductMarketMaker": {
-            "id": fpmm_id,
-            "question": question,
-            "currentAnswer": current_answer,
-            "currentAnswerTimestamp": current_answer_timestamp,
-            "outcomes": outcomes,
-            "participants": participants,
-        },
+        "fixedProductMarketMaker": fpmm,
     }
 
 
@@ -101,6 +111,7 @@ class TestPredictionsFetcherInit:
         fetcher = _make_fetcher()
         assert fetcher.predict_url == "https://subgraph.test/olas"
         assert fetcher.mech_url == "https://subgraph.test/mech"
+        assert fetcher.omen_url == "https://subgraph.test/omen"
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +276,466 @@ class TestFetchPredictions:
         result = fetcher.fetch_predictions("0xsafe", first=10, skip=5)
 
         assert result == {"total_predictions": 0, "items": []}
+
+
+# ---------------------------------------------------------------------------
+# _fetch_finalization_by_fpmm_ids tests
+# ---------------------------------------------------------------------------
+
+
+class TestEnrichmentWiredIntoFetchPaths:
+    """Falsifiable wiring: every olas-bet fetch path must enrich with omen_subgraph.
+
+    Removing the ``_enrich_bets_with_finalization`` call from any of these
+    paths would silently regress every Omen status to PENDING in
+    production (the olas_agents subgraph does not expose
+    ``answerFinalizedTimestamp``). These tests fail if the call is
+    removed.
+    """
+
+    @patch(
+        "packages.valory.skills.agent_performance_summary_abci.graph_tooling.predictions_helper.requests.post"
+    )
+    def test_fetch_predictions_invokes_enrichment_with_parsed_bets(
+        self, mock_post: MagicMock
+    ) -> None:
+        """fetch_predictions must enrich the bets list returned by the olas query."""
+        fetcher = _make_fetcher()
+
+        olas_response = MagicMock()
+        olas_response.status_code = 200
+        olas_response.json.return_value = {
+            "data": {
+                "marketParticipants": [
+                    {
+                        "totalPayout": "0",
+                        "totalTraded": str(WEI_TO_NATIVE),
+                        "totalFees": "0",
+                        "totalBets": 1,
+                        "fixedProductMarketMaker": {
+                            "id": "0xfpmm1",
+                            "question": "Q?",
+                            "currentAnswer": "0x1",
+                            "currentAnswerTimestamp": "1700001000",
+                            "outcomes": ["Yes", "No"],
+                        },
+                        "bets": [
+                            {
+                                "id": "b1",
+                                "amount": str(WEI_TO_NATIVE),
+                                "outcomeIndex": 0,
+                                "timestamp": "1700000000",
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+        mock_post.return_value = olas_response
+
+        with patch.object(fetcher, "_enrich_bets_with_finalization") as mock_enrich:
+            fetcher.fetch_predictions("0xsafe", first=10)
+
+        mock_enrich.assert_called_once()
+        bets_arg = mock_enrich.call_args.args[0]
+        assert isinstance(bets_arg, list)
+        assert len(bets_arg) == 1
+        assert bets_arg[0]["fixedProductMarketMaker"]["id"] == "0xfpmm1"
+
+    @patch(
+        "packages.valory.skills.agent_performance_summary_abci.graph_tooling.predictions_helper.requests.post"
+    )
+    def test_fetch_bet_from_subgraph_invokes_enrichment(
+        self, mock_post: MagicMock
+    ) -> None:
+        """_fetch_bet_from_subgraph must enrich before status helpers run."""
+        fetcher = _make_fetcher()
+
+        olas_response = MagicMock()
+        olas_response.status_code = 200
+        olas_response.json.return_value = {
+            "data": {
+                "traderAgent": {
+                    "bets": [
+                        {
+                            "id": "b1",
+                            "amount": str(WEI_TO_NATIVE),
+                            "outcomeIndex": 0,
+                            "timestamp": "1700000000",
+                            "fixedProductMarketMaker": {
+                                "id": "0xfpmm1",
+                                "question": "Q?",
+                                "currentAnswer": "0x1",
+                                "currentAnswerTimestamp": "1700001000",
+                                "outcomes": ["Yes", "No"],
+                                "participants": [{}],
+                            },
+                        }
+                    ]
+                }
+            }
+        }
+        mock_post.return_value = olas_response
+
+        with patch.object(fetcher, "_enrich_bets_with_finalization") as mock_enrich:
+            fetcher._fetch_bet_from_subgraph("b1", "0xsafe")
+
+        mock_enrich.assert_called_once()
+        bets_arg = mock_enrich.call_args.args[0]
+        assert isinstance(bets_arg, list)
+        assert any(b.get("id") == "b1" for b in bets_arg)
+
+
+class TestEnrichBetsWithFinalization:
+    """Tests for in-place enrichment of bet fpmm dicts via omen_subgraph."""
+
+    def test_empty_bets_is_no_op(self) -> None:
+        """No enrichment call when the bet list is empty."""
+        fetcher = _make_fetcher()
+        with patch.object(fetcher, "_fetch_finalization_by_fpmm_ids") as mock_fetch:
+            fetcher._enrich_bets_with_finalization([])
+        mock_fetch.assert_not_called()
+
+    def test_bets_get_enriched_in_place(self) -> None:
+        """Each bet's fpmm dict gains both fields after enrichment."""
+        fetcher = _make_fetcher()
+        bets = [
+            {"fixedProductMarketMaker": {"id": "0xaaa", "currentAnswer": "0x1"}},
+            {"fixedProductMarketMaker": {"id": "0xbbb", "currentAnswer": "0x0"}},
+        ]
+        with patch.object(
+            fetcher,
+            "_fetch_finalization_by_fpmm_ids",
+            return_value={
+                "0xaaa": {
+                    "id": "0xaaa",
+                    "answerFinalizedTimestamp": "1700000000",
+                    "isPendingArbitration": False,
+                },
+                "0xbbb": {
+                    "id": "0xbbb",
+                    "answerFinalizedTimestamp": None,
+                    "isPendingArbitration": True,
+                },
+            },
+        ):
+            fetcher._enrich_bets_with_finalization(bets)
+
+        assert (
+            bets[0]["fixedProductMarketMaker"]["answerFinalizedTimestamp"]
+            == "1700000000"
+        )
+        assert bets[0]["fixedProductMarketMaker"]["isPendingArbitration"] is False
+        assert bets[1]["fixedProductMarketMaker"]["answerFinalizedTimestamp"] is None
+        assert bets[1]["fixedProductMarketMaker"]["isPendingArbitration"] is True
+
+    def test_missing_enrichment_defaults_to_pending_semantics(self) -> None:
+        """Bets whose ids are absent from the enrichment get safe-default flags."""
+        fetcher = _make_fetcher()
+        bets = [
+            {"fixedProductMarketMaker": {"id": "0xaaa", "currentAnswer": "0x1"}},
+        ]
+        with patch.object(fetcher, "_fetch_finalization_by_fpmm_ids", return_value={}):
+            fetcher._enrich_bets_with_finalization(bets)
+
+        fpmm = bets[0]["fixedProductMarketMaker"]
+        assert fpmm["answerFinalizedTimestamp"] is None
+        assert fpmm["isPendingArbitration"] is False
+
+    def test_duplicate_fpmm_ids_deduplicated(self) -> None:
+        """Three bets sharing one fpmm id should produce a one-element fetch."""
+        fetcher = _make_fetcher()
+        bets = [
+            {"fixedProductMarketMaker": {"id": "0xaaa"}},
+            {"fixedProductMarketMaker": {"id": "0xaaa"}},
+            {"fixedProductMarketMaker": {"id": "0xaaa"}},
+        ]
+        with patch.object(
+            fetcher, "_fetch_finalization_by_fpmm_ids", return_value={}
+        ) as mock_fetch:
+            fetcher._enrich_bets_with_finalization(bets)
+
+        mock_fetch.assert_called_once()
+        called_ids = mock_fetch.call_args.args[0]
+        assert sorted(called_ids) == ["0xaaa"]
+
+    def test_mixed_bets_with_and_without_fpmm_skip_correctly(self) -> None:
+        """Skip bets whose ``fixedProductMarketMaker`` is None.
+
+        Valid bets are enriched; the None bet must not crash the loop.
+        """
+        fetcher = _make_fetcher()
+        bets: List[Dict[str, Any]] = [
+            {"fixedProductMarketMaker": {"id": "0xaaa"}},
+            {"fixedProductMarketMaker": None},  # must not crash on this
+            {"fixedProductMarketMaker": {"id": "0xbbb"}},
+        ]
+        with patch.object(
+            fetcher,
+            "_fetch_finalization_by_fpmm_ids",
+            return_value={
+                "0xaaa": {
+                    "id": "0xaaa",
+                    "answerFinalizedTimestamp": "1",
+                    "isPendingArbitration": False,
+                },
+                "0xbbb": {
+                    "id": "0xbbb",
+                    "answerFinalizedTimestamp": "2",
+                    "isPendingArbitration": True,
+                },
+            },
+        ):
+            fetcher._enrich_bets_with_finalization(bets)
+
+        assert bets[0]["fixedProductMarketMaker"]["answerFinalizedTimestamp"] == "1"
+        assert bets[1]["fixedProductMarketMaker"] is None
+        assert bets[2]["fixedProductMarketMaker"]["answerFinalizedTimestamp"] == "2"
+
+    def test_bets_without_fpmm_id_are_skipped(self) -> None:
+        """Bets with no fixedProductMarketMaker or no id are left untouched."""
+        fetcher = _make_fetcher()
+        bets: List[Dict[str, Any]] = [
+            {"fixedProductMarketMaker": None},
+            {"fixedProductMarketMaker": {}},
+            {},
+        ]
+        with patch.object(
+            fetcher, "_fetch_finalization_by_fpmm_ids", return_value={}
+        ) as mock_fetch:
+            fetcher._enrich_bets_with_finalization(bets)
+
+        # Nothing to enrich; fetcher must not be called.
+        mock_fetch.assert_not_called()
+        # And we must not crash or inject keys into a None/absent fpmm.
+        assert bets[0]["fixedProductMarketMaker"] is None
+        assert bets[1]["fixedProductMarketMaker"] == {}
+
+
+class TestFetchFinalizationByFpmmIds:
+    """Tests for the omen_subgraph enrichment helper, including chunking."""
+
+    @patch(
+        "packages.valory.skills.agent_performance_summary_abci.graph_tooling.predictions_helper.requests.post"
+    )
+    def test_empty_ids_returns_empty_dict_without_network_call(
+        self, mock_post: MagicMock
+    ) -> None:
+        """No network call when the caller passes an empty id list."""
+        fetcher = _make_fetcher()
+
+        result = fetcher._fetch_finalization_by_fpmm_ids([])
+
+        assert result == {}
+        mock_post.assert_not_called()
+
+    @patch(
+        "packages.valory.skills.agent_performance_summary_abci.graph_tooling.predictions_helper.requests.post"
+    )
+    def test_single_chunk_returns_keyed_dict(self, mock_post: MagicMock) -> None:
+        """Single-chunk input returns a dict keyed by fpmm id."""
+        fetcher = _make_fetcher()
+
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {
+            "data": {
+                "fixedProductMarketMakers": [
+                    {
+                        "id": "0xaaa",
+                        "answerFinalizedTimestamp": "1700000000",
+                        "isPendingArbitration": False,
+                    },
+                    {
+                        "id": "0xbbb",
+                        "answerFinalizedTimestamp": None,
+                        "isPendingArbitration": True,
+                    },
+                ]
+            }
+        }
+        mock_post.return_value = response
+
+        result = fetcher._fetch_finalization_by_fpmm_ids(["0xaaa", "0xbbb"])
+
+        assert result == {
+            "0xaaa": {
+                "id": "0xaaa",
+                "answerFinalizedTimestamp": "1700000000",
+                "isPendingArbitration": False,
+            },
+            "0xbbb": {
+                "id": "0xbbb",
+                "answerFinalizedTimestamp": None,
+                "isPendingArbitration": True,
+            },
+        }
+        assert mock_post.call_count == 1
+        call_variables = mock_post.call_args.kwargs["json"]["variables"]
+        assert call_variables == {"ids": ["0xaaa", "0xbbb"]}
+
+    @patch(
+        "packages.valory.skills.agent_performance_summary_abci.graph_tooling.predictions_helper.requests.post"
+    )
+    def test_chunks_at_1000(self, mock_post: MagicMock) -> None:
+        """1500 ids should split into exactly 2 calls of sizes (1000, 500)."""
+        fetcher = _make_fetcher()
+        ids = [f"0x{i:040x}" for i in range(1500)]
+
+        def _respond(*_args: Any, **kwargs: Any) -> MagicMock:
+            batch = kwargs["json"]["variables"]["ids"]
+            r = MagicMock()
+            r.status_code = 200
+            r.json.return_value = {
+                "data": {
+                    "fixedProductMarketMakers": [
+                        {
+                            "id": fpmm_id,
+                            "answerFinalizedTimestamp": "1",
+                            "isPendingArbitration": False,
+                        }
+                        for fpmm_id in batch
+                    ]
+                }
+            }
+            return r
+
+        mock_post.side_effect = _respond
+
+        result = fetcher._fetch_finalization_by_fpmm_ids(ids)
+
+        assert mock_post.call_count == 2
+        sizes = [
+            len(call.kwargs["json"]["variables"]["ids"])
+            for call in mock_post.call_args_list
+        ]
+        assert sizes == [1000, 500]
+        assert len(result) == 1500
+        assert result[ids[0]]["id"] == ids[0]
+        assert result[ids[1499]]["id"] == ids[1499]
+
+    @patch(
+        "packages.valory.skills.agent_performance_summary_abci.graph_tooling.predictions_helper.requests.post"
+    )
+    def test_subgraph_error_returns_empty_dict(self, mock_post: MagicMock) -> None:
+        """A raised exception is caught and degrades to empty dict + warning."""
+        fetcher = _make_fetcher()
+        mock_post.side_effect = RuntimeError("connection refused")
+
+        result = fetcher._fetch_finalization_by_fpmm_ids(["0xaaa"])
+
+        assert result == {}
+        assert (
+            fetcher.logger.warning.called
+        ), "must log a warning so the silent-degradation path is visible"
+
+    @patch(
+        "packages.valory.skills.agent_performance_summary_abci.graph_tooling.predictions_helper.requests.post"
+    )
+    def test_non_200_response_skips_chunk_and_logs_warning(
+        self, mock_post: MagicMock
+    ) -> None:
+        """Non-200 responses skip the chunk but do not crash other chunks."""
+        fetcher = _make_fetcher()
+        ids = [f"0x{i:040x}" for i in range(1500)]
+
+        responses = [MagicMock(status_code=500), MagicMock(status_code=200)]
+        responses[1].json.return_value = {
+            "data": {
+                "fixedProductMarketMakers": [
+                    {
+                        "id": ids[1000],
+                        "answerFinalizedTimestamp": "1",
+                        "isPendingArbitration": False,
+                    }
+                ]
+            }
+        }
+        mock_post.side_effect = responses
+
+        result = fetcher._fetch_finalization_by_fpmm_ids(ids)
+
+        assert ids[0] not in result
+        assert result[ids[1000]]["id"] == ids[1000]
+        assert fetcher.logger.warning.called
+
+    @patch(
+        "packages.valory.skills.agent_performance_summary_abci.graph_tooling.predictions_helper.requests.post"
+    )
+    def test_rows_with_missing_id_are_skipped(self, mock_post: MagicMock) -> None:
+        """Defensive: a subgraph row without an `id` is dropped from the result."""
+        fetcher = _make_fetcher()
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {
+            "data": {
+                "fixedProductMarketMakers": [
+                    {"id": None, "answerFinalizedTimestamp": "1"},
+                    {"id": "0xbbb", "answerFinalizedTimestamp": "2"},
+                ]
+            }
+        }
+        mock_post.return_value = response
+
+        result = fetcher._fetch_finalization_by_fpmm_ids(["0xaaa", "0xbbb"])
+
+        assert result == {
+            "0xbbb": {"id": "0xbbb", "answerFinalizedTimestamp": "2"},
+        }
+
+    @patch(
+        "packages.valory.skills.agent_performance_summary_abci.graph_tooling.predictions_helper.requests.post"
+    )
+    def test_malformed_json_response_skips_chunk_and_logs(
+        self, mock_post: MagicMock
+    ) -> None:
+        """A malformed JSON body is caught and degrades to empty result."""
+        fetcher = _make_fetcher()
+        bad_response = MagicMock()
+        bad_response.status_code = 200
+        bad_response.json.side_effect = ValueError("not json")
+        mock_post.return_value = bad_response
+
+        result = fetcher._fetch_finalization_by_fpmm_ids(["0xaaa"])
+
+        assert result == {}
+        assert fetcher.logger.warning.called
+
+    @patch(
+        "packages.valory.skills.agent_performance_summary_abci.graph_tooling.predictions_helper.requests.post"
+    )
+    def test_result_merges_disjoint_chunks_without_collision(
+        self, mock_post: MagicMock
+    ) -> None:
+        """Ids from different chunks are merged without overwriting each other."""
+        fetcher = _make_fetcher()
+        ids = [f"0x{i:040x}" for i in range(1500)]
+
+        def _respond(*_args: Any, **kwargs: Any) -> MagicMock:
+            batch = kwargs["json"]["variables"]["ids"]
+            r = MagicMock()
+            r.status_code = 200
+            r.json.return_value = {
+                "data": {
+                    "fixedProductMarketMakers": [
+                        {
+                            "id": fpmm_id,
+                            "answerFinalizedTimestamp": fpmm_id[-8:],
+                            "isPendingArbitration": False,
+                        }
+                        for fpmm_id in batch
+                    ]
+                }
+            }
+            return r
+
+        mock_post.side_effect = _respond
+
+        result = fetcher._fetch_finalization_by_fpmm_ids(ids)
+
+        assert len(result) == 1500
+        for fpmm_id in ids:
+            assert result[fpmm_id]["answerFinalizedTimestamp"] == fpmm_id[-8:]
 
 
 # ---------------------------------------------------------------------------
@@ -876,14 +1347,58 @@ class TestFormatPredictions:
 
         assert len(result) == 2
 
-    def test_none_fpmm(self) -> None:
-        """Test bet with None fpmm - fpmm becomes {} via 'or {}' fallback.
+    def test_output_ordered_desc_by_blocktimestamp(self) -> None:
+        """``_format_predictions`` output is DESC-by-blockTimestamp.
 
-        With fpmm_id being None, the bet is still formatted since
-        _format_single_bet is called directly (not through _build_market_context
-        which skips bets without fpmm_id). The _get_prediction_status code does
-        bet.get("fixedProductMarketMaker", {}) without 'or {}', so None fpmm
-        triggers an AttributeError. This is a known edge case in the source.
+        The FIFO allocator orders bets ASC-by-ts within each (fpmm,
+        outcomeIndex) group, then concatenates groups in input-arrival
+        order — neither preserves the strict DESC-by-ts ordering the FE
+        relies on for "newest first" display. The formatter re-sorts
+        at the consumer boundary; this test guards against the
+        post-FIFO ordering regression.
+        """
+        fetcher = _make_fetcher()
+        # 3 bets on 2 different FPMMs at distinct timestamps.
+        bets = [
+            _make_bet(
+                bet_id="old_on_a",
+                fpmm_id="market_a",
+                timestamp="1700000100",
+            ),
+            _make_bet(
+                bet_id="new_on_b",
+                fpmm_id="market_b",
+                timestamp="1700000300",
+            ),
+            _make_bet(
+                bet_id="mid_on_a",
+                fpmm_id="market_a",
+                timestamp="1700000200",
+            ),
+        ]
+        # Each bet needs blockTimestamp for the sort to pick it up
+        # (the timestamp helper field defaults to "0" otherwise).
+        for b, ts in (
+            (bets[0], "1700000100"),
+            (bets[1], "1700000300"),
+            (bets[2], "1700000200"),
+        ):
+            b["blockTimestamp"] = ts
+
+        result = fetcher._format_predictions(bets, "0xsafe")
+
+        # DESC-by-ts: newest first.
+        ids_in_order = [r["id"] for r in result]
+        assert ids_in_order == ["new_on_b", "mid_on_a", "old_on_a"]
+
+    def test_none_fpmm(self) -> None:
+        """Bets with None fpmm are filtered out by the FIFO allocator.
+
+        Pre-Phase 3, a None fpmm reached ``_get_prediction_status`` and
+        tripped an AttributeError. After Phase 3 the FIFO allocator's
+        pre-pass logs a warning and skips bets with no group key
+        (``fpmm.id`` or ``outcomeIndex`` missing), so they never reach
+        the per-bet formatter — defensive improvement.
         """
         fetcher = _make_fetcher()
         bets = [
@@ -896,12 +1411,9 @@ class TestFormatPredictions:
             }
         ]
 
-        # The source code's _get_prediction_status retrieves the
-        # fixedProductMarketMaker dict from bet, then calls
-        # .get("currentAnswer") on it which raises AttributeError.
-        # This is caught by the caller or represents a genuine edge case.
-        with pytest.raises(AttributeError):
-            fetcher._format_predictions(bets, "0xsafe")
+        result = fetcher._format_predictions(bets, "0xsafe")
+        assert result == []
+        assert fetcher.logger.warning.called
 
 
 class TestBuildMarketContext:
@@ -956,6 +1468,33 @@ class TestBuildMarketContext:
 
         assert ctx["market_1"]["winning_total_amount"] == 0.0
 
+    def test_total_payout_normalised_to_wxdai(self) -> None:
+        """Subgraph ``totalPayout`` arrives as raw wei; ctx stores wxDAI.
+
+        Pre-fix this field was stored verbatim, so the consumer
+        (``_calculate_bet_net_profit`` line 1365) multiplied a wei
+        scalar against a unitless wxDAI ratio and got a ~1e18×
+        inflated refund. Tests with hand-built ``ctx`` dicts didn't
+        catch it because they injected ``total_payout = 2.0`` directly.
+        """
+        fetcher = _make_fetcher()
+        # 5 wxDAI in raw wei.
+        bets = [
+            _make_bet(
+                participants=[
+                    {
+                        "totalPayout": str(5 * WEI_TO_NATIVE),
+                        "totalTraded": str(10 * WEI_TO_NATIVE),
+                        "totalFees": "0",
+                        "totalBets": 1,
+                    }
+                ]
+            )
+        ]
+        ctx = fetcher._build_market_context(bets)
+        assert ctx["market_1"]["total_payout"] == 5.0
+        assert ctx["market_1"]["total_traded"] == 10.0
+
     def test_invalid_answer_not_accumulated(self) -> None:
         """Test that invalid answers are not accumulated."""
         fetcher = _make_fetcher()
@@ -964,6 +1503,98 @@ class TestBuildMarketContext:
         ctx = fetcher._build_market_context(bets)
 
         assert ctx["market_1"]["winning_total_amount"] == 0.0
+
+    def test_market_context_includes_answer_finalized_ts(self) -> None:
+        """_build_market_context must store answerFinalizedTimestamp from fpmm.
+
+        Bug A: _calculate_bet_net_profit reads answer_finalized_ts from
+        market_ctx (not from the raw bet), so the context builder must
+        propagate the field.
+        """
+        fetcher = _make_fetcher()
+        bet = {
+            "id": "bet_1",
+            "amount": str(WEI_TO_NATIVE),
+            "outcomeIndex": 0,
+            "fixedProductMarketMaker": {
+                "id": "market_1",
+                "currentAnswer": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "currentAnswerTimestamp": "1700001000",
+                "answerFinalizedTimestamp": "1700087400",
+                "outcomes": ["Yes", "No"],
+                "participants": [{"totalPayout": "0", "totalTraded": "0"}],
+            },
+        }
+
+        ctx = fetcher._build_market_context([bet])
+
+        assert ctx["market_1"]["answer_finalized_ts"] == "1700087400"
+
+    def test_market_context_finalized_ts_missing_is_none(self) -> None:
+        """When fpmm omits answerFinalizedTimestamp the ctx entry is None."""
+        fetcher = _make_fetcher()
+        bet = {
+            "id": "bet_1",
+            "amount": str(WEI_TO_NATIVE),
+            "outcomeIndex": 0,
+            "fixedProductMarketMaker": {
+                "id": "market_1",
+                "currentAnswer": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "currentAnswerTimestamp": "1700001000",
+                "outcomes": ["Yes", "No"],
+                "participants": [{"totalPayout": "0", "totalTraded": "0"}],
+            },
+        }
+
+        ctx = fetcher._build_market_context([bet])
+
+        assert ctx["market_1"]["answer_finalized_ts"] is None
+
+    def test_market_context_includes_is_pending_arbitration(self) -> None:
+        """ZD#919: ctx must carry isPendingArbitration.
+
+        The net-profit gate short-circuits on this flag without
+        re-reading the fpmm dict.
+        """
+        fetcher = _make_fetcher()
+        bet = {
+            "id": "bet_1",
+            "amount": str(WEI_TO_NATIVE),
+            "outcomeIndex": 0,
+            "fixedProductMarketMaker": {
+                "id": "market_1",
+                "currentAnswer": "0x0",
+                "currentAnswerTimestamp": "1700001000",
+                "answerFinalizedTimestamp": "1700087400",
+                "isPendingArbitration": True,
+                "outcomes": ["Yes", "No"],
+                "participants": [{"totalPayout": "0", "totalTraded": "0"}],
+            },
+        }
+
+        ctx = fetcher._build_market_context([bet])
+
+        assert ctx["market_1"]["is_pending_arbitration"] is True
+
+    def test_market_context_arbitration_defaults_to_false(self) -> None:
+        """Missing isPendingArbitration is treated as False (safe default)."""
+        fetcher = _make_fetcher()
+        bet = {
+            "id": "bet_1",
+            "amount": str(WEI_TO_NATIVE),
+            "outcomeIndex": 0,
+            "fixedProductMarketMaker": {
+                "id": "market_1",
+                "currentAnswer": "0x0",
+                "currentAnswerTimestamp": "1700001000",
+                "outcomes": ["Yes", "No"],
+                "participants": [{"totalPayout": "0", "totalTraded": "0"}],
+            },
+        }
+
+        ctx = fetcher._build_market_context([bet])
+
+        assert ctx["market_1"]["is_pending_arbitration"] is False
 
     def test_null_answer_not_accumulated(self) -> None:
         """Test that null answers are not accumulated."""
@@ -1055,56 +1686,149 @@ class TestCalculateBetNetProfit:
         assert result == (0.0, None)
 
     def test_invalid_market_with_payout(self) -> None:
-        """Test invalid market with refund."""
+        """Test invalid market with refund (finalization in the past).
+
+        Post-FIFO the refund is pro-rated by ``remaining_cost /
+        participant_remaining_cost``; legacy callers without explicit
+        ``participant_remaining_cost`` fall back to this buy's own
+        remaining cost (1.0 / 1.0 = 1.0 ratio) so the refund equals
+        ``total_payout`` and the loss is ``total_payout - cost``.
+        """
         fetcher = _make_fetcher()
         ctx = {
             "current_answer": INVALID_ANSWER_HEX,
+            "answer_finalized_ts": "1700000000",
             "total_payout": 2.0,
             "total_traded": 4.0,
         }
-        result = fetcher._calculate_bet_net_profit({"outcomeIndex": 0}, ctx, 1.0)
+        bet = {"outcomeIndex": 0, "amount": str(WEI_TO_NATIVE)}  # 1 wxDAI cost
+        with patch.object(fetcher, "_now", return_value=1700001000):
+            result = fetcher._calculate_bet_net_profit(bet, ctx, 1.0)
 
-        # refund_share = 2.0 * (1.0 / 4.0) = 0.5
-        # net_profit = 0.5 - 1.0 = -0.5
-        assert result == (-0.5, 0.5)
+        # FIFO fallback: participant_remaining_cost == original_cost (1.0).
+        # refund_share = 2.0 * (1.0 / 1.0) = 2.0.
+        # net_profit = 2.0 - 1.0 = 1.0.
+        assert result == (1.0, 2.0)
 
     def test_invalid_market_zero_payout(self) -> None:
-        """Test invalid market with zero payout."""
+        """Test invalid market with zero payout (finalization in the past)."""
         fetcher = _make_fetcher()
         ctx = {
             "current_answer": INVALID_ANSWER_HEX,
+            "answer_finalized_ts": "1700000000",
             "total_payout": 0,
             "total_traded": 0,
         }
-        result = fetcher._calculate_bet_net_profit({"outcomeIndex": 0}, ctx, 1.0)
+        with patch.object(fetcher, "_now", return_value=1700001000):
+            result = fetcher._calculate_bet_net_profit({"outcomeIndex": 0}, ctx, 1.0)
 
         assert result == (0.0, None)
 
-    def test_losing_bet(self) -> None:
-        """Test a losing bet."""
+    def test_invalid_pending_finalization_returns_zero_none(self) -> None:
+        """Sentinel + future finalization -> (0.0, None) regardless of payout (Bug A)."""
         fetcher = _make_fetcher()
         ctx = {
-            "current_answer": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "current_answer": INVALID_ANSWER_HEX,
+            "answer_finalized_ts": "1700100000",
             "total_payout": 2.0,
-            "total_traded": 2.0,
-            "winning_total_amount": 1.0,
+            "total_traded": 4.0,
         }
-        # outcome_index 1 != correct answer 0
-        result = fetcher._calculate_bet_net_profit({"outcomeIndex": 1}, ctx, 1.0)
+        with patch.object(fetcher, "_now", return_value=1700000000):
+            result = fetcher._calculate_bet_net_profit({"outcomeIndex": 0}, ctx, 1.0)
 
-        assert result == (-1.0, 0.0)
+        assert result == (0.0, None)
 
-    def test_winning_bet_with_payout(self) -> None:
-        """Test a winning bet with payout."""
+    def test_resolved_pending_finalization_returns_zero_none(self) -> None:
+        """Non-sentinel + future finalization -> (0.0, None) (still in dispute window)."""
         fetcher = _make_fetcher()
         ctx = {
             "current_answer": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "answer_finalized_ts": "1700100000",
             "total_payout": 2.0,
             "total_traded": 1.0,
             "winning_total_amount": 1.0,
         }
-        result = fetcher._calculate_bet_net_profit({"outcomeIndex": 0}, ctx, 1.0)
+        with patch.object(fetcher, "_now", return_value=1700000000):
+            result = fetcher._calculate_bet_net_profit({"outcomeIndex": 0}, ctx, 1.0)
 
+        assert result == (0.0, None)
+
+    def test_malformed_current_answer_returns_zero_none(self) -> None:
+        """Malformed current_answer + finalized -> (0.0, None) (defensive)."""
+        fetcher = _make_fetcher()
+        ctx = {
+            "current_answer": "0xZZ",
+            "answer_finalized_ts": "1700000000",
+            "total_payout": 2.0,
+            "total_traded": 1.0,
+            "winning_total_amount": 1.0,
+        }
+        with patch.object(fetcher, "_now", return_value=1700001000):
+            result = fetcher._calculate_bet_net_profit({"outcomeIndex": 0}, ctx, 1.0)
+
+        assert result == (0.0, None)
+
+    def test_malformed_current_answer_logs_warning(self) -> None:
+        """Log a warning on malformed currentAnswer (symmetric observability).
+
+        ``_calculate_bet_net_profit`` must log a warning on malformed
+        ``currentAnswer``, matching ``_get_prediction_status``'s behaviour.
+        Without this, a subgraph data-quality regression would surface
+        in one helper and not the other.
+        """
+        fetcher = _make_fetcher()
+        ctx = {
+            "current_answer": "0xZZ",
+            "answer_finalized_ts": "1700000000",
+            "total_payout": 2.0,
+            "total_traded": 1.0,
+            "winning_total_amount": 1.0,
+        }
+        with patch.object(fetcher, "_now", return_value=1700001000):
+            fetcher._calculate_bet_net_profit(
+                {"id": "bet_1", "outcomeIndex": 0}, ctx, 1.0
+            )
+
+        assert fetcher.logger.warning.called, (
+            "_calculate_bet_net_profit must log a warning on malformed "
+            "currentAnswer so data-quality regressions are diagnosable"
+        )
+
+    def test_losing_bet(self) -> None:
+        """Losing bet: loss = remaining_cost (the unsold position is worthless).
+
+        For a legacy raw bet (no FIFO sells), ``remaining_cost`` falls back to
+        the buy's ``original_cost``, so the loss equals the full cost basis
+        and ``payout`` is None (no realized proceeds).
+        """
+        fetcher = _make_fetcher()
+        ctx = {
+            "current_answer": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "answer_finalized_ts": "1000000000",
+            "total_payout": 2.0,
+            "total_traded": 2.0,
+            "winning_total_amount": 1.0,
+        }
+        bet = {"outcomeIndex": 1, "amount": str(WEI_TO_NATIVE)}  # 1 wxDAI cost
+        # outcome_index 1 != correct answer 0
+        result = fetcher._calculate_bet_net_profit(bet, ctx, 1.0)
+
+        assert result == (-1.0, None)
+
+    def test_winning_bet_with_payout(self) -> None:
+        """Winning bet: payout_share = total_payout * remaining_cost/winning_total."""
+        fetcher = _make_fetcher()
+        ctx = {
+            "current_answer": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "answer_finalized_ts": "1000000000",
+            "total_payout": 2.0,
+            "total_traded": 1.0,
+            "winning_total_amount": 1.0,
+        }
+        bet = {"outcomeIndex": 0, "amount": str(WEI_TO_NATIVE)}  # 1 wxDAI cost
+        result = fetcher._calculate_bet_net_profit(bet, ctx, 1.0)
+
+        # FIFO fallback: remaining_cost = 1.0
         # payout_share = 2.0 * (1.0 / 1.0) = 2.0
         # net_profit = 2.0 - 1.0 = 1.0
         assert result == (1.0, 2.0)
@@ -1114,6 +1838,7 @@ class TestCalculateBetNetProfit:
         fetcher = _make_fetcher()
         ctx = {
             "current_answer": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "answer_finalized_ts": "1000000000",
             "total_payout": 0,
             "total_traded": 1.0,
             "winning_total_amount": 0,
@@ -1123,14 +1848,16 @@ class TestCalculateBetNetProfit:
         assert result == (0.0, None)
 
     def test_invalid_market_zero_total_traded_only(self) -> None:
-        """Test invalid market with non-zero payout but zero traded."""
+        """Test invalid market with non-zero payout but zero traded (finalized)."""
         fetcher = _make_fetcher()
         ctx = {
             "current_answer": INVALID_ANSWER_HEX,
+            "answer_finalized_ts": "1700000000",
             "total_payout": 2.0,
             "total_traded": 0,
         }
-        result = fetcher._calculate_bet_net_profit({"outcomeIndex": 0}, ctx, 1.0)
+        with patch.object(fetcher, "_now", return_value=1700001000):
+            result = fetcher._calculate_bet_net_profit({"outcomeIndex": 0}, ctx, 1.0)
 
         assert result == (0.0, None)
 
@@ -1139,6 +1866,7 @@ class TestCalculateBetNetProfit:
         fetcher = _make_fetcher()
         ctx = {
             "current_answer": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "answer_finalized_ts": "1000000000",
             "total_payout": 2.0,
             "total_traded": 1.0,
             "winning_total_amount": 0,
@@ -1166,23 +1894,111 @@ class TestGetPredictionStatus:
         assert result == "pending"
 
     def test_invalid_market(self) -> None:
-        """Test invalid market."""
+        """Sentinel + finalization in the past -> invalid."""
+        fetcher = _make_fetcher()
+        bet = {
+            "fixedProductMarketMaker": {
+                "currentAnswer": INVALID_ANSWER_HEX,
+                "answerFinalizedTimestamp": "1700000000",
+            },
+            "outcomeIndex": 0,
+        }
+
+        with patch.object(fetcher, "_now", return_value=1700001000):
+            result = fetcher._get_prediction_status(bet, None)
+
+        assert result == "invalid"
+
+    def test_invalid_sentinel_pending_finalization_returns_pending(self) -> None:
+        """Sentinel + finalization in the future -> pending (Bug A)."""
+        fetcher = _make_fetcher()
+        bet = {
+            "fixedProductMarketMaker": {
+                "currentAnswer": INVALID_ANSWER_HEX,
+                "answerFinalizedTimestamp": "1700100000",
+            },
+            "outcomeIndex": 0,
+        }
+
+        with patch.object(fetcher, "_now", return_value=1700000000):
+            result = fetcher._get_prediction_status(bet, None)
+
+        assert result == "pending"
+
+    def test_invalid_sentinel_missing_finalization_returns_pending(self) -> None:
+        """Sentinel + no finalization field -> pending (defensive: subgraph lag)."""
         fetcher = _make_fetcher()
         bet = {
             "fixedProductMarketMaker": {"currentAnswer": INVALID_ANSWER_HEX},
             "outcomeIndex": 0,
         }
 
-        result = fetcher._get_prediction_status(bet, None)
+        with patch.object(fetcher, "_now", return_value=1700000000):
+            result = fetcher._get_prediction_status(bet, None)
+
+        assert result == "pending"
+
+    def test_invalid_sentinel_finalization_at_now_returns_invalid(self) -> None:
+        """Sentinel + finalization == now -> invalid (boundary: <= comparison)."""
+        fetcher = _make_fetcher()
+        bet = {
+            "fixedProductMarketMaker": {
+                "currentAnswer": INVALID_ANSWER_HEX,
+                "answerFinalizedTimestamp": "1700000000",
+            },
+            "outcomeIndex": 0,
+        }
+
+        with patch.object(fetcher, "_now", return_value=1700000000):
+            result = fetcher._get_prediction_status(bet, None)
 
         assert result == "invalid"
+
+    def test_resolved_pending_finalization_returns_pending(self) -> None:
+        """Non-sentinel answer + future finalization -> pending.
+
+        Reality.eth answers can flip during the dispute window. Even a
+        non-sentinel answer should not be treated as terminal until the
+        dispute window has closed.
+        """
+        fetcher = _make_fetcher()
+        bet = {
+            "fixedProductMarketMaker": {
+                "currentAnswer": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "answerFinalizedTimestamp": "1700100000",
+            },
+            "outcomeIndex": 0,
+        }
+
+        with patch.object(fetcher, "_now", return_value=1700000000):
+            result = fetcher._get_prediction_status(bet, None)
+
+        assert result == "pending"
+
+    def test_malformed_current_answer_returns_pending(self) -> None:
+        """Malformed currentAnswer hex -> pending (defensive, doesn't crash)."""
+        fetcher = _make_fetcher()
+        bet = {
+            "id": "bet_xyz",
+            "fixedProductMarketMaker": {
+                "currentAnswer": "0xZZ",
+                "answerFinalizedTimestamp": "1700000000",
+            },
+            "outcomeIndex": 0,
+        }
+
+        with patch.object(fetcher, "_now", return_value=1700001000):
+            result = fetcher._get_prediction_status(bet, None)
+
+        assert result == "pending"
 
     def test_won_with_payout(self) -> None:
         """Test winning bet with payout (redeemed)."""
         fetcher = _make_fetcher()
         bet = {
             "fixedProductMarketMaker": {
-                "currentAnswer": "0x0000000000000000000000000000000000000000000000000000000000000000"
+                "currentAnswer": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "answerFinalizedTimestamp": "1000000000",
             },
             "outcomeIndex": 0,
         }
@@ -1197,7 +2013,8 @@ class TestGetPredictionStatus:
         fetcher = _make_fetcher()
         bet = {
             "fixedProductMarketMaker": {
-                "currentAnswer": "0x0000000000000000000000000000000000000000000000000000000000000000"
+                "currentAnswer": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "answerFinalizedTimestamp": "1000000000",
             },
             "outcomeIndex": 0,
         }
@@ -1212,7 +2029,8 @@ class TestGetPredictionStatus:
         fetcher = _make_fetcher()
         bet = {
             "fixedProductMarketMaker": {
-                "currentAnswer": "0x0000000000000000000000000000000000000000000000000000000000000000"
+                "currentAnswer": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "answerFinalizedTimestamp": "1000000000",
             },
             "outcomeIndex": 0,
         }
@@ -1226,7 +2044,8 @@ class TestGetPredictionStatus:
         fetcher = _make_fetcher()
         bet = {
             "fixedProductMarketMaker": {
-                "currentAnswer": "0x0000000000000000000000000000000000000000000000000000000000000000"
+                "currentAnswer": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "answerFinalizedTimestamp": "1000000000",
             },
             "outcomeIndex": 1,
         }
@@ -1244,6 +2063,128 @@ class TestGetPredictionStatus:
 
         # currentAnswer will be None -> pending
         assert result == "pending"
+
+
+class TestArbitrationGate:
+    """ZD#919: isPendingArbitration overrides every other status signal.
+
+    Reality.eth answers can be escalated to Kleros arbitration. While
+    arbitration is pending the on-chain answer must not be treated as
+    terminal regardless of how long ago it was submitted.
+    """
+
+    def test_status_pending_when_arbitration_active_overrides_resolved_answer(
+        self,
+    ) -> None:
+        """A resolved, finalized bet with isPendingArbitration=True is pending."""
+        fetcher = _make_fetcher()
+        bet = {
+            "fixedProductMarketMaker": {
+                "currentAnswer": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "answerFinalizedTimestamp": "1700000000",  # in the past
+                "isPendingArbitration": True,
+            },
+            "outcomeIndex": 0,
+        }
+
+        with patch.object(fetcher, "_now", return_value=1700001000):
+            result = fetcher._get_prediction_status(bet, None)
+
+        assert result == "pending"
+
+    def test_status_pending_when_arbitration_active_with_invalid_sentinel(
+        self,
+    ) -> None:
+        """Arbitration overrides invalid-sentinel labelling too."""
+        fetcher = _make_fetcher()
+        bet = {
+            "fixedProductMarketMaker": {
+                "currentAnswer": INVALID_ANSWER_HEX,
+                "answerFinalizedTimestamp": "1700000000",
+                "isPendingArbitration": True,
+            },
+            "outcomeIndex": 0,
+        }
+
+        with patch.object(fetcher, "_now", return_value=1700001000):
+            result = fetcher._get_prediction_status(bet, None)
+
+        assert result == "pending"
+
+    @pytest.mark.parametrize("days_in_arbitration", [1, 7, 14, 30, 90])
+    def test_status_pending_during_extended_arbitration(
+        self, days_in_arbitration: int
+    ) -> None:
+        """Time spent in arbitration is irrelevant; status stays pending."""
+        fetcher = _make_fetcher()
+        # Protofire's mapping nulls answerFinalizedTimestamp on
+        # LogNotifyOfArbitrationRequest, so simulate that.
+        bet = {
+            "fixedProductMarketMaker": {
+                "currentAnswer": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                "answerFinalizedTimestamp": None,
+                "isPendingArbitration": True,
+            },
+            "outcomeIndex": 0,
+        }
+        now = 1700000000 + days_in_arbitration * 86400
+
+        with patch.object(fetcher, "_now", return_value=now):
+            result = fetcher._get_prediction_status(bet, None)
+
+        assert result == "pending"
+
+    def test_status_pending_during_multi_day_bond_war(self) -> None:
+        """Bond war: status stays pending until the latest window closes.
+
+        Repeated answer submissions push ``answerFinalizedTimestamp``
+        into the future. Status must remain pending regardless of how
+        many days the contest has been ongoing.
+        """
+        fetcher = _make_fetcher()
+        now = 1700000000
+        # Simulate bond war: latest answer was 12h ago, finalization is in 12h.
+        bet = {
+            "fixedProductMarketMaker": {
+                "currentAnswer": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "answerFinalizedTimestamp": str(now + 12 * 3600),
+                "isPendingArbitration": False,
+            },
+            "outcomeIndex": 0,
+        }
+
+        with patch.object(fetcher, "_now", return_value=now):
+            result = fetcher._get_prediction_status(bet, None)
+
+        assert result == "pending"
+
+    def test_bet_net_profit_zero_when_arbitration_active(self) -> None:
+        """Net profit is zero when isPendingArbitration is True.
+
+        ``_calculate_bet_net_profit`` treats arbitration-pending bets as
+        unfinalized and returns ``(0.0, None)`` — same as any other
+        unfinalized bet, so accuracy/profit stays clean.
+        """
+        fetcher = _make_fetcher()
+        bet = {
+            "fixedProductMarketMaker": {"id": "m1"},
+            "outcomeIndex": 0,
+        }
+        # Market context simulating the post-enrichment state for an
+        # arbitration-pending market.
+        market_ctx = {
+            "current_answer": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "answer_finalized_ts": "1700000000",  # past
+            "is_pending_arbitration": True,
+            "total_payout": 1.0,
+            "total_traded": 1.0,
+            "winning_total_amount": 1.0,
+        }
+
+        with patch.object(fetcher, "_now", return_value=1700001000):
+            result = fetcher._calculate_bet_net_profit(bet, market_ctx, 1.0)
+
+        assert result == (0.0, None)
 
 
 # ---------------------------------------------------------------------------
@@ -2514,3 +3455,1053 @@ class TestFetchBetFromSubgraphWrongBetReturned:
 
         # Returns None when requested bet_id not found
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# parse_current_answer tests (Bug A §4.4 — defensive parse)
+# ---------------------------------------------------------------------------
+
+
+class TestParseCurrentAnswer:
+    """Tests for the parse_current_answer module-level helper.
+
+    This helper centralises the int(value, 0) cast that previously crashed
+    on malformed subgraph values. It returns Optional[int] — None for any
+    value that cannot be interpreted as a valid outcome index (None,
+    sentinel, malformed hex, empty, garbage). Callers treat None as
+    'cannot classify -> pending / skip'.
+    """
+
+    def test_none_returns_none(self) -> None:
+        """None input -> None."""
+        assert parse_current_answer(None) is None
+
+    def test_invalid_sentinel_returns_none(self) -> None:
+        """The 0xff..ff invalid sentinel is not a valid outcome index -> None."""
+        assert parse_current_answer(INVALID_ANSWER_HEX) is None
+
+    def test_zero_hex(self) -> None:
+        """0x0 -> 0."""
+        assert parse_current_answer("0x0") == 0
+
+    def test_one_hex(self) -> None:
+        """0x1 -> 1."""
+        assert parse_current_answer("0x1") == 1
+
+    def test_full_width_zero(self) -> None:
+        """A 32-byte zero hex string -> 0."""
+        assert (
+            parse_current_answer(
+                "0x0000000000000000000000000000000000000000000000000000000000000000"
+            )
+            == 0
+        )
+
+    def test_full_width_one(self) -> None:
+        """A 32-byte one hex string -> 1."""
+        assert (
+            parse_current_answer(
+                "0x0000000000000000000000000000000000000000000000000000000000000001"
+            )
+            == 1
+        )
+
+    def test_malformed_hex_returns_none(self) -> None:
+        """Garbage characters inside the hex prefix do not crash."""
+        assert parse_current_answer("0xZZ") is None
+
+    def test_empty_string_returns_none(self) -> None:
+        """Empty string is not parseable -> None."""
+        assert parse_current_answer("") is None
+
+    def test_garbage_string_returns_none(self) -> None:
+        """Non-hex garbage -> None."""
+        assert parse_current_answer("not-a-hex") is None
+
+
+# ---------------------------------------------------------------------------
+# parse_timestamp tests (Bug A post-review hardening — comment #1)
+# ---------------------------------------------------------------------------
+
+
+class TestParseTimestamp:
+    """Tests for the parse_timestamp module-level helper.
+
+    Centralises the int() cast on subgraph timestamp fields so callers
+    do not crash on malformed data (symmetric with parse_current_answer)
+    and so the "0" unset-sentinel some subgraphs emit is treated as
+    unfinalized rather than silently slipping past the gate as terminal.
+    """
+
+    def test_none_returns_none(self) -> None:
+        """None -> None (unfinalized)."""
+        from packages.valory.skills.agent_performance_summary_abci.graph_tooling.predictions_helper import (  # noqa: E501
+            parse_timestamp,
+        )
+
+        assert parse_timestamp(None) is None
+
+    def test_zero_string_returns_none(self) -> None:
+        """'0' -> None (subgraph unset sentinel, treat as unfinalized)."""
+        from packages.valory.skills.agent_performance_summary_abci.graph_tooling.predictions_helper import (  # noqa: E501
+            parse_timestamp,
+        )
+
+        assert parse_timestamp("0") is None
+
+    def test_zero_int_returns_none(self) -> None:
+        """0 (int) -> None."""
+        from packages.valory.skills.agent_performance_summary_abci.graph_tooling.predictions_helper import (  # noqa: E501
+            parse_timestamp,
+        )
+
+        assert parse_timestamp(0) is None
+
+    def test_negative_returns_none(self) -> None:
+        """Negative values are invalid Unix timestamps -> None."""
+        from packages.valory.skills.agent_performance_summary_abci.graph_tooling.predictions_helper import (  # noqa: E501
+            parse_timestamp,
+        )
+
+        assert parse_timestamp("-1") is None
+
+    def test_malformed_returns_none(self) -> None:
+        """Non-numeric garbage -> None (does not raise)."""
+        from packages.valory.skills.agent_performance_summary_abci.graph_tooling.predictions_helper import (  # noqa: E501
+            parse_timestamp,
+        )
+
+        assert parse_timestamp("not-a-timestamp") is None
+
+    def test_empty_string_returns_none(self) -> None:
+        """Empty string -> None."""
+        from packages.valory.skills.agent_performance_summary_abci.graph_tooling.predictions_helper import (  # noqa: E501
+            parse_timestamp,
+        )
+
+        assert parse_timestamp("") is None
+
+    def test_valid_string(self) -> None:
+        """Valid positive Unix ts string -> int."""
+        from packages.valory.skills.agent_performance_summary_abci.graph_tooling.predictions_helper import (  # noqa: E501
+            parse_timestamp,
+        )
+
+        assert parse_timestamp("1700000000") == 1700000000
+
+    def test_valid_int(self) -> None:
+        """Valid positive int ts -> int."""
+        from packages.valory.skills.agent_performance_summary_abci.graph_tooling.predictions_helper import (  # noqa: E501
+            parse_timestamp,
+        )
+
+        assert parse_timestamp(1700000000) == 1700000000
+
+
+# ---------------------------------------------------------------------------
+# Status gate: "0" timestamp + malformed timestamp (Bug A post-review)
+# ---------------------------------------------------------------------------
+
+
+class TestFinalizationGateHardening:
+    """Tests covering "0" subgraph timestamp + malformed timestamp cases.
+
+    Added in response to PR #903 review comment #1: the original gate
+    ``int(answer_finalized_ts) > now`` would (a) treat a subgraph "0"
+    as terminal (since 0 > now is False) and (b) crash on malformed
+    input. These tests pin the corrected behaviour: both cases degrade
+    to "pending" rather than misclassifying or crashing.
+    """
+
+    def test_status_zero_finalization_returns_pending(self) -> None:
+        """Sentinel + ``"0"`` finalization timestamp -> pending, not invalid."""
+        fetcher = _make_fetcher()
+        bet = {
+            "fixedProductMarketMaker": {
+                "currentAnswer": INVALID_ANSWER_HEX,
+                "answerFinalizedTimestamp": "0",
+            },
+            "outcomeIndex": 0,
+        }
+
+        with patch.object(fetcher, "_now", return_value=1700000000):
+            result = fetcher._get_prediction_status(bet, None)
+
+        assert result == "pending"
+
+    def test_status_malformed_finalization_returns_pending(self) -> None:
+        """Malformed finalization timestamp -> pending (does not raise)."""
+        fetcher = _make_fetcher()
+        bet = {
+            "fixedProductMarketMaker": {
+                "currentAnswer": INVALID_ANSWER_HEX,
+                "answerFinalizedTimestamp": "not-a-timestamp",
+            },
+            "outcomeIndex": 0,
+        }
+
+        with patch.object(fetcher, "_now", return_value=1700000000):
+            result = fetcher._get_prediction_status(bet, None)
+
+        assert result == "pending"
+
+    def test_net_profit_zero_finalization_returns_zero_none(self) -> None:
+        """_calculate_bet_net_profit: ``"0"`` finalization -> (0.0, None)."""
+        fetcher = _make_fetcher()
+        ctx = {
+            "current_answer": INVALID_ANSWER_HEX,
+            "answer_finalized_ts": "0",
+            "total_payout": 2.0,
+            "total_traded": 4.0,
+        }
+
+        with patch.object(fetcher, "_now", return_value=1700001000):
+            result = fetcher._calculate_bet_net_profit({"outcomeIndex": 0}, ctx, 1.0)
+
+        assert result == (0.0, None)
+
+    def test_net_profit_malformed_finalization_returns_zero_none(self) -> None:
+        """_calculate_bet_net_profit: malformed ts -> (0.0, None), no raise."""
+        fetcher = _make_fetcher()
+        ctx = {
+            "current_answer": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "answer_finalized_ts": "not-a-timestamp",
+            "total_payout": 2.0,
+            "total_traded": 1.0,
+            "winning_total_amount": 1.0,
+        }
+
+        with patch.object(fetcher, "_now", return_value=1700001000):
+            result = fetcher._calculate_bet_net_profit({"outcomeIndex": 0}, ctx, 1.0)
+
+        assert result == (0.0, None)
+
+
+# ---------------------------------------------------------------------------
+# parse_current_answer public (non-underscore) alias — comment #3
+# ---------------------------------------------------------------------------
+
+
+class TestParseCurrentAnswerPublicName:
+    """parse_current_answer (no underscore) is the public cross-module name.
+
+    behaviours.py imports the symbol directly; a leading underscore on
+    a name used across modules trips linters configured to flag private
+    imports. The rename makes it match its actual visibility.
+    """
+
+    def test_public_name_is_exported(self) -> None:
+        """Module exposes ``parse_current_answer`` without underscore."""
+        from packages.valory.skills.agent_performance_summary_abci.graph_tooling import (  # noqa: E501
+            predictions_helper,
+        )
+
+        assert hasattr(predictions_helper, "parse_current_answer")
+
+    def test_public_name_parses_valid_hex(self) -> None:
+        """Sanity: the public symbol behaves the same as the parser helper."""
+        from packages.valory.skills.agent_performance_summary_abci.graph_tooling.predictions_helper import (  # noqa: E501
+            parse_current_answer,
+        )
+
+        assert parse_current_answer("0x1") == 1
+        assert parse_current_answer(None) is None
+        assert parse_current_answer(INVALID_ANSWER_HEX) is None
+
+
+# ---------------------------------------------------------------------------
+# now_ts module-level single-source helper — comment #4
+# ---------------------------------------------------------------------------
+
+
+class TestNowTsModuleLevel:
+    """``now_ts`` is a single module-level time source.
+
+    Both ``PredictionsFetcher._now`` and ``FetchPerformanceSummaryBehaviour._now``
+    previously held independent copies of ``int(time.time())``. Extracting
+    a single module-level function removes the drift surface the review
+    flagged (comment #4); the per-class methods remain as thin delegators
+    so existing ``patch.object(instance, "_now", ...)`` test patterns
+    continue to work.
+    """
+
+    def test_now_ts_is_exported(self) -> None:
+        """Module exposes ``now_ts``."""
+        from packages.valory.skills.agent_performance_summary_abci.graph_tooling import (  # noqa: E501
+            predictions_helper,
+        )
+
+        assert callable(getattr(predictions_helper, "now_ts", None))
+
+    def test_now_ts_returns_int(self) -> None:
+        """``now_ts`` returns an int (seconds since epoch)."""
+        from packages.valory.skills.agent_performance_summary_abci.graph_tooling.predictions_helper import (  # noqa: E501
+            now_ts,
+        )
+
+        assert isinstance(now_ts(), int)
+
+    def test_fetcher_now_delegates_to_module(self) -> None:
+        """``PredictionsFetcher._now`` delegates to the module-level ``now_ts``.
+
+        Falsifiability: patching ``now_ts`` at the module level must
+        affect the instance method; if the method still calls
+        ``int(time.time())`` directly, the patch would be bypassed and
+        the assertion would fail.
+        """
+        fetcher = _make_fetcher()
+        with patch(
+            "packages.valory.skills.agent_performance_summary_abci."
+            "graph_tooling.predictions_helper.now_ts",
+            return_value=42,
+        ):
+            assert fetcher._now() == 42
+
+
+# ---------------------------------------------------------------------------
+# _allocate_fifo (Phase 3 — sell-aware perf-summary)
+# ---------------------------------------------------------------------------
+
+
+def _fifo_bet(
+    *,
+    bet_id: str,
+    fpmm_id: str,
+    outcome_index: int,
+    amount_wei: int,
+    shares_wei: int,
+    block_ts: int,
+    timestamp: int = 0,
+) -> dict:
+    """Build a subgraph-shaped bet row carrying the fields _allocate_fifo reads."""
+    return {
+        "id": bet_id,
+        "amount": str(amount_wei),
+        "outcomeTokenAmount": str(shares_wei),
+        "outcomeIndex": outcome_index,
+        "timestamp": str(timestamp),
+        "blockTimestamp": str(block_ts),
+        "fixedProductMarketMaker": {"id": fpmm_id},
+    }
+
+
+class TestAllocateFifo:
+    """Tests for the FIFO allocator added in Phase 3."""
+
+    fpmm_a = "0x9371158c040dc04AdeC99E03f82CDa9C0D804af7"
+    fpmm_b = "0x3767f3b500d7d0d51e72f80213b3531beea1b6f5"
+
+    def test_single_buy_no_sells_enriches_with_defaults(self) -> None:
+        """A buy with no later sell carries remaining_cost == original_cost."""
+        fetcher = _make_fetcher()
+        bets = [
+            _fifo_bet(
+                bet_id="b1",
+                fpmm_id=self.fpmm_a,
+                outcome_index=0,
+                amount_wei=10**18,
+                shares_wei=2 * 10**18,
+                block_ts=1000,
+            )
+        ]
+        out = fetcher._allocate_fifo(bets)
+        assert len(out) == 1
+        wrapped = out[0]
+        assert wrapped["original_cost"] == float(10**18)
+        assert wrapped["remaining_shares"] == float(2 * 10**18)
+        assert wrapped["allocated_proceeds"] == 0.0
+        assert wrapped["allocated_cost"] == 0.0
+        assert wrapped["participant_remaining_cost"] == float(10**18)
+
+    def test_sell_after_buy_consumes_via_fifo(self) -> None:
+        """A sell after a buy reduces remaining_shares and folds proceeds into the buy."""
+        fetcher = _make_fetcher()
+        bets = [
+            _fifo_bet(
+                bet_id="b1",
+                fpmm_id=self.fpmm_a,
+                outcome_index=0,
+                amount_wei=10 * 10**18,  # 10 wxDAI in
+                shares_wei=100 * 10**18,  # 100 shares received
+                block_ts=1000,
+            ),
+            _fifo_bet(
+                bet_id="s1",
+                fpmm_id=self.fpmm_a,
+                outcome_index=0,
+                amount_wei=-3 * 10**18,  # 3 wxDAI back
+                shares_wei=-40 * 10**18,  # 40 shares burned
+                block_ts=2000,
+            ),
+        ]
+        out = fetcher._allocate_fifo(bets)
+        assert len(out) == 1  # sell folded into the buy; no standalone row
+        wrapped = out[0]
+        # 40 of 100 shares sold, so 40% of original cost (= 4 wxDAI) is allocated
+        # to the sell, and the 3 wxDAI proceeds attach to the buy.
+        assert wrapped["remaining_shares"] == float(60 * 10**18)
+        assert wrapped["allocated_proceeds"] == float(3 * 10**18)
+        assert wrapped["allocated_cost"] == float(4 * 10**18)
+        # Realized PnL on the sold portion: 3 - 4 = -1 wxDAI (sold at loss).
+        # Verified indirectly: original_cost - allocated_cost = 6 wxDAI remaining.
+        assert wrapped["original_cost"] - wrapped["allocated_cost"] == float(6 * 10**18)
+
+    def test_multiple_buys_fifo_chronological(self) -> None:
+        """Sells consume earlier buys first (chronological FIFO order)."""
+        fetcher = _make_fetcher()
+        bets = [
+            _fifo_bet(
+                bet_id="b1",
+                fpmm_id=self.fpmm_a,
+                outcome_index=0,
+                amount_wei=10**18,
+                shares_wei=10 * 10**18,
+                block_ts=1000,
+            ),
+            _fifo_bet(
+                bet_id="b2",
+                fpmm_id=self.fpmm_a,
+                outcome_index=0,
+                amount_wei=2 * 10**18,
+                shares_wei=10 * 10**18,
+                block_ts=2000,
+            ),
+            _fifo_bet(
+                bet_id="s1",
+                fpmm_id=self.fpmm_a,
+                outcome_index=0,
+                amount_wei=-5 * 10**17,
+                shares_wei=-5 * 10**18,
+                block_ts=3000,
+            ),
+        ]
+        out = fetcher._allocate_fifo(bets)
+        assert len(out) == 2
+        by_id = {b["id"]: b for b in out}
+        # The sell (5 shares) fully consumes half of b1 (10 shares).
+        assert by_id["b1"]["remaining_shares"] == float(5 * 10**18)
+        # b1 was 1 wxDAI for 10 shares; 5 shares of cost = 0.5 wxDAI.
+        assert by_id["b1"]["allocated_cost"] == float(5 * 10**17)
+        # b2 is untouched.
+        assert by_id["b2"]["remaining_shares"] == float(10 * 10**18)
+        assert by_id["b2"]["allocated_cost"] == 0.0
+
+    def test_groups_separated_by_fpmm_and_outcome(self) -> None:
+        """A sell in one (fpmm, outcomeIndex) group doesn't touch another group."""
+        fetcher = _make_fetcher()
+        bets = [
+            _fifo_bet(
+                bet_id="b_a0",
+                fpmm_id=self.fpmm_a,
+                outcome_index=0,
+                amount_wei=10**18,
+                shares_wei=10 * 10**18,
+                block_ts=1000,
+            ),
+            _fifo_bet(
+                bet_id="b_a1",
+                fpmm_id=self.fpmm_a,
+                outcome_index=1,
+                amount_wei=10**18,
+                shares_wei=10 * 10**18,
+                block_ts=1000,
+            ),
+            _fifo_bet(
+                bet_id="b_b0",
+                fpmm_id=self.fpmm_b,
+                outcome_index=0,
+                amount_wei=10**18,
+                shares_wei=10 * 10**18,
+                block_ts=1000,
+            ),
+            # Sell only on (fpmm_a, outcome 0).
+            _fifo_bet(
+                bet_id="s_a0",
+                fpmm_id=self.fpmm_a,
+                outcome_index=0,
+                amount_wei=-(10**17),
+                shares_wei=-(10**18),
+                block_ts=2000,
+            ),
+        ]
+        out = fetcher._allocate_fifo(bets)
+        by_id = {b["id"]: b for b in out}
+        assert by_id["b_a0"]["allocated_cost"] > 0
+        assert by_id["b_a1"]["allocated_cost"] == 0.0
+        assert by_id["b_b0"]["allocated_cost"] == 0.0
+
+    def test_orphan_sell_logged_and_dropped(self) -> None:
+        """A sell with no matching prior buy is warned + dropped."""
+        fetcher = _make_fetcher()
+        bets = [
+            _fifo_bet(
+                bet_id="s_orphan",
+                fpmm_id=self.fpmm_a,
+                outcome_index=0,
+                amount_wei=-(10**18),
+                shares_wei=-(10**18),
+                block_ts=1000,
+            ),
+        ]
+        out = fetcher._allocate_fifo(bets)
+        assert out == []
+        assert fetcher.logger.warning.called
+
+    def test_amount_share_sign_disagreement_warned_and_skipped(self) -> None:
+        """A row with amount/outcomeTokenAmount sign disagreement is skipped (spec §8.2)."""
+        fetcher = _make_fetcher()
+        bets = [
+            _fifo_bet(
+                bet_id="weird",
+                fpmm_id=self.fpmm_a,
+                outcome_index=0,
+                amount_wei=10**18,  # positive (looks like buy)
+                shares_wei=-(10**18),  # negative (looks like sell)
+                block_ts=1000,
+            ),
+        ]
+        out = fetcher._allocate_fifo(bets)
+        assert out == []
+        assert fetcher.logger.warning.called
+
+    def test_bet_missing_fpmm_id_skipped(self) -> None:
+        """A bet with no fpmm.id is logged + dropped."""
+        fetcher = _make_fetcher()
+        bets = [
+            {
+                "id": "broken",
+                "amount": str(10**18),
+                "outcomeTokenAmount": str(10**18),
+                "outcomeIndex": 0,
+                "blockTimestamp": "1000",
+                "fixedProductMarketMaker": {},
+            },
+        ]
+        out = fetcher._allocate_fifo(bets)
+        assert out == []
+        assert fetcher.logger.warning.called
+
+    def test_int_math_no_float_drift_across_many_sells(self) -> None:
+        """Many partial sells fully exit a wei-scale buy with exactly zero remaining.
+
+        Pre-fix the allocator used floats; ``head["remaining_shares"] -=
+        take`` accumulated drift at wei scale (past 2^53). A tiny
+        positive residual (e.g. 1e-9) left the head un-popped and
+        blocked the queue. The int conversion eliminates the drift —
+        100 partial sells of 0.01 wxDAI each fully exit a 1 wxDAI buy
+        with exactly zero ``remaining_shares``.
+        """
+        fetcher = _make_fetcher()
+        buy_shares_wei = 10**18  # 1 wxDAI buy
+        n_sells = 100
+        sell_chunk = buy_shares_wei // n_sells  # 10**16 each
+
+        bets = [
+            _fifo_bet(
+                bet_id="b_buy",
+                fpmm_id=self.fpmm_a,
+                outcome_index=0,
+                amount_wei=buy_shares_wei,
+                shares_wei=buy_shares_wei,
+                block_ts=1000,
+            )
+        ]
+        for i in range(n_sells):
+            bets.append(
+                _fifo_bet(
+                    bet_id=f"s_{i}",
+                    fpmm_id=self.fpmm_a,
+                    outcome_index=0,
+                    amount_wei=-sell_chunk,
+                    shares_wei=-sell_chunk,
+                    block_ts=2000 + i,
+                )
+            )
+
+        out = fetcher._allocate_fifo(bets)
+        assert len(out) == 1
+        # ``remaining_shares`` must be exactly 0 — not 1e-9 from float
+        # drift that would leave the buy stuck in the open queue.
+        assert out[0]["remaining_shares"] == 0
+        # ``allocated_cost`` should sum exactly to the original cost
+        # under int math (each step is a clean divide, no residual).
+        assert out[0]["allocated_cost"] == buy_shares_wei
+
+    def test_zero_share_buy_does_not_deadlock(self) -> None:
+        """A zero-share buy is preserved but does not enter the open-buys deque."""
+        fetcher = _make_fetcher()
+        bets = [
+            _fifo_bet(
+                bet_id="b_zero",
+                fpmm_id=self.fpmm_a,
+                outcome_index=0,
+                amount_wei=10**18,
+                shares_wei=0,
+                block_ts=1000,
+            ),
+        ]
+        out = fetcher._allocate_fifo(bets)
+        assert len(out) == 1
+        assert out[0]["remaining_shares"] == 0.0
+
+    def test_participant_remaining_cost_scoped_per_fpmm(self) -> None:
+        """``participant_remaining_cost`` is summed PER-FPMM, not across FPMMs.
+
+        Pre-fix this scalar summed remaining costs across every FPMM
+        in the output. The consumer in ``_calculate_bet_net_profit``
+        divides this buy's remaining cost by the scalar and multiplies
+        by ``total_payout`` — which is itself per-market — so a
+        cross-FPMM denominator skewed the invalid-market refund
+        attribution by ``(N-1)/N`` for an agent with N FPMMs.
+        """
+        fetcher = _make_fetcher()
+        bets = [
+            _fifo_bet(
+                bet_id="b_a0",
+                fpmm_id=self.fpmm_a,
+                outcome_index=0,
+                amount_wei=10 * 10**18,
+                shares_wei=10 * 10**18,
+                block_ts=1000,
+            ),
+            _fifo_bet(
+                bet_id="b_b0",
+                fpmm_id=self.fpmm_b,
+                outcome_index=0,
+                amount_wei=5 * 10**18,
+                shares_wei=5 * 10**18,
+                block_ts=1000,
+            ),
+            # 2 wxDAI exit from b_a0 only.
+            _fifo_bet(
+                bet_id="s_a0",
+                fpmm_id=self.fpmm_a,
+                outcome_index=0,
+                amount_wei=-2 * 10**18,
+                shares_wei=-2 * 10**18,
+                block_ts=2000,
+            ),
+        ]
+        out = fetcher._allocate_fifo(bets)
+        # fpmm_a remaining = 10 - 2 = 8 wxDAI; fpmm_b remaining = 5 wxDAI.
+        # Each buy now reads its FPMM's own bucket, not the cross-FPMM
+        # total of 13.
+        by_id = {b["id"]: b for b in out}
+        assert by_id["b_a0"]["participant_remaining_cost"] == float(8 * 10**18)
+        assert by_id["b_b0"]["participant_remaining_cost"] == float(5 * 10**18)
+
+    def test_participant_remaining_cost_aggregates_across_outcomes_same_fpmm(
+        self,
+    ) -> None:
+        """Same FPMM, two outcomeIndices: denominator sums both outcomes.
+
+        Reality.eth pays the invalid-market refund per market, not per
+        outcome — so an agent holding outcome 0 AND outcome 1 of the
+        same FPMM shares one refund pool, and the denominator must
+        cover both legs.
+        """
+        fetcher = _make_fetcher()
+        bets = [
+            _fifo_bet(
+                bet_id="b_a0",
+                fpmm_id=self.fpmm_a,
+                outcome_index=0,
+                amount_wei=4 * 10**18,
+                shares_wei=4 * 10**18,
+                block_ts=1000,
+            ),
+            _fifo_bet(
+                bet_id="b_a1",
+                fpmm_id=self.fpmm_a,
+                outcome_index=1,
+                amount_wei=6 * 10**18,
+                shares_wei=6 * 10**18,
+                block_ts=1000,
+            ),
+        ]
+        out = fetcher._allocate_fifo(bets)
+        # Both legs carry the same per-FPMM total: 4 + 6 = 10 wxDAI.
+        for b in out:
+            assert b["participant_remaining_cost"] == float(10 * 10**18)
+
+
+class TestAllocateFifoModuleLevel:
+    """Tests exercising the public ``allocate_fifo`` directly.
+
+    The class method ``PredictionsFetcher._allocate_fifo`` delegates to
+    this function. These tests guarantee the module-level entry point
+    is callable without a fetcher instance — the whole point of the
+    extraction from H8.
+    """
+
+    fpmm_a = "0x9371158c040dc04AdeC99E03f82CDa9C0D804af7"
+
+    def test_callable_without_fetcher_instance(self) -> None:
+        """``allocate_fifo`` works given just a logger; no fetcher needed."""
+        logger = MagicMock()
+        bets = [
+            _fifo_bet(
+                bet_id="b1",
+                fpmm_id=self.fpmm_a,
+                outcome_index=0,
+                amount_wei=10**18,
+                shares_wei=2 * 10**18,
+                block_ts=1000,
+            )
+        ]
+        out = allocate_fifo(bets, logger)
+        assert len(out) == 1
+        assert out[0]["original_cost"] == float(10**18)
+        assert out[0]["remaining_shares"] == float(2 * 10**18)
+
+    def test_class_method_and_module_function_produce_same_output(
+        self,
+    ) -> None:
+        """``fetcher._allocate_fifo`` delegates verbatim to the module fn.
+
+        Guards against future drift between the two entry points.
+        """
+        fetcher = _make_fetcher()
+        bets = [
+            _fifo_bet(
+                bet_id="b1",
+                fpmm_id=self.fpmm_a,
+                outcome_index=0,
+                amount_wei=10 * 10**18,
+                shares_wei=20 * 10**18,
+                block_ts=1000,
+            ),
+            _fifo_bet(
+                bet_id="b2",
+                fpmm_id=self.fpmm_a,
+                outcome_index=0,
+                amount_wei=-3 * 10**18,
+                shares_wei=-5 * 10**18,
+                block_ts=2000,
+            ),
+        ]
+        from_method = fetcher._allocate_fifo([dict(b) for b in bets])
+        from_function = allocate_fifo([dict(b) for b in bets], MagicMock())
+
+        # Strip the participant_remaining_cost which is path-independent
+        # to keep the comparison resilient to future enrichment fields.
+
+        def _strip(rows: list) -> list:
+            return [
+                {k: v for k, v in row.items() if k != "participant_remaining_cost"}
+                for row in rows
+            ]
+
+        assert _strip(from_method) == _strip(from_function)
+
+
+class TestFifoAwareCalculateBetNetProfit:
+    """Sell-aware PnL: ensures the §8.1 bugs are fixed end-to-end."""
+
+    def test_sell_of_losing_side_is_a_loss_not_a_profit(self) -> None:
+        """Spec §8.1 line 971: pre-Phase-3 booked sells of losing side as profit.
+
+        Setup: buy 1 wxDAI on outcome 1, partially exit via a 0.3 wxDAI
+        sell, then market resolves to outcome 0 (we lost). The 0.3 wxDAI
+        proceeds are real; the remaining 0.7 wxDAI cost basis is a
+        realized loss. Net = 0.3 - 0.3 (allocated_cost) + (0 - 0.7) = -0.7.
+        Pre-fix: `-bet_amount` = `-(-0.3) = +0.3` mis-booked as profit.
+        """
+        fetcher = _make_fetcher()
+        enriched_buy = {
+            "id": "b1",
+            "outcomeIndex": 1,
+            "amount": str(10**18),
+            "outcomeTokenAmount": str(10**18),
+            "original_cost": float(10**18),
+            "original_shares": float(10**18),
+            "remaining_shares": float(7 * 10**17),
+            "allocated_proceeds": float(3 * 10**17),
+            "allocated_cost": float(3 * 10**17),
+            "participant_remaining_cost": float(7 * 10**17),
+        }
+        ctx = {
+            "current_answer": "0x" + "00" * 32,  # outcome 0 wins
+            "answer_finalized_ts": "1000000000",
+            "total_payout": 1.0,
+            "total_traded": 1.0,
+            "winning_total_amount": 0.0,  # the winning side has no buys
+        }
+        net_profit, payout = fetcher._calculate_bet_net_profit(enriched_buy, ctx, 0.0)
+        # realised proceeds were 0.3 wxDAI on cost 0.3 wxDAI (realised PnL
+        # zero). Remaining 0.7 wxDAI cost basis is lost. Net = -0.7 wxDAI.
+        assert net_profit == pytest.approx(-0.7, abs=1e-9)
+        # payout reflects the realised proceeds.
+        assert payout == pytest.approx(0.3, abs=1e-9)
+
+    def test_invalid_refund_scoped_per_fpmm_across_multi_market_history(
+        self,
+    ) -> None:
+        """Multi-FPMM history: invalid resolution on one FPMM refunds fully.
+
+        Pre-fix, ``participant_remaining_cost`` summed remaining costs
+        across every FPMM in the agent's history. The consumer then
+        did ``total_payout × (remaining_cost / cross_fpmm_sum)`` — so
+        an agent with N FPMMs got only ``1/N`` of the per-market
+        refund attributed.
+
+        Here: invalid FPMM A (1 wxDAI buy, total_payout 1.0) plus a
+        2 wxDAI buy on an unrelated FPMM B. The full 1.0 refund must
+        attribute to FPMM A, not 1.0 × (1/3) = 0.33.
+        """
+        fetcher = _make_fetcher()
+        fpmm_a_invalid = "0x9371158c040dc04AdeC99E03f82CDa9C0D804af7"
+        fpmm_b_open = "0x3767f3b500d7d0d51e72f80213b3531beea1b6f5"
+        bets = [
+            _fifo_bet(
+                bet_id="b_a",
+                fpmm_id=fpmm_a_invalid,
+                outcome_index=0,
+                amount_wei=10**18,  # 1 wxDAI on invalid market
+                shares_wei=10**18,
+                block_ts=1000,
+            ),
+            _fifo_bet(
+                bet_id="b_b",
+                fpmm_id=fpmm_b_open,
+                outcome_index=0,
+                amount_wei=2 * 10**18,  # 2 wxDAI on unrelated market
+                shares_wei=2 * 10**18,
+                block_ts=1000,
+            ),
+        ]
+        enriched = fetcher._allocate_fifo(bets)
+        invalid_buy = next(b for b in enriched if b["id"] == "b_a")
+
+        ctx = {
+            "current_answer": INVALID_ANSWER_HEX,
+            "answer_finalized_ts": "1700000000",
+            "total_payout": 1.0,  # full refund on the invalid market
+            "total_traded": 1.0,
+        }
+        with patch.object(fetcher, "_now", return_value=1700001000):
+            net_profit, payout = fetcher._calculate_bet_net_profit(
+                invalid_buy, ctx, 0.0
+            )
+
+        # FPMM A's only buy has remaining cost 1.0; per-FPMM denominator
+        # is also 1.0. refund_share = 1.0 × (1.0 / 1.0) = 1.0, fully
+        # attributed. net = 1.0 − 1.0 = 0 (broke even). payout = 1.0.
+        assert net_profit == pytest.approx(0.0, abs=1e-9)
+        assert payout == pytest.approx(1.0, abs=1e-9)
+
+    def test_winning_with_partial_sell_uses_remaining_cost(self) -> None:
+        """Winning bet after a partial sell: payout share scales on remaining cost."""
+        fetcher = _make_fetcher()
+        enriched_buy = {
+            "id": "b1",
+            "outcomeIndex": 0,
+            "amount": str(10**18),
+            "outcomeTokenAmount": str(10**18),
+            "original_cost": float(10**18),
+            "original_shares": float(10**18),
+            "remaining_shares": float(5 * 10**17),
+            "allocated_proceeds": float(4 * 10**17),
+            "allocated_cost": float(5 * 10**17),
+            "participant_remaining_cost": float(5 * 10**17),
+        }
+        ctx = {
+            "current_answer": "0x" + "00" * 32,  # outcome 0 wins
+            "answer_finalized_ts": "1000000000",
+            "total_payout": 2.0,
+            "total_traded": 1.0,
+            "winning_total_amount": 0.5,  # = remaining_cost of this buy
+        }
+        net_profit, payout = fetcher._calculate_bet_net_profit(enriched_buy, ctx, 0.0)
+        # Realised leg: proceeds 0.4 wxDAI minus cost 0.5 wxDAI gives PnL
+        # of -0.1 wxDAI. Redemption leg: total_payout 2.0 scaled by the
+        # remaining 0.5 of 0.5 winning cost gives 2.0 wxDAI on a 0.5
+        # remaining cost basis. Net = -0.1 + 1.5 = 1.4 wxDAI.
+        assert net_profit == pytest.approx(1.4, abs=1e-9)
+        # payout = realised proceeds (0.4) + redemption share (2.0).
+        assert payout == pytest.approx(2.4, abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# Hybrid status rule — Phase 3 (mirror of Polystrat's tiered classification)
+# ---------------------------------------------------------------------------
+
+
+class TestHybridPredictionStatus:
+    """Tier-2 "fully exited via sells" overrides resolution-based status."""
+
+    # 18-dec scale dust threshold (= 0.01 share, ~1 wxDAI cent).
+    _DUST = 10**16
+
+    @staticmethod
+    def _enriched_bet(
+        *,
+        outcome_index: int,
+        original_shares: int,
+        remaining_shares: int,
+        allocated_proceeds: int,
+        allocated_cost: int,
+        current_answer: Optional[str] = None,
+        answer_finalized_ts: Optional[str] = None,
+        is_pending_arbitration: bool = False,
+    ) -> dict:
+        """Build a FIFO-enriched bet dict for the status helper to read."""
+        return {
+            "id": "b1",
+            "outcomeIndex": outcome_index,
+            "amount": str(original_shares),  # placeholder; helper reads FIFO fields
+            "original_shares": float(original_shares),
+            "original_cost": float(original_shares),
+            "remaining_shares": float(remaining_shares),
+            "allocated_proceeds": float(allocated_proceeds),
+            "allocated_cost": float(allocated_cost),
+            "fixedProductMarketMaker": {
+                "currentAnswer": current_answer,
+                "answerFinalizedTimestamp": answer_finalized_ts,
+                "isPendingArbitration": is_pending_arbitration,
+            },
+        }
+
+    def test_fully_exited_at_profit_returns_won(self) -> None:
+        """A buy fully sold off at a net profit is WON regardless of market state."""
+        fetcher = _make_fetcher()
+        bet = self._enriched_bet(
+            outcome_index=0,
+            original_shares=10**18,
+            remaining_shares=0,
+            allocated_proceeds=12 * 10**17,  # 1.2 wxDAI back
+            allocated_cost=10**18,  # 1.0 wxDAI cost
+        )
+        # Market still open — tier 2 fires anyway.
+        assert fetcher._get_prediction_status(bet, None) == "won"
+
+    def test_fully_exited_at_loss_returns_lost(self) -> None:
+        """A buy fully sold off at a net loss is LOST regardless of market state."""
+        fetcher = _make_fetcher()
+        bet = self._enriched_bet(
+            outcome_index=0,
+            original_shares=10**18,
+            remaining_shares=0,
+            allocated_proceeds=8 * 10**17,
+            allocated_cost=10**18,
+        )
+        assert fetcher._get_prediction_status(bet, None) == "lost"
+
+    def test_fully_exited_break_even_returns_pending(self) -> None:
+        """Exact-break-even sell-off classifies PENDING."""
+        fetcher = _make_fetcher()
+        bet = self._enriched_bet(
+            outcome_index=0,
+            original_shares=10**18,
+            remaining_shares=0,
+            allocated_proceeds=10**18,
+            allocated_cost=10**18,
+        )
+        assert fetcher._get_prediction_status(bet, None) == "pending"
+
+    def test_dust_residual_treated_as_fully_exited(self) -> None:
+        """A residual of ≤ SHARES_EPSILON_OMEN counts as fully exited."""
+        fetcher = _make_fetcher()
+        bet = self._enriched_bet(
+            outcome_index=0,
+            original_shares=10**18,
+            remaining_shares=self._DUST - 1,  # dust
+            allocated_proceeds=12 * 10**17,
+            allocated_cost=10**18,
+        )
+        assert fetcher._get_prediction_status(bet, None) == "won"
+
+    def test_partial_exit_falls_through_to_resolution_logic(self) -> None:
+        """A buy with significant remaining shares uses resolution-based status."""
+        fetcher = _make_fetcher()
+        bet = self._enriched_bet(
+            outcome_index=0,
+            original_shares=10**18,
+            remaining_shares=5 * 10**17,  # half remaining
+            allocated_proceeds=6 * 10**17,
+            allocated_cost=5 * 10**17,
+        )
+        # Market still unresolved → PENDING (not WON despite profitable exits).
+        assert fetcher._get_prediction_status(bet, None) == "pending"
+
+    def test_fully_exited_at_profit_against_winning_outcome_is_won(
+        self,
+    ) -> None:
+        """Spec §8.2 case: sell at profit then market resolves AGAINST the bet.
+
+        Pre-Phase-3 this returned LOST (resolution-based). Post-fix it
+        returns WON — the agent realised the profit and has no exposure
+        to the resolution.
+        """
+        fetcher = _make_fetcher()
+        bet = self._enriched_bet(
+            outcome_index=1,  # bet on outcome 1
+            original_shares=10**18,
+            remaining_shares=0,
+            allocated_proceeds=12 * 10**17,
+            allocated_cost=10**18,
+            current_answer="0x" + "00" * 32,  # outcome 0 wins; agent's side lost
+            answer_finalized_ts="1000000000",
+        )
+        assert fetcher._get_prediction_status(bet, None) == "won"
+
+    def test_invalid_market_still_overrides_fully_exited(self) -> None:
+        """Tier 1 (INVALID, finalized, not arbitrating) beats tier 2."""
+        fetcher = _make_fetcher()
+        bet = self._enriched_bet(
+            outcome_index=0,
+            original_shares=10**18,
+            remaining_shares=0,
+            allocated_proceeds=12 * 10**17,
+            allocated_cost=10**18,
+            current_answer=INVALID_ANSWER_HEX,
+            answer_finalized_ts="1700000000",
+        )
+        with patch.object(fetcher, "_now", return_value=1700001000):
+            assert fetcher._get_prediction_status(bet, None) == "invalid"
+
+    def test_provisional_invalid_falls_through_to_fully_exited(self) -> None:
+        """Invalid sentinel pre-finalization is provisional — tier 2 fires."""
+        fetcher = _make_fetcher()
+        bet = self._enriched_bet(
+            outcome_index=0,
+            original_shares=10**18,
+            remaining_shares=0,
+            allocated_proceeds=12 * 10**17,
+            allocated_cost=10**18,
+            current_answer=INVALID_ANSWER_HEX,
+            answer_finalized_ts="1700100000",  # future
+        )
+        with patch.object(fetcher, "_now", return_value=1700000000):
+            assert fetcher._get_prediction_status(bet, None) == "won"
+
+    def test_arbitration_preserves_invalid_sentinel_for_unexited(self) -> None:
+        """Existing arbitration gate (ZD#919) — INVALID is provisional under arbitration."""
+        fetcher = _make_fetcher()
+        bet = self._enriched_bet(
+            outcome_index=0,
+            original_shares=0,  # raw bet, no FIFO state → tier 2 skips
+            remaining_shares=0,
+            allocated_proceeds=0,
+            allocated_cost=0,
+            current_answer=INVALID_ANSWER_HEX,
+            answer_finalized_ts="1700000000",
+            is_pending_arbitration=True,
+        )
+        with patch.object(fetcher, "_now", return_value=1700001000):
+            assert fetcher._get_prediction_status(bet, None) == "pending"
+
+    def test_legacy_raw_bet_uses_resolution_logic(self) -> None:
+        """Pre-FIFO callers (original_shares == 0) skip tier 2; old logic stands."""
+        fetcher = _make_fetcher()
+        bet = {
+            "id": "legacy",
+            "outcomeIndex": 0,
+            "fixedProductMarketMaker": {
+                "currentAnswer": "0x" + "00" * 32,
+                "answerFinalizedTimestamp": "1000000000",
+                "isPendingArbitration": False,
+            },
+        }
+        # Won + no participant → returns WON via tier 3.
+        assert fetcher._get_prediction_status(bet, None) == "won"

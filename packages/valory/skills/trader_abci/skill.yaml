@@ -9,20 +9,21 @@ fingerprint:
   README.md: bafybeiab4xgadptz4mhvno4p6xvkh7p4peg7iuhotabydriu74dmj6ljga
   __init__.py: bafybeidp3c6ychle2a6gvrzznmgvkgtzkcxras42gmq3kfey4xwmxa3rom
   behaviours.py: bafybeigz7mlskyhiusv7rhon7dalzyx7w5yd64nyyjy4bmz2mju72nm7jy
-  composition.py: bafybeieqtixh6gh7zrygqytauo22moppfg3hyka2i3kwpn6eyqht3a4zwa
+  composition.py: bafybeigxcxg6xtvkkniwttrs3ryohxzhtlubygrrspl4d75uwqytebkfrm
   dialogues.py: bafybeifoywfxhnowfy2ofkltizyhuiuv3tgqakwjzm7vj4y4gb2ozhjpey
-  fsm_specification.yaml: bafybeigw3anigtkhiredxnu3xmfyv37c4t4qqwbugwacsbkqy67rehz4mq
-  handlers.py: bafybeibgqokqbdc3idco33nty4jqjrn2mqsf5sir65toj5grbrgmh52rri
-  models.py: bafybeifir6ffdwmszi32tvvdxxs6dpiqatk272lpzupulmnn2nnpkli2om
+  fsm_specification.yaml: bafybeignehv2jebodhx3g4fkrd6dvyin4txlkfsunzghdpprip3azm434i
+  handlers.py: bafybeidefu2bxiadnxbnlaiz2e4ntrcrraxhrvmvyd7uce3e274lfdodti
+  models.py: bafybeiai3vxuyl2ydfxocaygnhbno2ef3lw4ag63turmd7fqpaleixc2xy
   tests/__init__.py: bafybeiadatapyjh3e7ucg2ehz77oms3ihrbutwb2cs2tkjehy54utwvuyi
+  tests/test_agent_config_resolution.py: bafybeiflcotz6gq2dgtnzptlyyhu5fryg3c6z7gosoqmln2tlci3v4odqa
   tests/test_behaviours.py: bafybeicovtjruufnh2yd5lhfvc6pgcletuyj2s3jaz5sz55wsdo2w22xle
-  tests/test_composition.py: bafybeiaatb2tn6lxx2bj6drxv6m6npg3voktaethniy7elwibmuzwml324
+  tests/test_composition.py: bafybeigrctnumcvoti6n47dauyieaj2b5tyxyq6tqefzzkdtk5b5dy4tfm
   tests/test_dialogues.py: bafybeibatogwoj6ieapcbiwonij6vskhogc65vfv53tyauqzeyiwmnd2im
-  tests/test_handlers.py: bafybeihvj6zpqszsccbxcciiufyy2n2tba3uobxhowo54uqily2g5qu6lq
-  tests/test_models.py: bafybeic4buelge2gbl3mongwoaempxhfrhq2hp7uvoevkz42v2uidyr2rm
+  tests/test_handlers.py: bafybeiewoqdpdnjvjirx2vpwt5u5m4qwba4easgivgsikqk7tbcp2abisq
+  tests/test_models.py: bafybeianja6z3rspswf4cag3pnq2hgtsbc3hq7ndggyr2p3q6ye34wnoqq
   ui-build/omenstrat/README.md: bafybeih5ywc7fybza2itvocpwjsdr4y2he2krcg5eudjylow2yduto7vyq
   ui-build/omenstrat/assets/agentsfun-chat-CQO2MvlO.png: bafybeibm5nhmhfa54gimrsjt7pupvw3bkg2ayr6nul5o5krlj67ivh26oy
-  ui-build/omenstrat/assets/index-B-dBrp1a.js: bafybeibxpzd4bdfy2drteylk5vftq67mayohufevwht53wtzqhbzqdkuge
+  ui-build/omenstrat/assets/index-C66CmaPc.js: bafybeihncox2g2imhf6gsd4ngqp4por6iwmridwzeqkppw7h7l6n6quy3y
   ui-build/omenstrat/assets/modius-chat-DP0cU_AO.png: bafybeigpfxxcza7y3r4v7qh5ymmjbh2dsofxqgdt2fdwdhe7ffr76xg3te
   ui-build/omenstrat/assets/omenstrat-chat-C3wR6Eyq.png: bafybeifz5fhtwnitqld2mcwoduxm7cjr2bsxiicav62zfw2ugng6tg4hc4
   ui-build/omenstrat/assets/optimus-chat-D2Oor3H8.png: bafybeiessqtxhcnh7ll34sw7ihg7ijbhcp4hbyngm4lqgx6sjppjuyaja4
@@ -30,10 +31,10 @@ fingerprint:
   ui-build/omenstrat/favicon.ico: bafybeifxjqwpttoghgfbukdabbbex2etjr2x6j274fckatcttdqiduczzm
   ui-build/omenstrat/images/background.png: bafybeicjqe6gt3pecbyw2l7cz3pj2xygieupborthfum6s6d2gimeyx5zy
   ui-build/omenstrat/images/card.png: bafybeifhqczjhyeyll25z7y7ed6n3ht2ts5e5qeoqxihoqzhqnouiz6qhu
-  ui-build/omenstrat/index.html: bafybeigqgoyxsrbtjb7q4atrsbmca7evsg4wdffsndpbhuncw65uwhnr3q
-  ui-build/polystrat/README.md: bafybeih5ywc7fybza2itvocpwjsdr4y2he2krcg5eudjylow2yduto7vyq
+  ui-build/omenstrat/index.html: bafybeibuwyeuiyq54fmdlrbgp5riuqpwckugilkgptefnt5uydjqvuymvu
+  ui-build/polystrat/README.md: bafybeiccodprvjsh5ejknb7iixrmfvz7igogs57mbkwmeiyq34m2xw22py
   ui-build/polystrat/assets/agentsfun-chat-CQO2MvlO.png: bafybeibm5nhmhfa54gimrsjt7pupvw3bkg2ayr6nul5o5krlj67ivh26oy
-  ui-build/polystrat/assets/index-th4N8cfd.js: bafybeicrvjx6dugb3tnbftrgkfjdca65buhm33iacdhqpj3atsmgxkb34y
+  ui-build/polystrat/assets/index-DXueHLS6.js: bafybeifezce2yd5i2hdncf5q6azcuacmfqnwcyfndjncsdv273brrjv2zu
   ui-build/polystrat/assets/modius-chat-DP0cU_AO.png: bafybeigpfxxcza7y3r4v7qh5ymmjbh2dsofxqgdt2fdwdhe7ffr76xg3te
   ui-build/polystrat/assets/omenstrat-chat-C3wR6Eyq.png: bafybeifz5fhtwnitqld2mcwoduxm7cjr2bsxiicav62zfw2ugng6tg4hc4
   ui-build/polystrat/assets/optimus-chat-D2Oor3H8.png: bafybeiessqtxhcnh7ll34sw7ihg7ijbhcp4hbyngm4lqgx6sjppjuyaja4
@@ -41,29 +42,29 @@ fingerprint:
   ui-build/polystrat/favicon.ico: bafybeifxjqwpttoghgfbukdabbbex2etjr2x6j274fckatcttdqiduczzm
   ui-build/polystrat/images/background.png: bafybeicjqe6gt3pecbyw2l7cz3pj2xygieupborthfum6s6d2gimeyx5zy
   ui-build/polystrat/images/card.png: bafybeifhqczjhyeyll25z7y7ed6n3ht2ts5e5qeoqxihoqzhqnouiz6qhu
-  ui-build/polystrat/index.html: bafybeicu5bsun2slz37jc44tmby273ijmuhyxqywljjb7xaiiammo3zsbq
+  ui-build/polystrat/index.html: bafybeicvkjdg7qmcuzw2oa7ztptminh5jqfv6gd3mucs4tgwpmitu3ljza
 fingerprint_ignore_patterns: []
 connections:
-- valory/http_server:0.22.0:bafybeid4oqsfkqo36lryoecymjnq4whme3tgupqfq6m4l7lbr5r4yxtswu
+- valory/http_server:0.22.0:bafybeihs6dufyaa5l4uorplzx3wiyna5qlq2x43tmyl3yonkl265vspdle
 contracts: []
 protocols:
 - valory/http:1.0.0:bafybeidxkp3vga7t6x2pbt2tpkgyaxa5bgpdgryao54py7w3yxyzr7neoy
-- valory/srr:0.1.0:bafybeiee2dgy6r2z5x6vu2ug5vcxvfgg4v3liq2x7v3hxchtp45mwnchg4
+- valory/srr:0.1.0:bafybeibfs6osw7guctdpollf4iwt4vhd6yk7ai34tqk5djuxtgowjwdjb4
 skills:
-- valory/abstract_round_abci:0.1.0:bafybeihygetmlgnhawrbyswvpvv3wpztr2hlhxkljmohp4r7qcmvglpwdq
-- valory/registration_abci:0.1.0:bafybeif3gpewppz5wr5mmgyvaowsamjufyons3oif7cb4x5ubvvfb6rtda
-- valory/reset_pause_abci:0.1.0:bafybeidcnf77bc3o7pssa5zesilpbm4ley2k45taii5j5rrvvty7uhu3lq
-- valory/transaction_settlement_abci:0.1.0:bafybeiajyrszyyo6z4lxogutv4ougiaeoxak6xkq5gtrbey32gbgnirznq
-- valory/termination_abci:0.1.0:bafybeia33hlouukdpwaxctunauudv5gpfdxndimra7yqiof4a3skcwdqkq
-- valory/market_manager_abci:0.1.0:bafybeihpf3vc67zkn55ycq6z2n6tasibtkihxwjts3xwu3w2govki6ld3m
-- valory/decision_maker_abci:0.1.0:bafybeieoxvew5ssyyz4loeausi5yfu6ancq5ddjv3hos5dkez7dpxblnye
-- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeifgoyoerwnpm3ylv7yisjwsxkwb4sszo3dafvkywghspxwr35ncqy
-- valory/staking_abci:0.1.0:bafybeihzojfq3eomfl26livdkupzl3l2b52kvr4hmklrllt5fxu2rilcvq
-- valory/check_stop_trading_abci:0.1.0:bafybeidqk64vk6wzs6sjw6q2hxwksi6wrvok75g37uo2byf27wsn6mjqri
-- valory/mech_interact_abci:0.1.0:bafybeied5l5xlygjyo3uju5bw52pidjvbkgdahhuzvahh6qis7kd3ht6ta
-- valory/chatui_abci:0.1.0:bafybeibshnto5jg7iym7lgue76x2wcb4z4twogov3njvk3sjfskke5wm6y
-- valory/agent_performance_summary_abci:0.1.0:bafybeicrtktm6a3kjptjrzcvungewxnysm2ien3cw6bdqhy3l6nhepx4di
-- valory/funds_manager:0.1.0:bafybeihxaharfszjutbrl5a2i76co22suhdt5bfsryv76ikkltisugqbjm
+- valory/abstract_round_abci:0.1.0:bafybeifkxnvvgsldkb4rgejsoon2mvrmrnl7asy2nhenwss7hpwg3myflu
+- valory/registration_abci:0.1.0:bafybeif4n2esdjvquomdkwktv7eolepskpo5jlqrfda2abxjqzy2ljsxzi
+- valory/reset_pause_abci:0.1.0:bafybeifrnmlscfiki7wojs6zasppefupd2wkjyq6orhdllfppjud7isrxi
+- valory/transaction_settlement_abci:0.1.0:bafybeihizaapype5sz7vlosms3nfo6jzfj4ujycuf5uthviq2otvmw6f6m
+- valory/termination_abci:0.1.0:bafybeih6sa2ttcvvjk7rcfn7ure2ws23kcfufssb4qmluzcfvednkfpvoi
+- valory/market_manager_abci:0.1.0:bafybeig3ak2eoimxwuupybde4napyi2jlf7pxk35se2zclikete2ni5hti
+- valory/decision_maker_abci:0.1.0:bafybeiednzcwaaiormf666q3lxcycf4zspzmvrnc5ayuvmgzmmn3h4clye
+- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeicrodjkcensnbb6r7f6bhw4gl2f477x2ff3dwd7vpkxu6jtijnbkm
+- valory/staking_abci:0.1.0:bafybeia6csjgex5zxdt6vymiaengu75lyzjdgfrnp65ewlghthiniquhje
+- valory/check_stop_trading_abci:0.1.0:bafybeieceomplkpt7ltjwm4piu7alm7ngx3pvqzpbuokm4smewz4373eua
+- valory/mech_interact_abci:0.1.0:bafybeifbkpgivxjexlhrptn2iaju7vyzeusevvucsin6tbjwveniykad2q
+- valory/chatui_abci:0.1.0:bafybeiazlrn2su5p5sql4u65vkuawqg54kzqpgtvmg2wc3tjalnxmdcqua
+- valory/agent_performance_summary_abci:0.1.0:bafybeidi2b6srtakjylczapjnqzmgh6o5l7jrveamktlndf2xuerz5gppm
+- valory/funds_manager:0.1.0:bafybeicfw7qjtnlcbw6awsvxdahqu42fxsfsd3wy7mbyhcbls4l5pee3by
 behaviours:
   main:
     args: {}
@@ -191,6 +192,43 @@ models:
       opening_margin: 300
       languages:
       - en_US
+      disabled_polymarket_tags:
+      - hide-from-new
+      - rewards-50-4pt5-20
+      - rewards-100-4pt5-100
+      - rewards-automation-50-4pt5-50
+      - finance-rewards-20
+      - denmark
+      - denmark-election
+      - slovenia
+      - slovenia-elections
+      - bulgaria
+      - venezuela
+      - colombia
+      - columbia
+      - colombia-election
+      - bangladesh-election
+      - trump-iran
+      - trump-xi
+      - trade-war
+      - tariffs
+      - tiktok
+      - china
+      - trump-presidency
+      - middle-east
+      - iran
+      - diplomacy-ceasefire
+      - geopolitics
+      - starmer
+      - uap
+      - ufo
+      - aliens
+      - march-3-primaries
+      - primaries
+      - primary-elections
+      - texas-primary
+      - house-primary
+      - republican-primary
       average_block_time: 5
       abt_error_mult: 5
       the_graph_error_message_key: message
@@ -202,6 +240,8 @@ models:
       sample_bets_closing_days: 10
       max_trades: 0
       max_mech_requests_per_cycle: 10
+      polymarket_spread_min: 0.0
+      polymarket_spread_max: 1.0
       trading_strategy: strategy_name
       use_fallback_strategy: true
       ipfs_address: https://gateway.autonolas.tech/ipfs/
@@ -219,27 +259,23 @@ models:
       minimum_batch_size: 500
       redeeming_batch_size: 5
       slippage: 0.01
+      withdrawal_slippage: 0.01
+      withdrawal_return_buffer: 0.05
+      dust_epsilon_wxdai: 10000000000000000
       policy_epsilon: 0.25
       store_path: /data/
       policy_store_update_offset: 259200
       use_subgraph_for_redeeming: true
-      irrelevant_tools:
-      - openai-text-davinci-002
-      - openai-text-davinci-003
-      - openai-gpt-3.5-turbo
-      - openai-gpt-4
-      - stabilityai-stable-diffusion-v1-5
-      - stabilityai-stable-diffusion-xl-beta-v2-2-2
-      - stabilityai-stable-diffusion-512-v2-1
-      - stabilityai-stable-diffusion-768-v2-1
       staking_contract_address: '0x2Ef503950Be67a98746F484DA0bBAdA339DF3326'
       staking_interaction_sleep_time: 5
       disable_trading: false
       stop_trading_if_staking_kpi_met: true
+      activity_target: 8
       agent_balance_threshold: 10000000000000000
       refill_check_interval: 10
       mech_activity_checker_contract: '0x0000000000000000000000000000000000000000'
       redeem_round_timeout: 3600.0
+      withdrawal_round_timeout: 1800.0
       tool_punishment_multiplier: 1
       contract_timeout: 300.0
       file_hash_to_strategies: {}
@@ -266,6 +302,13 @@ models:
         priority_mech_service_id: 0
         requester_staking_instance_address: '0x0000000000000000000000000000000000000000'
         response_timeout: 300
+        use_offchain: false
+        offchain_url: null
+        offchain_deposit_target_calls: 10
+        auto_deposit_cap_per_cycle: 5000000000000000000
+        offchain_poll_interval_seconds: 3.0
+        offchain_poll_timeout_seconds: 300.0
+        offchain_failover_max_retries: 2
       expected_mech_response_time: 300
       mech_invalid_response: Invalid Response
       mech_consecutive_failures_threshold: 2
@@ -276,6 +319,10 @@ models:
       enable_multi_bets_fallback: false
       enable_position_review: false
       review_period_seconds: 86400
+      withdrawal_max_fak_attempts: 3
+      withdrawal_fak_backoff_s:
+      - 10
+      - 30
       coingecko_olas_in_usd_price_url: https://api.coingecko.com/api/v3/simple/token_price/xdai?contract_addresses=0xcE11e14225575945b8E6Dc0D4F2dD4C570f79d9f&vs_currencies=usd
       coingecko_pol_in_usd_price_url: https://api.coingecko.com/api/v3/simple/token_price/polygon-pos?contract_addresses=0x0000000000000000000000000000000000001010&vs_currencies=usd
       x402_payment_requirements: {}
@@ -286,13 +333,22 @@ models:
       is_agent_performance_summary_enabled: true
       is_achievement_checker_enabled: true
       is_running_on_polymarket: false
+      balance_tracker_address: '0x0000000000000000000000000000000000000000'
+      mech_analytics_url: ''
+      use_mech_analytics: false
       polymarket_builder_program_enabled: true
-      polymarket_usdc_address: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174'
+      polymarket_collateral_address: '0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB'
+      polymarket_usdc_e_address: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174'
+      polymarket_collateral_onramp_address: '0x93070a847efEf7F70739046A929D47a521F5B8ee'
+      polymarket_usdc_e_wrap_dust_threshold: 1000000
       polymarket_ctf_address: '0x4D97DCd97eC945f40cF65F87097ACe5EA0476045'
-      polymarket_ctf_exchange_address: '0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E'
-      polymarket_neg_risk_ctf_exchange_address: '0xC5d563A36AE78145C45a50134d48A1215220f80a'
+      polymarket_ctf_exchange_address: '0xE111180000d2663C0091e4f400237545B87B996B'
+      polymarket_neg_risk_ctf_exchange_address: '0xe2222d279d744050d28e00520010520000310F59'
       polymarket_neg_risk_adapter_address: '0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296'
-      ignored_mechs: []
+      polymarket_ctf_collateral_adapter_address: '0xAdA100Db00Ca00073811820692005400218FcE1f'
+      polymarket_neg_risk_ctf_collateral_adapter_address: '0xadA2005600Dec949baf300f4C6120000bDB6eAab'
+      valid_mechs: []
+      mech_marketplace_v1_suitable_tools: []
       penalize_mech_time_window: 1800
       pol_threshold_for_swap: 2000000000000000000
       slippages_for_swap: {}
@@ -461,7 +517,7 @@ models:
       error_index: 0
       error_type: dict
       retries: 5
-      url: https://api.subgraph.staging.autonolas.tech/api/proxy/predict-omen
+      url: https://api.subgraph.autonolas.tech/api/proxy/predict-omen
     class_name: OpenMarketsSubgraph
   olas_agents_subgraph:
     args:
@@ -476,7 +532,7 @@ models:
       error_index: 0
       error_type: dict
       retries: 5
-      url: https://api.subgraph.staging.autonolas.tech/api/proxy/predict-omen
+      url: https://api.subgraph.autonolas.tech/api/proxy/predict-omen
     class_name: OlasAgentsSubgraph
   olas_mech_subgraph:
     args:
@@ -564,7 +620,7 @@ models:
       error_index: 0
       error_type: dict
       retries: 5
-      url: https://predict-polymarket-agents.subgraph.autonolas.tech/
+      url: https://api.subgraph.autonolas.tech/api/proxy/predict-polymarket
     class_name: PolymarketAgentsSubgraph
   polymarket_bets_subgraph:
     args:
@@ -579,7 +635,7 @@ models:
       error_index: 0
       error_type: dict
       retries: 5
-      url: https://predict-polymarket-agents.subgraph.autonolas.tech/
+      url: https://api.subgraph.autonolas.tech/api/proxy/predict-polymarket
     class_name: PolymarketBetsSubgraph
   polygon_mech_subgraph:
     args:
@@ -615,9 +671,9 @@ dependencies:
   eth-account:
     version: <0.14.0,>=0.13.0
   web3:
-    version: <8,>=7.0.0
+    version: <8,>=7.15.0
   requests:
     version: <2.33.0,>=2.32.5
   open-aea-ledger-ethereum:
-    version: ==2.1.0
+    version: ==2.2.9
 is_abstract: false

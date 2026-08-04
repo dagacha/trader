@@ -64,12 +64,15 @@ def _make_mock_bet(  # type: ignore[no-untyped-def]
     liquidity=100.0,
     outcome_prices=None,
     neg_risk=False,
+    poly_tags=None,
 ):
     """Create a mock Bet object."""
     if opening_timestamp is None:
         opening_timestamp = int(time.time()) + 86400 * 7  # 7 days from now
     if outcome_prices is None:
         outcome_prices = [0.5, 0.5]
+    if poly_tags is None:
+        poly_tags = []
 
     bet = MagicMock(spec=Bet)
     bet.id = bet_id
@@ -81,6 +84,7 @@ def _make_mock_bet(  # type: ignore[no-untyped-def]
     bet.scaledLiquidityMeasure = liquidity
     bet.outcomeTokenMarginalPrices = outcome_prices
     bet.neg_risk = neg_risk
+    bet.poly_tags = poly_tags
     bet.blacklist_forever = MagicMock()
     return bet
 
@@ -141,12 +145,15 @@ class TestSamplingBehaviourProperties:
     """Tests for SamplingBehaviour properties."""
 
     def test_kpi_is_met(self) -> None:
-        """kpi_is_met should return synchronized_data value."""
+        """kpi_is_met should follow the regime-aware activity-target signal."""
         behaviour = _make_behaviour()
         with patch.object(
             type(behaviour), "synchronized_data", new_callable=PropertyMock
         ) as mock_sd:
-            mock_sd.return_value = MagicMock(is_staking_kpi_met=True)
+            # tracks is_activity_target_met, NOT is_staking_kpi_met
+            mock_sd.return_value = MagicMock(
+                is_activity_target_met=True, is_staking_kpi_met=False
+            )
             assert behaviour.kpi_is_met is True
 
     def test_review_bets_for_selling(self) -> None:
@@ -341,6 +348,159 @@ class TestProcessableBet:
         assert result is True
 
 
+class TestClassifyProcessableBet:
+    """Tests for _classify_processable_bet (observability mirror of processable_bet)."""
+
+    @staticmethod
+    def _patched(
+        behaviour: SamplingBehaviour,
+        bet: Bet,
+        now: int,
+        kpi_is_met: bool = False,
+        review_bets_for_selling: bool = False,
+        multi_bets_active: bool = False,
+        sample_bets_closing_days: int = 60,
+        opening_margin: int = 100,
+        safe_voting_range: int = 100,
+    ) -> str:
+        """Run _classify_processable_bet with stubbed params/properties."""
+        with patch.object(
+            type(behaviour), "params", new_callable=PropertyMock
+        ) as mock_params:
+            mock_params.return_value = MagicMock(
+                sample_bets_closing_days=sample_bets_closing_days,
+                opening_margin=opening_margin,
+                safe_voting_range=safe_voting_range,
+            )
+            with patch.object(
+                type(behaviour), "kpi_is_met", new_callable=PropertyMock
+            ) as mock_kpi:
+                mock_kpi.return_value = kpi_is_met
+                with patch.object(
+                    type(behaviour),
+                    "review_bets_for_selling",
+                    new_callable=PropertyMock,
+                ) as mock_rbs:
+                    mock_rbs.return_value = review_bets_for_selling
+                    return behaviour._classify_processable_bet(
+                        bet, now=now, multi_bets_active=multi_bets_active
+                    )
+
+    def test_classify_expired(self) -> None:
+        """Expired bet should classify as 'expired'."""
+        behaviour = _make_behaviour()
+        bet = _make_mock_bet()
+        bet.queue_status = MagicMock()
+        bet.queue_status.is_expired.return_value = True
+
+        assert self._patched(behaviour, bet, now=int(time.time())) == "expired"
+        # observability mirror must NOT have side-effects
+        bet.blacklist_forever.assert_not_called()
+
+    def test_classify_wrong_mode_no_bets_selling_specific(self) -> None:
+        """No bets placed under selling_specific should classify as 'wrong_mode'."""
+        behaviour = _make_behaviour()
+        now = int(time.time())
+        bet = _make_mock_bet(n_bets=0, opening_timestamp=now + 86400 * 30)
+        bet.queue_status = QueueStatus.TO_PROCESS
+        bet.queue_status.is_expired = MagicMock(return_value=False)
+
+        assert (
+            self._patched(
+                behaviour,
+                bet,
+                now=now,
+                kpi_is_met=True,
+                review_bets_for_selling=True,
+            )
+            == "wrong_mode"
+        )
+
+    def test_classify_wrong_mode_when_mode_not_allowable(self) -> None:
+        """bets_placed with neither multi-bets nor selling_specific should classify as 'wrong_mode'."""
+        behaviour = _make_behaviour()
+        now = int(time.time())
+        bet = _make_mock_bet(n_bets=1, opening_timestamp=now + 86400 * 30)
+        bet.queue_status = QueueStatus.TO_PROCESS
+        bet.queue_status.is_expired = MagicMock(return_value=False)
+
+        assert (
+            self._patched(
+                behaviour,
+                bet,
+                now=now,
+                multi_bets_active=False,
+                kpi_is_met=False,
+                review_bets_for_selling=False,
+            )
+            == "wrong_mode"
+        )
+
+    def test_classify_out_of_safe(self) -> None:
+        """Bet too close to opening (inside safe voting range) classifies as 'out_of_safe'."""
+        behaviour = _make_behaviour()
+        now = int(time.time())
+        # bet opens within (opening_margin + safe_voting_range) of now
+        bet = _make_mock_bet(n_bets=0, opening_timestamp=now + 10)
+        bet.queue_status = QueueStatus.TO_PROCESS
+        bet.queue_status.is_expired = MagicMock(return_value=False)
+
+        assert (
+            self._patched(
+                behaviour, bet, now=now, opening_margin=100, safe_voting_range=100
+            )
+            == "out_of_safe"
+        )
+
+    def test_classify_out_of_open(self) -> None:
+        """Bet within safe range but past sample_bets_closing_days classifies as 'out_of_open'."""
+        behaviour = _make_behaviour()
+        now = int(time.time())
+        # safe range OK (far future opening), but past closing window
+        # opening = now + 100 days; closing_days = 10; so within_opening = False
+        bet = _make_mock_bet(n_bets=0, opening_timestamp=now + 86400 * 100)
+        bet.queue_status = QueueStatus.TO_PROCESS
+        bet.queue_status.is_expired = MagicMock(return_value=False)
+
+        assert (
+            self._patched(
+                behaviour,
+                bet,
+                now=now,
+                sample_bets_closing_days=10,
+                opening_margin=100,
+                safe_voting_range=100,
+            )
+            == "out_of_open"
+        )
+
+    def test_classify_wrong_queue(self) -> None:
+        """Bet in non-processable queue status (e.g. FRESH) classifies as 'wrong_queue'."""
+        behaviour = _make_behaviour()
+        now = int(time.time())
+        bet = _make_mock_bet(n_bets=0, opening_timestamp=now + 86400 * 5)
+        bet.queue_status = QueueStatus.FRESH
+        bet.queue_status.is_expired = MagicMock(return_value=False)
+
+        assert (
+            self._patched(behaviour, bet, now=now, sample_bets_closing_days=60)
+            == "wrong_queue"
+        )
+
+    def test_classify_processable(self) -> None:
+        """Bet passing all checks classifies as 'processable'."""
+        behaviour = _make_behaviour()
+        now = int(time.time())
+        bet = _make_mock_bet(n_bets=0, opening_timestamp=now + 86400 * 5)
+        bet.queue_status = QueueStatus.TO_PROCESS
+        bet.queue_status.is_expired = MagicMock(return_value=False)
+
+        assert (
+            self._patched(behaviour, bet, now=now, sample_bets_closing_days=60)
+            == "processable"
+        )
+
+
 class TestSortByPriorityLogic:
     """Tests for _sort_by_priority_logic."""
 
@@ -502,6 +662,7 @@ class TestSample:
         outcome_side_threshold_filter_threshold=0.95,
         exclude_neg_risk_markets=False,
         is_running_on_polymarket=False,
+        disabled_polymarket_tags=None,
     ):
         """Create a behaviour for _sample testing."""
         behaviour = _make_behaviour()
@@ -523,6 +684,7 @@ class TestSample:
         )
         params.exclude_neg_risk_markets = exclude_neg_risk_markets
         params.is_running_on_polymarket = is_running_on_polymarket
+        params.disabled_polymarket_tags = disabled_polymarket_tags or []
 
         benchmarking_mode = MagicMock()
         benchmarking_mode.enabled = benchmarking_enabled
@@ -616,6 +778,20 @@ class TestSample:
                                 result = behaviour._sample()
 
         assert result == 0
+        # No fallback fired here, so the top filter line must report
+        # fallback_activated as False, only the strict breakdown line should
+        # be emitted, and no fallback breakdown line should appear.
+        log_calls = [str(c) for c in behaviour.context.logger.info.call_args_list]
+        assert any(
+            "filter=processable_bet " in call and "fallback_activated=False" in call
+            for call in log_calls
+        )
+        assert any(
+            "filter=processable_bet.breakdown.strict" in call for call in log_calls
+        )
+        assert not any(
+            "filter=processable_bet.breakdown.fallback" in call for call in log_calls
+        )
 
     def test_sample_skips_zero_liquidity(self) -> None:
         """Should skip bets with zero liquidity."""
@@ -1034,6 +1210,21 @@ class TestSample:
                                 result = behaviour._sample()
 
         assert result == 0
+        # When fallback fires, top filter line must carry
+        # fallback_activated=True, and both .breakdown.strict and
+        # .breakdown.fallback must be emitted so operators can reconcile
+        # the strict-mode and post-fallback views.
+        log_calls = [str(c) for c in behaviour.context.logger.info.call_args_list]
+        assert any(
+            "filter=processable_bet " in call and "fallback_activated=True" in call
+            for call in log_calls
+        )
+        assert any(
+            "filter=processable_bet.breakdown.strict" in call for call in log_calls
+        )
+        assert any(
+            "filter=processable_bet.breakdown.fallback" in call for call in log_calls
+        )
 
     def test_sample_multi_bets_fallback_no_bets_found(self) -> None:
         """Should return None when fallback finds no bets either."""
@@ -1209,6 +1400,400 @@ class TestSample:
                             result = behaviour._sample()
 
         assert result is None
+
+    def test_sample_skips_bet_with_disabled_tag(self) -> None:
+        """A bet whose poly_tags intersect disabled_polymarket_tags is skipped."""
+        now = int(time.time())
+        bet_banned = _make_mock_bet(
+            bet_id="banned",
+            queue_status=QueueStatus.TO_PROCESS,
+            opening_timestamp=now + 86400 * 5,
+            liquidity=100.0,
+            poly_tags=["politics", "hide-from-new"],
+        )
+        bet_banned.queue_status.is_expired = MagicMock(return_value=False)
+
+        bet_ok = _make_mock_bet(
+            bet_id="ok",
+            queue_status=QueueStatus.TO_PROCESS,
+            opening_timestamp=now + 86400 * 5,
+            liquidity=80.0,
+            poly_tags=["politics"],
+        )
+        bet_ok.queue_status.is_expired = MagicMock(return_value=False)
+
+        behaviour, params, bm, ss = self._setup_behaviour_for_sample(
+            bets=[bet_banned, bet_ok],
+            disabled_polymarket_tags=["hide-from-new"],
+        )
+
+        with patch.object(
+            type(behaviour), "params", new_callable=PropertyMock, return_value=params
+        ):
+            with patch.object(
+                type(behaviour),
+                "benchmarking_mode",
+                new_callable=PropertyMock,
+                return_value=bm,
+            ):
+                with patch.object(
+                    type(behaviour),
+                    "synced_timestamp",
+                    new_callable=PropertyMock,
+                    return_value=now,
+                ):
+                    with patch.object(
+                        type(behaviour),
+                        "shared_state",
+                        new_callable=PropertyMock,
+                        return_value=ss,
+                    ):
+                        with patch.object(
+                            type(behaviour),
+                            "kpi_is_met",
+                            new_callable=PropertyMock,
+                            return_value=False,
+                        ):
+                            with patch.object(
+                                type(behaviour),
+                                "review_bets_for_selling",
+                                new_callable=PropertyMock,
+                                return_value=False,
+                            ):
+                                result = behaviour._sample()
+
+        # Banned bet at index 0 must be skipped; the ok bet at index 1 is returned.
+        assert result == 1
+
+    def test_sample_skips_bet_case_insensitive(self) -> None:
+        """Mixed-case tag on the bet matches a lowercase disabled slug."""
+        now = int(time.time())
+        bet_banned = _make_mock_bet(
+            bet_id="banned",
+            queue_status=QueueStatus.TO_PROCESS,
+            opening_timestamp=now + 86400 * 5,
+            liquidity=100.0,
+            poly_tags=["Hide-From-New", "Politics"],
+        )
+        bet_banned.queue_status.is_expired = MagicMock(return_value=False)
+
+        behaviour, params, bm, ss = self._setup_behaviour_for_sample(
+            bets=[bet_banned],
+            disabled_polymarket_tags=["hide-from-new"],
+        )
+
+        with patch.object(
+            type(behaviour), "params", new_callable=PropertyMock, return_value=params
+        ):
+            with patch.object(
+                type(behaviour),
+                "benchmarking_mode",
+                new_callable=PropertyMock,
+                return_value=bm,
+            ):
+                with patch.object(
+                    type(behaviour),
+                    "synced_timestamp",
+                    new_callable=PropertyMock,
+                    return_value=now,
+                ):
+                    with patch.object(
+                        type(behaviour),
+                        "shared_state",
+                        new_callable=PropertyMock,
+                        return_value=ss,
+                    ):
+                        with patch.object(
+                            type(behaviour),
+                            "kpi_is_met",
+                            new_callable=PropertyMock,
+                            return_value=False,
+                        ):
+                            with patch.object(
+                                type(behaviour),
+                                "review_bets_for_selling",
+                                new_callable=PropertyMock,
+                                return_value=False,
+                            ):
+                                result = behaviour._sample()
+
+        # Only bet is banned → no valid sample.
+        assert result is None
+
+    def test_sample_empty_disabled_tags_allows_all(self) -> None:
+        """With no disabled tags configured, no bet is filtered on tag grounds."""
+        now = int(time.time())
+        bet = _make_mock_bet(
+            bet_id="a",
+            queue_status=QueueStatus.TO_PROCESS,
+            opening_timestamp=now + 86400 * 5,
+            liquidity=100.0,
+            poly_tags=["hide-from-new"],
+        )
+        bet.queue_status.is_expired = MagicMock(return_value=False)
+
+        behaviour, params, bm, ss = self._setup_behaviour_for_sample(
+            bets=[bet],
+            disabled_polymarket_tags=[],
+        )
+
+        with patch.object(
+            type(behaviour), "params", new_callable=PropertyMock, return_value=params
+        ):
+            with patch.object(
+                type(behaviour),
+                "benchmarking_mode",
+                new_callable=PropertyMock,
+                return_value=bm,
+            ):
+                with patch.object(
+                    type(behaviour),
+                    "synced_timestamp",
+                    new_callable=PropertyMock,
+                    return_value=now,
+                ):
+                    with patch.object(
+                        type(behaviour),
+                        "shared_state",
+                        new_callable=PropertyMock,
+                        return_value=ss,
+                    ):
+                        with patch.object(
+                            type(behaviour),
+                            "kpi_is_met",
+                            new_callable=PropertyMock,
+                            return_value=False,
+                        ):
+                            with patch.object(
+                                type(behaviour),
+                                "review_bets_for_selling",
+                                new_callable=PropertyMock,
+                                return_value=False,
+                            ):
+                                result = behaviour._sample()
+
+        # Empty disable list → tag filter is a no-op; the bet is returned.
+        assert result == 0
+
+    def test_sample_orphan_legacy_bet_with_refreshed_tags_skipped(self) -> None:
+        """Regression guard for the orphan legacy-bet case.
+
+        Simulates the post-refresh state: a legacy bet that started with
+        poly_tags=[] in multi_bets.json but got its tags refreshed via
+        update_market_info during market_manager's _process_chunk. Together
+        with test_update_market_info_copies_poly_tags in test_bets.py this
+        proves the orphan-bet leak is closed end-to-end — the blacklist step
+        is unnecessary because sampling catches it at read time.
+        """
+        now = int(time.time())
+        # Post-refresh state — poly_tags populated by update_market_info.
+        legacy_bet_refreshed = _make_mock_bet(
+            bet_id="legacy",
+            queue_status=QueueStatus.TO_PROCESS,
+            opening_timestamp=now + 86400 * 5,
+            liquidity=100.0,
+            poly_tags=["hide-from-new"],
+        )
+        legacy_bet_refreshed.queue_status.is_expired = MagicMock(return_value=False)
+
+        bet_ok = _make_mock_bet(
+            bet_id="ok",
+            queue_status=QueueStatus.TO_PROCESS,
+            opening_timestamp=now + 86400 * 5,
+            liquidity=80.0,
+            poly_tags=[],
+        )
+        bet_ok.queue_status.is_expired = MagicMock(return_value=False)
+
+        behaviour, params, bm, ss = self._setup_behaviour_for_sample(
+            bets=[legacy_bet_refreshed, bet_ok],
+            disabled_polymarket_tags=["hide-from-new"],
+        )
+
+        with patch.object(
+            type(behaviour), "params", new_callable=PropertyMock, return_value=params
+        ):
+            with patch.object(
+                type(behaviour),
+                "benchmarking_mode",
+                new_callable=PropertyMock,
+                return_value=bm,
+            ):
+                with patch.object(
+                    type(behaviour),
+                    "synced_timestamp",
+                    new_callable=PropertyMock,
+                    return_value=now,
+                ):
+                    with patch.object(
+                        type(behaviour),
+                        "shared_state",
+                        new_callable=PropertyMock,
+                        return_value=ss,
+                    ):
+                        with patch.object(
+                            type(behaviour),
+                            "kpi_is_met",
+                            new_callable=PropertyMock,
+                            return_value=False,
+                        ):
+                            with patch.object(
+                                type(behaviour),
+                                "review_bets_for_selling",
+                                new_callable=PropertyMock,
+                                return_value=False,
+                            ):
+                                result = behaviour._sample()
+
+        # The refreshed legacy bet (index 0) is skipped; the untagged ok bet
+        # (index 1) is returned.
+        assert result == 1
+
+    def test_sample_strips_whitespace_around_tags(self) -> None:
+        """Tags with leading/trailing whitespace still match after strip()+lower().
+
+        Guards against silent bypass if Polymarket ever returns a tag like
+        "  hide-from-new  " or if an operator pastes a disabled slug with
+        trailing whitespace into the YAML.
+        """
+        now = int(time.time())
+        bet_banned = _make_mock_bet(
+            bet_id="banned",
+            queue_status=QueueStatus.TO_PROCESS,
+            opening_timestamp=now + 86400 * 5,
+            liquidity=100.0,
+            poly_tags=["  Hide-From-New  "],  # padded AND mixed case
+        )
+        bet_banned.queue_status.is_expired = MagicMock(return_value=False)
+
+        behaviour, params, bm, ss = self._setup_behaviour_for_sample(
+            bets=[bet_banned],
+            disabled_polymarket_tags=["hide-from-new"],
+        )
+
+        with patch.object(
+            type(behaviour), "params", new_callable=PropertyMock, return_value=params
+        ):
+            with patch.object(
+                type(behaviour),
+                "benchmarking_mode",
+                new_callable=PropertyMock,
+                return_value=bm,
+            ):
+                with patch.object(
+                    type(behaviour),
+                    "synced_timestamp",
+                    new_callable=PropertyMock,
+                    return_value=now,
+                ):
+                    with patch.object(
+                        type(behaviour),
+                        "shared_state",
+                        new_callable=PropertyMock,
+                        return_value=ss,
+                    ):
+                        with patch.object(
+                            type(behaviour),
+                            "kpi_is_met",
+                            new_callable=PropertyMock,
+                            return_value=False,
+                        ):
+                            with patch.object(
+                                type(behaviour),
+                                "review_bets_for_selling",
+                                new_callable=PropertyMock,
+                                return_value=False,
+                            ):
+                                result = behaviour._sample()
+
+        # Padding and case both normalized away → bet is skipped.
+        assert result is None
+
+    def test_sample_prefilters_banned_bets_before_loop(self) -> None:
+        """Banned bets are dropped from available_bets before the loop starts.
+
+        Dropping them before the while-loop avoids re-sorting the candidate
+        pool each time a banned bet is skipped.
+
+        Discriminating assertion: wrap `_sampled_bet_idx` and assert it is
+        called once (the pre-filter reduced 5 banned + 1 ok to [bet_ok],
+        so one sort call returns index immediately). If the filter still
+        lived inside the loop, `_sampled_bet_idx` would be called 6 times —
+        once per banned bet + once for the final ok pick.
+        """
+        now = int(time.time())
+        banned_bets = [
+            _make_mock_bet(
+                bet_id=f"banned{i}",
+                queue_status=QueueStatus.TO_PROCESS,
+                opening_timestamp=now + 86400 * 5,
+                liquidity=100.0,
+                poly_tags=["hide-from-new"],
+            )
+            for i in range(5)
+        ]
+        for b in banned_bets:
+            b.queue_status.is_expired = MagicMock(return_value=False)
+
+        bet_ok = _make_mock_bet(
+            bet_id="ok",
+            queue_status=QueueStatus.TO_PROCESS,
+            opening_timestamp=now + 86400 * 5,
+            liquidity=80.0,
+            poly_tags=["politics"],
+        )
+        bet_ok.queue_status.is_expired = MagicMock(return_value=False)
+
+        all_bets = banned_bets + [bet_ok]
+        behaviour, params, bm, ss = self._setup_behaviour_for_sample(
+            bets=all_bets,
+            disabled_polymarket_tags=["hide-from-new"],
+        )
+
+        # Wrap _sampled_bet_idx so we can count how many times it ran.
+        real_sampler = behaviour._sampled_bet_idx
+        call_counter = MagicMock(side_effect=real_sampler)
+        behaviour._sampled_bet_idx = call_counter  # type: ignore[method-assign]
+
+        with patch.object(
+            type(behaviour), "params", new_callable=PropertyMock, return_value=params
+        ):
+            with patch.object(
+                type(behaviour),
+                "benchmarking_mode",
+                new_callable=PropertyMock,
+                return_value=bm,
+            ):
+                with patch.object(
+                    type(behaviour),
+                    "synced_timestamp",
+                    new_callable=PropertyMock,
+                    return_value=now,
+                ):
+                    with patch.object(
+                        type(behaviour),
+                        "shared_state",
+                        new_callable=PropertyMock,
+                        return_value=ss,
+                    ):
+                        with patch.object(
+                            type(behaviour),
+                            "kpi_is_met",
+                            new_callable=PropertyMock,
+                            return_value=False,
+                        ):
+                            with patch.object(
+                                type(behaviour),
+                                "review_bets_for_selling",
+                                new_callable=PropertyMock,
+                                return_value=False,
+                            ):
+                                result = behaviour._sample()
+
+        # bet_ok is at index 5 in self.bets (5 banned bets precede it).
+        assert result == 5
+        # Pre-filter collapsed candidates to [bet_ok] → single sort call.
+        assert call_counter.call_count == 1
 
 
 class TestBenchmarkingIncDay:

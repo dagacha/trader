@@ -77,6 +77,14 @@ class FinishedPolymarketRedeemRound(DegenerateRound):
     """A round representing that polymarket redeem has finished."""
 
 
+class FinishedPolymarketBetPlacementRound(DegenerateRound):
+    """A round representing that an off-chain Polymarket bet has been placed and the cycle should wrap up via the staking checkpoint."""
+
+
+class FinishedPostBetUpdateRound(DegenerateRound):
+    """A round representing that the post-bet bookkeeping has run after an Omen bet/sell tx and the cycle should wrap up via the staking checkpoint."""
+
+
 class FinishedPolymarketSwapTxPreparationRound(DegenerateRound):
     """A round representing that Polymarket swap has finished and needs to go to tx settlement."""
 
@@ -87,3 +95,19 @@ class FinishedMechOnlyRequestRound(DegenerateRound):
 
 class FinishedMechOnlyRound(DegenerateRound):
     """A round representing that post-cap Mech analysis is complete and the cycle may checkpoint."""
+
+
+class FinishedPolymarketWrapCollateralTxPreparationRound(DegenerateRound):
+    """A round representing that a USDC.e → pUSD wrap has been prepared and needs tx settlement."""
+
+
+class FinishedOmenWithdrawRound(DegenerateRound):
+    """A round representing that the Omen withdrawal sweep multisend has been prepared and needs tx settlement."""
+
+
+class FinishedPolymarketTopUpTxPreparationRound(DegenerateRound):
+    """A round representing that a Safe→DepositWallet top-up has been prepared and needs tx settlement."""
+
+
+class FinishedPolymarketWithdrawTopUpTxPreparationRound(DegenerateRound):
+    """A round representing that a Safe→DepositWallet CTF withdrawal top-up has been prepared and needs tx settlement."""

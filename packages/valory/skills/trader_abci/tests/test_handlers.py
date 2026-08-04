@@ -31,7 +31,9 @@ from packages.valory.connections.http_server.connection import (
     PUBLIC_ID as HTTP_SERVER_PUBLIC_ID,
 )
 from packages.valory.protocols.http.message import HttpMessage
-from packages.valory.skills.abstract_round_abci.handlers import ABCIRoundHandler
+from packages.valory.skills.abstract_round_abci.handlers import (
+    ABCIRoundHandler,
+)
 from packages.valory.skills.abstract_round_abci.handlers import (
     ContractApiHandler as BaseContractApiHandler,
 )
@@ -49,7 +51,9 @@ from packages.valory.skills.chatui_abci.models import TradingStrategyUI
 from packages.valory.skills.decision_maker_abci.handlers import (
     HttpHandler as BaseHttpHandler,
 )
-from packages.valory.skills.decision_maker_abci.handlers import HttpMethod
+from packages.valory.skills.decision_maker_abci.handlers import (
+    HttpMethod,
+)
 from packages.valory.skills.decision_maker_abci.handlers import (
     IpfsHandler as BaseIpfsHandler,
 )
@@ -78,6 +82,7 @@ from packages.valory.skills.trader_abci.handlers import (
     POLYGON_CHAIN_NAME,
     POLYGON_NATIVE_TOKEN_ADDRESS,
     POLYGON_POL_ADDRESS,
+    POLYGON_PUSD_ADDRESS,
     POLYGON_USDC_ADDRESS,
     POLYGON_USDC_E_ADDRESS,
     POLYGON_WRAPPED_NATIVE_ADDRESS,
@@ -554,13 +559,17 @@ class TestHandleGetAgentInfo:
         mock_staking.agent_ids = "[1, 2]"
         mock_staking.service_id = 42
 
-        with patch.object(
-            type(self.handler), "synchronized_data", new_callable=PropertyMock
-        ) as mock_sd, patch.object(
-            type(self.handler), "staking_synchronized_data", new_callable=PropertyMock
-        ) as mock_ssd, patch.object(
-            self.handler, "_send_ok_response"
-        ) as mock_send:
+        with (
+            patch.object(
+                type(self.handler), "synchronized_data", new_callable=PropertyMock
+            ) as mock_sd,
+            patch.object(
+                type(self.handler),
+                "staking_synchronized_data",
+                new_callable=PropertyMock,
+            ) as mock_ssd,
+            patch.object(self.handler, "_send_ok_response") as mock_send,
+        ):
             mock_sd.return_value = mock_synced
             mock_ssd.return_value = mock_staking
 
@@ -592,9 +601,12 @@ class TestHandleGetTradingDetails:
         mock_synced.safe_contract_address = "0xSafe"
         self.handler.shared_state.chatui_config.trading_strategy = None
 
-        with patch.object(
-            type(self.handler), "synchronized_data", new_callable=PropertyMock
-        ) as mock_sd, patch.object(self.handler, "_send_ok_response") as mock_send:
+        with (
+            patch.object(
+                type(self.handler), "synchronized_data", new_callable=PropertyMock
+            ) as mock_sd,
+            patch.object(self.handler, "_send_ok_response") as mock_send,
+        ):
             mock_sd.return_value = mock_synced
             self.handler._handle_get_trading_details(http_msg, http_dialogue)
             mock_send.assert_called_once()
@@ -608,11 +620,14 @@ class TestHandleGetTradingDetails:
         http_msg = MagicMock()
         http_dialogue = MagicMock()
 
-        with patch.object(
-            type(self.handler), "synchronized_data", new_callable=PropertyMock
-        ) as mock_sd, patch.object(
-            self.handler, "_send_internal_server_error_response"
-        ) as mock_err:
+        with (
+            patch.object(
+                type(self.handler), "synchronized_data", new_callable=PropertyMock
+            ) as mock_sd,
+            patch.object(
+                self.handler, "_send_internal_server_error_response"
+            ) as mock_err,
+        ):
             mock_sd.side_effect = Exception("boom")
             self.handler._handle_get_trading_details(http_msg, http_dialogue)
             mock_err.assert_called_once()
@@ -635,14 +650,16 @@ class TestHandleGetStaticFile:
         http_msg.url = "http://localhost:8080/test.js"
         http_dialogue = MagicMock()
 
-        with patch.object(self.handler, "_send_ok_response") as mock_send, patch.object(
-            self.handler, "_get_content_type", return_value="application/javascript"
-        ), patch(
-            "packages.valory.skills.trader_abci.handlers.urlparse"
-        ) as mock_urlparse, patch(
-            "packages.valory.skills.trader_abci.handlers.Path"
-        ) as MockPath, patch(
-            "builtins.open", mock_open(read_data=b"js_content")
+        with (
+            patch.object(self.handler, "_send_ok_response") as mock_send,
+            patch.object(
+                self.handler, "_get_content_type", return_value="application/javascript"
+            ),
+            patch(
+                "packages.valory.skills.trader_abci.handlers.urlparse"
+            ) as mock_urlparse,
+            patch("packages.valory.skills.trader_abci.handlers.Path") as MockPath,
+            patch("builtins.open", mock_open(read_data=b"js_content")),
         ):
             mock_urlparse.return_value.path = "/test.js"
             file_path_mock = MagicMock()
@@ -659,12 +676,13 @@ class TestHandleGetStaticFile:
         http_msg.url = "http://localhost:8080/nonexistent"
         http_dialogue = MagicMock()
 
-        with patch.object(self.handler, "_send_ok_response") as mock_send, patch(
-            "packages.valory.skills.trader_abci.handlers.urlparse"
-        ) as mock_urlparse, patch(
-            "packages.valory.skills.trader_abci.handlers.Path"
-        ) as MockPath, patch(
-            "builtins.open", mock_open(read_data="<html>index</html>")
+        with (
+            patch.object(self.handler, "_send_ok_response") as mock_send,
+            patch(
+                "packages.valory.skills.trader_abci.handlers.urlparse"
+            ) as mock_urlparse,
+            patch("packages.valory.skills.trader_abci.handlers.Path") as MockPath,
+            patch("builtins.open", mock_open(read_data="<html>index</html>")),
         ):
             mock_urlparse.return_value.path = "/nonexistent"
             file_path_mock = MagicMock()
@@ -681,14 +699,13 @@ class TestHandleGetStaticFile:
         http_msg.url = "http://localhost:8080/missing"
         http_dialogue = MagicMock()
 
-        with patch.object(
-            self.handler, "_send_not_found_response"
-        ) as mock_not_found, patch(
-            "packages.valory.skills.trader_abci.handlers.urlparse"
-        ) as mock_urlparse, patch(
-            "packages.valory.skills.trader_abci.handlers.Path"
-        ) as MockPath, patch(
-            "builtins.open", side_effect=FileNotFoundError("nope")
+        with (
+            patch.object(self.handler, "_send_not_found_response") as mock_not_found,
+            patch(
+                "packages.valory.skills.trader_abci.handlers.urlparse"
+            ) as mock_urlparse,
+            patch("packages.valory.skills.trader_abci.handlers.Path") as MockPath,
+            patch("builtins.open", side_effect=FileNotFoundError("nope")),
         ):
             mock_urlparse.return_value.path = "/missing"
             file_path_mock = MagicMock()
@@ -844,10 +861,15 @@ class TestGetAdjustedFundsStatus:
         mock_fn = MagicMock(return_value=fund_status)
         handler.context.shared_state.__getitem__ = MagicMock(return_value=mock_fn)
 
-        with patch.object(
-            type(handler), "synchronized_data", new_callable=PropertyMock
-        ) as mock_sd, patch.object(
-            handler, "_get_pol_equivalent_for_usdc", return_value=11000000000000000000
+        with (
+            patch.object(
+                type(handler), "synchronized_data", new_callable=PropertyMock
+            ) as mock_sd,
+            patch.object(
+                handler,
+                "_get_pol_equivalent_for_usdc",
+                return_value=11000000000000000000,
+            ),
         ):
             mock_sd.return_value = mock_synced
             result = handler._get_adjusted_funds_status()
@@ -939,10 +961,11 @@ class TestGetAdjustedFundsStatus:
         mock_fn = MagicMock(return_value=fund_status)
         handler.context.shared_state.__getitem__ = MagicMock(return_value=mock_fn)
 
-        with patch.object(
-            type(handler), "synchronized_data", new_callable=PropertyMock
-        ) as mock_sd, patch.object(
-            handler, "_get_pol_equivalent_for_usdc", return_value=None
+        with (
+            patch.object(
+                type(handler), "synchronized_data", new_callable=PropertyMock
+            ) as mock_sd,
+            patch.object(handler, "_get_pol_equivalent_for_usdc", return_value=None),
         ):
             mock_sd.return_value = mock_synced
             _ = handler._get_adjusted_funds_status()
@@ -966,6 +989,369 @@ class TestGetAdjustedFundsStatus:
             mock_sd.return_value = mock_synced
             _ = handler._get_adjusted_funds_status()
             handler.context.logger.error.assert_called()
+
+    @staticmethod
+    def _make_polymarket_funds_status_with_pusd(
+        usdc_e_balance: int,
+        pusd_balance: int,
+        pusd_threshold: int = 16_000_000,
+        pusd_topup: int = 65_000_000,
+    ) -> FundRequirements:
+        """Build a polygon fund_status with both USDC.e and pUSD entries on the Safe.
+
+        pUSD is the primary tracked asset (carries threshold/topup); USDC.e
+        is transitional with zero requirements.
+
+        :param usdc_e_balance: USDC.e balance to seed on the Safe (6 decimals).
+        :param pusd_balance: pUSD balance to seed on the Safe (6 decimals).
+        :param pusd_threshold: pUSD threshold below which a deficit is raised.
+        :param pusd_topup: pUSD topup target used when a deficit is raised.
+        :return: a FundRequirements snapshot matching the v2 schema.
+        """
+        tokens = {
+            POLYGON_NATIVE_TOKEN_ADDRESS: TokenRequirement(
+                topup=1000,
+                threshold=500,
+                is_native=True,
+                balance=100,
+                decimals=18,
+            ),
+            POLYGON_USDC_ADDRESS: TokenRequirement(
+                topup=0,
+                threshold=0,
+                is_native=False,
+                balance=0,
+                decimals=6,
+            ),
+            POLYGON_USDC_E_ADDRESS: TokenRequirement(
+                topup=0,
+                threshold=0,
+                is_native=False,
+                balance=usdc_e_balance,
+                decimals=6,
+            ),
+            POLYGON_PUSD_ADDRESS: TokenRequirement(
+                topup=pusd_topup,
+                threshold=pusd_threshold,
+                is_native=False,
+                balance=pusd_balance,
+                decimals=6,
+            ),
+        }
+        chain_req = ChainRequirements(
+            accounts={"0xSafe": AccountRequirements(tokens=tokens)}
+        )
+        return FundRequirements.model_validate({"polygon": chain_req})
+
+    def _run_adjusted_funds_status(
+        self, handler: HttpHandler, fund_status: FundRequirements
+    ) -> FundRequirements:
+        """Drive `_get_adjusted_funds_status` with a shared_state mock and return its output."""
+        mock_synced = MagicMock()
+        mock_synced.safe_contract_address = "0xSafe"
+        mock_fn = MagicMock(return_value=fund_status)
+        handler.context.shared_state.__getitem__ = MagicMock(return_value=mock_fn)
+
+        with (
+            patch.object(
+                type(handler), "synchronized_data", new_callable=PropertyMock
+            ) as mock_sd,
+            patch.object(
+                handler,
+                "_get_pol_equivalent_for_usdc",
+                return_value=0,
+            ),
+        ):
+            mock_sd.return_value = mock_synced
+            return handler._get_adjusted_funds_status()
+
+    def test_polygon_sums_usdc_e_into_pusd_bucket(self) -> None:
+        """On Polymarket, USDC.e balance is added to the pUSD bucket and the USDC.e entry is dropped.
+
+        Rationale: pUSD is the v2 primary tracked asset and the only one
+        carrying threshold/topup. USDC.e is transitional (bridged, pre-wrap)
+        and gets folded in so bridged-but-not-yet-wrapped capital counts
+        against the pUSD threshold. Downstream sees "need pUSD" via the
+        pUSD entry's deficit.
+        """
+        handler = self._setup_handler(is_polymarket=True)
+        fund_status = self._make_polymarket_funds_status_with_pusd(
+            usdc_e_balance=50_000_000,  # 50 USDC.e (pre-wrap residue)
+            pusd_balance=62_000_000,  # 62 pUSD (already wrapped)
+        )
+
+        result = self._run_adjusted_funds_status(handler, fund_status)
+
+        safe_tokens = result["polygon"].accounts["0xSafe"].tokens
+        assert safe_tokens[POLYGON_PUSD_ADDRESS].balance == 112_000_000
+        # Combined balance (112M) >= threshold (16M) → no deficit.
+        assert safe_tokens[POLYGON_PUSD_ADDRESS].deficit == 0
+        # USDC.e entry is collapsed into pUSD and removed from the response.
+        assert POLYGON_USDC_E_ADDRESS not in safe_tokens
+
+    def test_polygon_combined_under_threshold_shows_deficit(self) -> None:
+        """When USDC.e + pUSD < threshold, the pUSD bucket shows a deficit against topup."""
+        handler = self._setup_handler(is_polymarket=True)
+        fund_status = self._make_polymarket_funds_status_with_pusd(
+            usdc_e_balance=5_000_000,  # 5 USDC.e
+            pusd_balance=5_000_000,  # 5 pUSD → combined 10M < threshold 16M
+        )
+
+        result = self._run_adjusted_funds_status(handler, fund_status)
+
+        pusd_token = result["polygon"].accounts["0xSafe"].tokens[POLYGON_PUSD_ADDRESS]
+        assert pusd_token.balance == 10_000_000
+        # deficit = topup (65M) - combined (10M) = 55M
+        assert pusd_token.deficit == 55_000_000
+
+    def test_polygon_missing_usdc_e_entry_leaves_pusd_untouched(self) -> None:
+        """If USDC.e isn't in the fund_requirements, the merge no-ops and pUSD passes through."""
+        handler = self._setup_handler(is_polymarket=True)
+        fund_status = self._make_polymarket_funds_status_with_pusd(
+            usdc_e_balance=0,
+            pusd_balance=40_000_000,
+        )
+        # Simulate the operator having dropped USDC.e entirely post-cutover.
+        del fund_status["polygon"].accounts["0xSafe"].tokens[POLYGON_USDC_E_ADDRESS]
+        # Seed a funds_manager-like deficit; the merge must not overwrite it.
+        fund_status["polygon"].accounts["0xSafe"].tokens[
+            POLYGON_PUSD_ADDRESS
+        ].deficit = 25_000_000
+
+        result = self._run_adjusted_funds_status(handler, fund_status)
+
+        pusd_token = result["polygon"].accounts["0xSafe"].tokens[POLYGON_PUSD_ADDRESS]
+        assert pusd_token.balance == 40_000_000
+        assert pusd_token.deficit == 25_000_000
+
+    def test_merge_warns_when_pusd_missing_but_usdc_e_present(self) -> None:
+        """Misconfigured v2 deployment (USDC.e entry but no pUSD) must surface a warning.
+
+        This is the dangerous case: the agent holds wrappable collateral but
+        has nothing to fold it into, so without logging it looks fully
+        funded when the Safe is effectively empty for v2 purposes.
+        """
+        handler = self._setup_handler(is_polymarket=True)
+        fund_status = self._make_polymarket_funds_status_with_pusd(
+            usdc_e_balance=50_000_000,
+            pusd_balance=0,
+        )
+        safe_balances = fund_status["polygon"].accounts["0xSafe"]
+        del safe_balances.tokens[POLYGON_PUSD_ADDRESS]
+        chain_config = handler._get_chain_config()
+
+        handler._merge_usdc_e_into_pusd(safe_balances, chain_config)
+
+        handler.context.logger.warning.assert_called_once()
+        warning_msg = handler.context.logger.warning.call_args[0][0]
+        assert "pUSD" in warning_msg
+        assert "USDC.e" in warning_msg
+
+    def test_merge_no_warning_when_both_entries_missing(self) -> None:
+        """Neither entry present: normal pre-v2 or non-polymarket shape, stay quiet."""
+        handler = self._setup_handler(is_polymarket=True)
+        fund_status = self._make_polymarket_funds_status_with_pusd(
+            usdc_e_balance=0,
+            pusd_balance=0,
+        )
+        safe_balances = fund_status["polygon"].accounts["0xSafe"]
+        del safe_balances.tokens[POLYGON_PUSD_ADDRESS]
+        del safe_balances.tokens[POLYGON_USDC_E_ADDRESS]
+        chain_config = handler._get_chain_config()
+
+        handler._merge_usdc_e_into_pusd(safe_balances, chain_config)
+
+        handler.context.logger.warning.assert_not_called()
+
+    def test_merge_no_warning_when_only_pusd_present(self) -> None:
+        """Post-cutover shape (pUSD only, no USDC.e) is the expected steady state; no warning."""
+        handler = self._setup_handler(is_polymarket=True)
+        fund_status = self._make_polymarket_funds_status_with_pusd(
+            usdc_e_balance=0,
+            pusd_balance=40_000_000,
+        )
+        safe_balances = fund_status["polygon"].accounts["0xSafe"]
+        del safe_balances.tokens[POLYGON_USDC_E_ADDRESS]
+        chain_config = handler._get_chain_config()
+
+        handler._merge_usdc_e_into_pusd(safe_balances, chain_config)
+
+        handler.context.logger.warning.assert_not_called()
+
+    def test_gnosis_skips_adjustment_when_wxdai_balance_unknown(self) -> None:
+        """Skip wxDAI->xDAI consolidation when wxDAI balance is unknown; clear native deficit."""
+        handler = self._setup_handler(is_polymarket=False)
+
+        fund_status = self._make_funds_status(
+            chain_name="gnosis",
+            safe_address="0xSafe",
+            native_token_addr=GNOSIS_NATIVE_TOKEN_ADDRESS,
+            native_balance=10,
+            native_threshold=500,
+            native_topup=1000,
+            wrapped_addr=GNOSIS_WRAPPED_NATIVE_ADDRESS,
+            wrapped_balance=0,
+        )
+        wrapped_token = (
+            fund_status["gnosis"]
+            .accounts["0xSafe"]
+            .tokens[GNOSIS_WRAPPED_NATIVE_ADDRESS]
+        )
+        wrapped_token.balance = None
+        wrapped_token.deficit = None
+        native_token_in = (
+            fund_status["gnosis"].accounts["0xSafe"].tokens[GNOSIS_NATIVE_TOKEN_ADDRESS]
+        )
+        native_token_in.deficit = 990
+
+        mock_synced = MagicMock()
+        mock_synced.safe_contract_address = "0xSafe"
+        mock_fn = MagicMock(return_value=fund_status)
+        handler.context.shared_state.__getitem__ = MagicMock(return_value=mock_fn)
+
+        with patch.object(
+            type(handler), "synchronized_data", new_callable=PropertyMock
+        ) as mock_sd:
+            mock_sd.return_value = mock_synced
+            result = handler._get_adjusted_funds_status()
+
+        native_token = (
+            result["gnosis"].accounts["0xSafe"].tokens[GNOSIS_NATIVE_TOKEN_ADDRESS]
+        )
+        assert native_token.deficit is None
+        handler.context.logger.warning.assert_called()
+
+    def test_gnosis_skips_adjustment_when_native_balance_unknown(self) -> None:
+        """Native balance unknown -> leave deficit untouched, no spurious top-up."""
+        handler = self._setup_handler(is_polymarket=False)
+
+        fund_status = self._make_funds_status(
+            chain_name="gnosis",
+            safe_address="0xSafe",
+            native_token_addr=GNOSIS_NATIVE_TOKEN_ADDRESS,
+            native_balance=0,
+            native_threshold=500,
+            native_topup=1000,
+            wrapped_addr=GNOSIS_WRAPPED_NATIVE_ADDRESS,
+            wrapped_balance=600,
+        )
+        native_token_in = (
+            fund_status["gnosis"].accounts["0xSafe"].tokens[GNOSIS_NATIVE_TOKEN_ADDRESS]
+        )
+        native_token_in.balance = None
+        native_token_in.deficit = None
+
+        mock_synced = MagicMock()
+        mock_synced.safe_contract_address = "0xSafe"
+        mock_fn = MagicMock(return_value=fund_status)
+        handler.context.shared_state.__getitem__ = MagicMock(return_value=mock_fn)
+
+        with patch.object(
+            type(handler), "synchronized_data", new_callable=PropertyMock
+        ) as mock_sd:
+            mock_sd.return_value = mock_synced
+            result = handler._get_adjusted_funds_status()
+
+        native_token = (
+            result["gnosis"].accounts["0xSafe"].tokens[GNOSIS_NATIVE_TOKEN_ADDRESS]
+        )
+        assert native_token.deficit is None
+        handler.context.logger.warning.assert_called()
+
+    def test_polygon_skips_adjustment_when_usdc_balance_unknown(self) -> None:
+        """USDC balance unknown on Polygon -> skip USDC->POL adjustment, clear native deficit."""
+        handler = self._setup_handler(is_polymarket=True)
+
+        fund_status = self._make_funds_status(
+            chain_name="polygon",
+            safe_address="0xSafe",
+            native_token_addr=POLYGON_NATIVE_TOKEN_ADDRESS,
+            native_balance=100,
+            native_threshold=500,
+            native_topup=1000,
+            usdc_addr=POLYGON_USDC_ADDRESS,
+            usdc_balance=0,
+            usdc_decimals=6,
+        )
+        usdc_token = (
+            fund_status["polygon"].accounts["0xSafe"].tokens[POLYGON_USDC_ADDRESS]
+        )
+        usdc_token.balance = None
+        usdc_token.deficit = None
+        native_token_in = (
+            fund_status["polygon"]
+            .accounts["0xSafe"]
+            .tokens[POLYGON_NATIVE_TOKEN_ADDRESS]
+        )
+        native_token_in.deficit = 900
+
+        mock_synced = MagicMock()
+        mock_synced.safe_contract_address = "0xSafe"
+        mock_fn = MagicMock(return_value=fund_status)
+        handler.context.shared_state.__getitem__ = MagicMock(return_value=mock_fn)
+
+        with (
+            patch.object(
+                type(handler), "synchronized_data", new_callable=PropertyMock
+            ) as mock_sd,
+            patch.object(
+                handler, "_get_pol_equivalent_for_usdc", return_value=0
+            ) as mock_pol,
+        ):
+            mock_sd.return_value = mock_synced
+            result = handler._get_adjusted_funds_status()
+
+        mock_pol.assert_not_called()
+        native_token = (
+            result["polygon"].accounts["0xSafe"].tokens[POLYGON_NATIVE_TOKEN_ADDRESS]
+        )
+        assert native_token.deficit is None
+        handler.context.logger.warning.assert_called()
+
+    def test_merge_skips_when_usdc_e_balance_unknown(self) -> None:
+        """USDC.e balance None -> no merge, USDC.e dropped, pUSD deficit cleared."""
+        handler = self._setup_handler(is_polymarket=True)
+        fund_status = self._make_polymarket_funds_status_with_pusd(
+            usdc_e_balance=0,
+            pusd_balance=40_000_000,
+        )
+        safe_balances = fund_status["polygon"].accounts["0xSafe"]
+        usdc_e = safe_balances.tokens[POLYGON_USDC_E_ADDRESS]
+        usdc_e.balance = None
+        usdc_e.deficit = None
+        pusd = safe_balances.tokens[POLYGON_PUSD_ADDRESS]
+        pusd.deficit = 25_000_000
+        chain_config = handler._get_chain_config()
+
+        handler._merge_usdc_e_into_pusd(safe_balances, chain_config)
+
+        assert pusd.balance == 40_000_000
+        assert pusd.deficit is None
+        assert POLYGON_USDC_E_ADDRESS not in safe_balances.tokens
+        handler.context.logger.warning.assert_called()
+
+    def test_merge_skips_when_pusd_balance_unknown(self) -> None:
+        """When pUSD is None but USDC.e known: skip merge, keep USDC.e row, pUSD deficit cleared."""
+        handler = self._setup_handler(is_polymarket=True)
+        fund_status = self._make_polymarket_funds_status_with_pusd(
+            usdc_e_balance=50_000_000,
+            pusd_balance=0,
+        )
+        safe_balances = fund_status["polygon"].accounts["0xSafe"]
+        pusd = safe_balances.tokens[POLYGON_PUSD_ADDRESS]
+        pusd.balance = None
+        pusd.deficit = None
+        chain_config = handler._get_chain_config()
+
+        handler._merge_usdc_e_into_pusd(safe_balances, chain_config)
+
+        assert pusd.balance is None
+        assert pusd.deficit is None
+        # USDC.e is still readable; keep its row so the operator retains
+        # diagnostic info while pUSD is unknown.
+        assert POLYGON_USDC_E_ADDRESS in safe_balances.tokens
+        assert safe_balances.tokens[POLYGON_USDC_E_ADDRESS].balance == 50_000_000
+        handler.context.logger.warning.assert_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1207,9 +1593,12 @@ class TestHandleGetFundsStatus:
         mock_result = MagicMock()
         mock_result.get_response_body.return_value = {"funds": "ok"}
 
-        with patch.object(
-            handler, "_get_adjusted_funds_status", return_value=mock_result
-        ), patch.object(handler, "_send_ok_response") as mock_send:
+        with (
+            patch.object(
+                handler, "_get_adjusted_funds_status", return_value=mock_result
+            ),
+            patch.object(handler, "_send_ok_response") as mock_send,
+        ):
             handler._handle_get_funds_status(http_msg, http_dialogue)
             mock_send.assert_called_once()
             handler.executor.submit.assert_not_called()  # type: ignore[attr-defined]
@@ -1226,9 +1615,12 @@ class TestHandleGetFundsStatus:
         mock_result = MagicMock()
         mock_result.get_response_body.return_value = {"funds": "ok"}
 
-        with patch.object(
-            handler, "_get_adjusted_funds_status", return_value=mock_result
-        ), patch.object(handler, "_send_ok_response"):
+        with (
+            patch.object(
+                handler, "_get_adjusted_funds_status", return_value=mock_result
+            ),
+            patch.object(handler, "_send_ok_response"),
+        ):
             handler._handle_get_funds_status(http_msg, http_dialogue)
             handler.executor.submit.assert_called_once()  # type: ignore[attr-defined]
 
@@ -1250,13 +1642,15 @@ class TestGetEoaAccount:
         """Test when password is available."""
         mock_account = MagicMock()
 
-        with patch.object(
-            self.handler, "_get_password_from_args", return_value="mypass"
-        ), patch(
-            "packages.valory.skills.trader_abci.handlers.EthereumCrypto"
-        ) as MockCrypto, patch(
-            "packages.valory.skills.trader_abci.handlers.Account"
-        ) as MockAccount:
+        with (
+            patch.object(
+                self.handler, "_get_password_from_args", return_value="mypass"
+            ),
+            patch(
+                "packages.valory.skills.trader_abci.handlers.EthereumCrypto"
+            ) as MockCrypto,
+            patch("packages.valory.skills.trader_abci.handlers.Account") as MockAccount,
+        ):
             MockCrypto.return_value.private_key = "0xkey"
             MockAccount.from_key.return_value = mock_account
             result = self.handler._get_eoa_account()
@@ -1266,11 +1660,11 @@ class TestGetEoaAccount:
         """Test fallback to plaintext key when no password."""
         mock_account = MagicMock()
 
-        with patch.object(
-            self.handler, "_get_password_from_args", return_value=None
-        ), patch.object(Path, "open", mock_open(read_data="0xplainkey")), patch(
-            "packages.valory.skills.trader_abci.handlers.Account"
-        ) as MockAccount:
+        with (
+            patch.object(self.handler, "_get_password_from_args", return_value=None),
+            patch.object(Path, "open", mock_open(read_data="0xplainkey")),
+            patch("packages.valory.skills.trader_abci.handlers.Account") as MockAccount,
+        ):
             MockAccount.from_key.return_value = mock_account
             result = self.handler._get_eoa_account()
             assert result == mock_account
@@ -1278,11 +1672,11 @@ class TestGetEoaAccount:
 
     def test_account_from_key_exception(self) -> None:
         """Test exception when Account.from_key fails."""
-        with patch.object(
-            self.handler, "_get_password_from_args", return_value=None
-        ), patch.object(Path, "open", mock_open(read_data="invalid_key")), patch(
-            "packages.valory.skills.trader_abci.handlers.Account"
-        ) as MockAccount:
+        with (
+            patch.object(self.handler, "_get_password_from_args", return_value=None),
+            patch.object(Path, "open", mock_open(read_data="invalid_key")),
+            patch("packages.valory.skills.trader_abci.handlers.Account") as MockAccount,
+        ):
             MockAccount.from_key.side_effect = Exception("bad key")
             result = self.handler._get_eoa_account()
             assert result is None
@@ -1391,9 +1785,10 @@ class TestCheckUsdcBalance:
         mock_contract.functions.balanceOf.return_value.call.return_value = 5000000
         mock_w3.eth.contract.return_value = mock_contract
 
-        with patch.object(
-            self.handler, "_get_web3_instance", return_value=mock_w3
-        ), patch("packages.valory.skills.trader_abci.handlers.Web3") as MockWeb3:
+        with (
+            patch.object(self.handler, "_get_web3_instance", return_value=mock_w3),
+            patch("packages.valory.skills.trader_abci.handlers.Web3") as MockWeb3,
+        ):
             MockWeb3.to_checksum_address = lambda addr: addr
             result = self.handler._check_usdc_balance("0xAddress", "polygon", "0xUSDC")
             assert result == 5000000
@@ -1553,6 +1948,49 @@ class TestGetLifiQuote:
             call_kwargs = mock_get.call_args
             assert call_kwargs[1]["params"]["slippage"] == "0.005"
 
+    def test_deny_exchanges_added_to_params(self) -> None:
+        """deny_exchanges is sent as a comma-separated denyExchanges param."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"quote": "data"}
+
+        with patch(
+            "packages.valory.skills.trader_abci.handlers.requests.get",
+            return_value=mock_response,
+        ) as mock_get:
+            self.handler._get_lifi_quote(
+                from_token="0xNative",  # nosec B106
+                to_token="0xUSDC",
+                from_address="0xFrom",
+                to_address="0xTo",
+                chain_config=self.chain_config,
+                to_amount="1000000",
+                deny_exchanges=["paraswap", "sushiswap"],
+            )
+            params = mock_get.call_args[1]["params"]
+            assert params["denyExchanges"] == "paraswap,sushiswap"
+
+    def test_no_deny_exchanges_omits_key(self) -> None:
+        """Empty/None deny_exchanges keeps denyExchanges out of the request."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"quote": "data"}
+
+        with patch(
+            "packages.valory.skills.trader_abci.handlers.requests.get",
+            return_value=mock_response,
+        ) as mock_get:
+            self.handler._get_lifi_quote(
+                from_token="0xNative",  # nosec B106
+                to_token="0xUSDC",
+                from_address="0xFrom",
+                to_address="0xTo",
+                chain_config=self.chain_config,
+                to_amount="1000000",
+            )
+            params = mock_get.call_args[1]["params"]
+            assert "denyExchanges" not in params
+
 
 # ---------------------------------------------------------------------------
 # _sign_and_submit_tx_web3 tests
@@ -1665,9 +2103,10 @@ class TestGetNonceAndGasWeb3:
         mock_w3.eth.get_transaction_count.return_value = 42
         mock_w3.eth.gas_price = 50000000000
 
-        with patch.object(
-            self.handler, "_get_web3_instance", return_value=mock_w3
-        ), patch("packages.valory.skills.trader_abci.handlers.Web3") as MockWeb3:
+        with (
+            patch.object(self.handler, "_get_web3_instance", return_value=mock_w3),
+            patch("packages.valory.skills.trader_abci.handlers.Web3") as MockWeb3,
+        ):
             MockWeb3.to_checksum_address = lambda addr: addr
             nonce, gas = self.handler._get_nonce_and_gas_web3("0xAddress", "polygon")
             assert nonce == 42
@@ -1685,9 +2124,10 @@ class TestGetNonceAndGasWeb3:
         mock_w3 = MagicMock()
         mock_w3.eth.get_transaction_count.side_effect = Exception("rpc error")
 
-        with patch.object(
-            self.handler, "_get_web3_instance", return_value=mock_w3
-        ), patch("packages.valory.skills.trader_abci.handlers.Web3") as MockWeb3:
+        with (
+            patch.object(self.handler, "_get_web3_instance", return_value=mock_w3),
+            patch("packages.valory.skills.trader_abci.handlers.Web3") as MockWeb3,
+        ):
             MockWeb3.to_checksum_address = lambda addr: addr
             nonce, gas = self.handler._get_nonce_and_gas_web3("0xAddress", "polygon")
             assert nonce is None
@@ -1709,9 +2149,10 @@ class TestEstimateGas:
         mock_w3 = MagicMock()
         mock_w3.eth.estimate_gas.return_value = 100000
 
-        with patch.object(
-            self.handler, "_get_web3_instance", return_value=mock_w3
-        ), patch("packages.valory.skills.trader_abci.handlers.Web3") as MockWeb3:
+        with (
+            patch.object(self.handler, "_get_web3_instance", return_value=mock_w3),
+            patch("packages.valory.skills.trader_abci.handlers.Web3") as MockWeb3,
+        ):
             MockWeb3.to_checksum_address = lambda addr: addr
             result = self.handler._estimate_gas(
                 {"to": "0x1", "data": "0x", "value": "0x10"},
@@ -1719,16 +2160,17 @@ class TestEstimateGas:
                 "polygon",
             )
             # 100000 * 1.2 = 120000
-            assert result == 120000
+            assert result == (120000, False)
 
     def test_success_with_int_value(self) -> None:
         """Test successful gas estimation with integer value."""
         mock_w3 = MagicMock()
         mock_w3.eth.estimate_gas.return_value = 200000
 
-        with patch.object(
-            self.handler, "_get_web3_instance", return_value=mock_w3
-        ), patch("packages.valory.skills.trader_abci.handlers.Web3") as MockWeb3:
+        with (
+            patch.object(self.handler, "_get_web3_instance", return_value=mock_w3),
+            patch("packages.valory.skills.trader_abci.handlers.Web3") as MockWeb3,
+        ):
             MockWeb3.to_checksum_address = lambda addr: addr
             result = self.handler._estimate_gas(
                 {"to": "0x1", "data": "0x", "value": 16},
@@ -1736,33 +2178,55 @@ class TestEstimateGas:
                 "polygon",
             )
             # 200000 * 1.2 = 240000
-            assert result == 240000
+            assert result == (240000, False)
 
     def test_no_web3_returns_none(self) -> None:
-        """Test when web3 is None returns None."""
+        """Test when web3 is None returns (None, False)."""
         with patch.object(self.handler, "_get_web3_instance", return_value=None):
             result = self.handler._estimate_gas(
                 {"to": "0x1", "data": "0x", "value": 0},
                 "0xEOA",
                 "polygon",
             )
-            assert result is None
+            assert result == (None, False)
 
     def test_exception(self) -> None:
-        """Test exception handling."""
+        """Test exception handling for non-revert errors."""
         mock_w3 = MagicMock()
         mock_w3.eth.estimate_gas.side_effect = Exception("gas estimation failed")
 
-        with patch.object(
-            self.handler, "_get_web3_instance", return_value=mock_w3
-        ), patch("packages.valory.skills.trader_abci.handlers.Web3") as MockWeb3:
+        with (
+            patch.object(self.handler, "_get_web3_instance", return_value=mock_w3),
+            patch("packages.valory.skills.trader_abci.handlers.Web3") as MockWeb3,
+        ):
             MockWeb3.to_checksum_address = lambda addr: addr
             result = self.handler._estimate_gas(
                 {"to": "0x1", "data": "0x", "value": 0},
                 "0xEOA",
                 "polygon",
             )
-            assert result is None
+            assert result == (None, False)
+
+    def test_contract_logic_error_returns_route_revert(self) -> None:
+        """Test that ContractLogicError signals a retryable route revert."""
+        from web3.exceptions import ContractLogicError
+
+        mock_w3 = MagicMock()
+        mock_w3.eth.estimate_gas.side_effect = ContractLogicError(
+            "execution reverted: arithmetic underflow or overflow"
+        )
+
+        with (
+            patch.object(self.handler, "_get_web3_instance", return_value=mock_w3),
+            patch("packages.valory.skills.trader_abci.handlers.Web3") as MockWeb3,
+        ):
+            MockWeb3.to_checksum_address = lambda addr: addr
+            result = self.handler._estimate_gas(
+                {"to": "0x1", "data": "0x", "value": 0},
+                "0xEOA",
+                "polygon",
+            )
+            assert result == (None, True)
 
 
 # ---------------------------------------------------------------------------
@@ -1790,18 +2254,19 @@ class TestEnsureSufficientFundsForX402Payments:
         mock_account = MagicMock()
         mock_account.address = "0xEOA"
 
-        with patch.object(
-            self.handler, "_get_eoa_account", return_value=mock_account
-        ), patch.object(
-            self.handler,
-            "_get_chain_config",
-            return_value={
-                "chain_name": "polygon",
-                "chain_id": 137,
-                "native_token_address": POLYGON_NATIVE_TOKEN_ADDRESS,
-                "usdc_address": "",
-                "usdc_e_address": "",
-            },
+        with (
+            patch.object(self.handler, "_get_eoa_account", return_value=mock_account),
+            patch.object(
+                self.handler,
+                "_get_chain_config",
+                return_value={
+                    "chain_name": "polygon",
+                    "chain_id": 137,
+                    "native_token_address": POLYGON_NATIVE_TOKEN_ADDRESS,
+                    "usdc_address": "",
+                    "usdc_e_address": "",
+                },
+            ),
         ):
             result = self.handler._ensure_sufficient_funds_for_x402_payments()
             assert result is False
@@ -1811,9 +2276,10 @@ class TestEnsureSufficientFundsForX402Payments:
         mock_account = MagicMock()
         mock_account.address = "0xEOA"
 
-        with patch.object(
-            self.handler, "_get_eoa_account", return_value=mock_account
-        ), patch.object(self.handler, "_check_usdc_balance", return_value=None):
+        with (
+            patch.object(self.handler, "_get_eoa_account", return_value=mock_account),
+            patch.object(self.handler, "_check_usdc_balance", return_value=None),
+        ):
             result = self.handler._ensure_sufficient_funds_for_x402_payments()
             assert result is True
 
@@ -1822,9 +2288,10 @@ class TestEnsureSufficientFundsForX402Payments:
         mock_account = MagicMock()
         mock_account.address = "0xEOA"
 
-        with patch.object(
-            self.handler, "_get_eoa_account", return_value=mock_account
-        ), patch.object(self.handler, "_check_usdc_balance", return_value=2000000):
+        with (
+            patch.object(self.handler, "_get_eoa_account", return_value=mock_account),
+            patch.object(self.handler, "_check_usdc_balance", return_value=2000000),
+        ):
             result = self.handler._ensure_sufficient_funds_for_x402_payments()
             assert result is True
 
@@ -1833,12 +2300,10 @@ class TestEnsureSufficientFundsForX402Payments:
         mock_account = MagicMock()
         mock_account.address = "0xEOA"
 
-        with patch.object(
-            self.handler, "_get_eoa_account", return_value=mock_account
-        ), patch.object(
-            self.handler, "_check_usdc_balance", return_value=100
-        ), patch.object(
-            self.handler, "_get_lifi_quote", return_value=None
+        with (
+            patch.object(self.handler, "_get_eoa_account", return_value=mock_account),
+            patch.object(self.handler, "_check_usdc_balance", return_value=100),
+            patch.object(self.handler, "_get_lifi_quote", return_value=None),
         ):
             result = self.handler._ensure_sufficient_funds_for_x402_payments()
             assert result is False
@@ -1848,68 +2313,70 @@ class TestEnsureSufficientFundsForX402Payments:
         mock_account = MagicMock()
         mock_account.address = "0xEOA"
 
-        with patch.object(
-            self.handler, "_get_eoa_account", return_value=mock_account
-        ), patch.object(
-            self.handler, "_check_usdc_balance", return_value=100
-        ), patch.object(
-            self.handler,
-            "_get_lifi_quote",
-            return_value={"some": "data"},
+        with (
+            patch.object(self.handler, "_get_eoa_account", return_value=mock_account),
+            patch.object(self.handler, "_check_usdc_balance", return_value=100),
+            patch.object(
+                self.handler,
+                "_get_lifi_quote",
+                return_value={"some": "data"},
+            ),
         ):
             result = self.handler._ensure_sufficient_funds_for_x402_payments()
             assert result is False
 
     def test_balance_insufficient_nonce_fails(self) -> None:
-        """Test when nonce/gas retrieval fails."""
+        """Test when nonce/gas retrieval fails after a working route."""
         mock_account = MagicMock()
         mock_account.address = "0xEOA"
 
-        with patch.object(
-            self.handler, "_get_eoa_account", return_value=mock_account
-        ), patch.object(
-            self.handler, "_check_usdc_balance", return_value=100
-        ), patch.object(
-            self.handler,
-            "_get_lifi_quote",
-            return_value={
-                "transactionRequest": {
-                    "to": "0x1",
-                    "data": "0x",
-                    "value": "0x10",
-                }
-            },
-        ), patch.object(
-            self.handler,
-            "_get_nonce_and_gas_web3",
-            return_value=(None, None),
+        with (
+            patch.object(self.handler, "_get_eoa_account", return_value=mock_account),
+            patch.object(self.handler, "_check_usdc_balance", return_value=100),
+            patch.object(
+                self.handler,
+                "_get_lifi_quote",
+                return_value={
+                    "transactionRequest": {
+                        "to": "0x1",
+                        "data": "0x",
+                        "value": "0x10",
+                    }
+                },
+            ),
+            patch.object(self.handler, "_estimate_gas", return_value=(150000, False)),
+            patch.object(
+                self.handler,
+                "_get_nonce_and_gas_web3",
+                return_value=(None, None),
+            ),
         ):
             result = self.handler._ensure_sufficient_funds_for_x402_payments()
             assert result is False
 
     def test_balance_insufficient_gas_estimation_fails(self) -> None:
-        """Test when gas estimation fails."""
+        """Test when gas estimation fails with a non-retryable error."""
         mock_account = MagicMock()
         mock_account.address = "0xEOA"
 
-        with patch.object(
-            self.handler, "_get_eoa_account", return_value=mock_account
-        ), patch.object(
-            self.handler, "_check_usdc_balance", return_value=100
-        ), patch.object(
-            self.handler,
-            "_get_lifi_quote",
-            return_value={
-                "transactionRequest": {
-                    "to": "0x1",
-                    "data": "0x",
-                    "value": "0x10",
-                }
-            },
-        ), patch.object(
-            self.handler, "_get_nonce_and_gas_web3", return_value=(5, 1000)
-        ), patch.object(
-            self.handler, "_estimate_gas", return_value=None
+        with (
+            patch.object(self.handler, "_get_eoa_account", return_value=mock_account),
+            patch.object(self.handler, "_check_usdc_balance", return_value=100),
+            patch.object(
+                self.handler,
+                "_get_lifi_quote",
+                return_value={
+                    "transactionRequest": {
+                        "to": "0x1",
+                        "data": "0x",
+                        "value": "0x10",
+                    }
+                },
+            ),
+            patch.object(
+                self.handler, "_get_nonce_and_gas_web3", return_value=(5, 1000)
+            ),
+            patch.object(self.handler, "_estimate_gas", return_value=(None, False)),
         ):
             result = self.handler._ensure_sufficient_funds_for_x402_payments()
             assert result is False
@@ -1919,29 +2386,27 @@ class TestEnsureSufficientFundsForX402Payments:
         mock_account = MagicMock()
         mock_account.address = "0xEOA"
 
-        with patch.object(
-            self.handler, "_get_eoa_account", return_value=mock_account
-        ), patch.object(
-            self.handler, "_check_usdc_balance", return_value=100
-        ), patch.object(
-            self.handler,
-            "_get_lifi_quote",
-            return_value={
-                "transactionRequest": {
-                    "to": "0x1",
-                    "data": "0x",
-                    "value": "0x10",
-                }
-            },
-        ), patch.object(
-            self.handler, "_get_nonce_and_gas_web3", return_value=(5, 1000)
-        ), patch.object(
-            self.handler, "_estimate_gas", return_value=150000
-        ), patch.object(
-            self.handler, "_sign_and_submit_tx_web3", return_value=None
-        ), patch(
-            "packages.valory.skills.trader_abci.handlers.Web3"
-        ) as MockWeb3:
+        with (
+            patch.object(self.handler, "_get_eoa_account", return_value=mock_account),
+            patch.object(self.handler, "_check_usdc_balance", return_value=100),
+            patch.object(
+                self.handler,
+                "_get_lifi_quote",
+                return_value={
+                    "transactionRequest": {
+                        "to": "0x1",
+                        "data": "0x",
+                        "value": "0x10",
+                    }
+                },
+            ),
+            patch.object(
+                self.handler, "_get_nonce_and_gas_web3", return_value=(5, 1000)
+            ),
+            patch.object(self.handler, "_estimate_gas", return_value=(150000, False)),
+            patch.object(self.handler, "_sign_and_submit_tx_web3", return_value=None),
+            patch("packages.valory.skills.trader_abci.handlers.Web3") as MockWeb3,
+        ):
             MockWeb3.to_checksum_address = lambda addr: addr
             result = self.handler._ensure_sufficient_funds_for_x402_payments()
             assert result is False
@@ -1951,31 +2416,30 @@ class TestEnsureSufficientFundsForX402Payments:
         mock_account = MagicMock()
         mock_account.address = "0xEOA"
 
-        with patch.object(
-            self.handler, "_get_eoa_account", return_value=mock_account
-        ), patch.object(
-            self.handler, "_check_usdc_balance", return_value=100
-        ), patch.object(
-            self.handler,
-            "_get_lifi_quote",
-            return_value={
-                "transactionRequest": {
-                    "to": "0x1",
-                    "data": "0x",
-                    "value": "0x10",
-                }
-            },
-        ), patch.object(
-            self.handler, "_get_nonce_and_gas_web3", return_value=(5, 1000)
-        ), patch.object(
-            self.handler, "_estimate_gas", return_value=150000
-        ), patch.object(
-            self.handler, "_sign_and_submit_tx_web3", return_value="0xhash"
-        ), patch.object(
-            self.handler, "_check_transaction_status", return_value=False
-        ), patch(
-            "packages.valory.skills.trader_abci.handlers.Web3"
-        ) as MockWeb3:
+        with (
+            patch.object(self.handler, "_get_eoa_account", return_value=mock_account),
+            patch.object(self.handler, "_check_usdc_balance", return_value=100),
+            patch.object(
+                self.handler,
+                "_get_lifi_quote",
+                return_value={
+                    "transactionRequest": {
+                        "to": "0x1",
+                        "data": "0x",
+                        "value": "0x10",
+                    }
+                },
+            ),
+            patch.object(
+                self.handler, "_get_nonce_and_gas_web3", return_value=(5, 1000)
+            ),
+            patch.object(self.handler, "_estimate_gas", return_value=(150000, False)),
+            patch.object(
+                self.handler, "_sign_and_submit_tx_web3", return_value="0xhash"
+            ),
+            patch.object(self.handler, "_check_transaction_status", return_value=False),
+            patch("packages.valory.skills.trader_abci.handlers.Web3") as MockWeb3,
+        ):
             MockWeb3.to_checksum_address = lambda addr: addr
             result = self.handler._ensure_sufficient_funds_for_x402_payments()
             assert result is False
@@ -1985,31 +2449,30 @@ class TestEnsureSufficientFundsForX402Payments:
         mock_account = MagicMock()
         mock_account.address = "0xEOA"
 
-        with patch.object(
-            self.handler, "_get_eoa_account", return_value=mock_account
-        ), patch.object(
-            self.handler, "_check_usdc_balance", return_value=100
-        ), patch.object(
-            self.handler,
-            "_get_lifi_quote",
-            return_value={
-                "transactionRequest": {
-                    "to": "0x1",
-                    "data": "0x",
-                    "value": "0x10",
-                }
-            },
-        ), patch.object(
-            self.handler, "_get_nonce_and_gas_web3", return_value=(5, 1000)
-        ), patch.object(
-            self.handler, "_estimate_gas", return_value=150000
-        ), patch.object(
-            self.handler, "_sign_and_submit_tx_web3", return_value="0xhash"
-        ), patch.object(
-            self.handler, "_check_transaction_status", return_value=True
-        ), patch(
-            "packages.valory.skills.trader_abci.handlers.Web3"
-        ) as MockWeb3:
+        with (
+            patch.object(self.handler, "_get_eoa_account", return_value=mock_account),
+            patch.object(self.handler, "_check_usdc_balance", return_value=100),
+            patch.object(
+                self.handler,
+                "_get_lifi_quote",
+                return_value={
+                    "transactionRequest": {
+                        "to": "0x1",
+                        "data": "0x",
+                        "value": "0x10",
+                    }
+                },
+            ),
+            patch.object(
+                self.handler, "_get_nonce_and_gas_web3", return_value=(5, 1000)
+            ),
+            patch.object(self.handler, "_estimate_gas", return_value=(150000, False)),
+            patch.object(
+                self.handler, "_sign_and_submit_tx_web3", return_value="0xhash"
+            ),
+            patch.object(self.handler, "_check_transaction_status", return_value=True),
+            patch("packages.valory.skills.trader_abci.handlers.Web3") as MockWeb3,
+        ):
             MockWeb3.to_checksum_address = lambda addr: addr
             result = self.handler._ensure_sufficient_funds_for_x402_payments()
             assert result is True
@@ -2019,31 +2482,30 @@ class TestEnsureSufficientFundsForX402Payments:
         mock_account = MagicMock()
         mock_account.address = "0xEOA"
 
-        with patch.object(
-            self.handler, "_get_eoa_account", return_value=mock_account
-        ), patch.object(
-            self.handler, "_check_usdc_balance", return_value=100
-        ), patch.object(
-            self.handler,
-            "_get_lifi_quote",
-            return_value={
-                "transactionRequest": {
-                    "to": "0x1",
-                    "data": "0x",
-                    "value": 16,
-                }
-            },
-        ), patch.object(
-            self.handler, "_get_nonce_and_gas_web3", return_value=(5, 1000)
-        ), patch.object(
-            self.handler, "_estimate_gas", return_value=150000
-        ), patch.object(
-            self.handler, "_sign_and_submit_tx_web3", return_value="0xhash"
-        ), patch.object(
-            self.handler, "_check_transaction_status", return_value=True
-        ), patch(
-            "packages.valory.skills.trader_abci.handlers.Web3"
-        ) as MockWeb3:
+        with (
+            patch.object(self.handler, "_get_eoa_account", return_value=mock_account),
+            patch.object(self.handler, "_check_usdc_balance", return_value=100),
+            patch.object(
+                self.handler,
+                "_get_lifi_quote",
+                return_value={
+                    "transactionRequest": {
+                        "to": "0x1",
+                        "data": "0x",
+                        "value": 16,
+                    }
+                },
+            ),
+            patch.object(
+                self.handler, "_get_nonce_and_gas_web3", return_value=(5, 1000)
+            ),
+            patch.object(self.handler, "_estimate_gas", return_value=(150000, False)),
+            patch.object(
+                self.handler, "_sign_and_submit_tx_web3", return_value="0xhash"
+            ),
+            patch.object(self.handler, "_check_transaction_status", return_value=True),
+            patch("packages.valory.skills.trader_abci.handlers.Web3") as MockWeb3,
+        ):
             MockWeb3.to_checksum_address = lambda addr: addr
             result = self.handler._ensure_sufficient_funds_for_x402_payments()
             assert result is True
@@ -2058,9 +2520,10 @@ class TestEnsureSufficientFundsForX402Payments:
         mock_account = MagicMock()
         mock_account.address = "0xEOA"
 
-        with patch.object(
-            handler, "_get_eoa_account", return_value=mock_account
-        ), patch.object(handler, "_check_usdc_balance", return_value=2000000):
+        with (
+            patch.object(handler, "_get_eoa_account", return_value=mock_account),
+            patch.object(handler, "_check_usdc_balance", return_value=2000000),
+        ):
             result = handler._ensure_sufficient_funds_for_x402_payments()
             assert result is True
 
@@ -2074,6 +2537,256 @@ class TestEnsureSufficientFundsForX402Payments:
             result = self.handler._ensure_sufficient_funds_for_x402_payments()
             assert result is False
 
+    def test_route_revert_then_success(self) -> None:
+        """First quote reverts, retry with deny succeeds; nonce fetched once."""
+        mock_account = MagicMock()
+        mock_account.address = "0xEOA"
+
+        quotes = [
+            {
+                "tool": "paraswap",
+                "transactionRequest": {
+                    "to": "0x1",
+                    "data": "0x",
+                    "value": "0x10",
+                },
+            },
+            {
+                "tool": "sushiswap",
+                "transactionRequest": {
+                    "to": "0x2",
+                    "data": "0x",
+                    "value": "0x20",
+                },
+            },
+        ]
+        gas_results = [(None, True), (150000, False)]
+
+        with (
+            patch.object(self.handler, "_get_eoa_account", return_value=mock_account),
+            patch.object(self.handler, "_check_usdc_balance", return_value=100),
+            patch.object(
+                self.handler, "_get_lifi_quote", side_effect=quotes
+            ) as mock_quote,
+            patch.object(self.handler, "_estimate_gas", side_effect=gas_results),
+            patch.object(
+                self.handler, "_get_nonce_and_gas_web3", return_value=(5, 1000)
+            ) as mock_nonce,
+            patch.object(
+                self.handler, "_sign_and_submit_tx_web3", return_value="0xhash"
+            ),
+            patch.object(self.handler, "_check_transaction_status", return_value=True),
+            patch("packages.valory.skills.trader_abci.handlers.Web3") as MockWeb3,
+        ):
+            MockWeb3.to_checksum_address = lambda addr: addr
+            result = self.handler._ensure_sufficient_funds_for_x402_payments()
+
+            assert result is True
+            assert mock_quote.call_count == 2
+            # Snapshot per call: first sees an empty deny list, second sees
+            # ['paraswap'] after the route revert.
+            assert mock_quote.call_args_list[0].kwargs["deny_exchanges"] == []
+            assert mock_quote.call_args_list[1].kwargs["deny_exchanges"] == ["paraswap"]
+            mock_nonce.assert_called_once()
+
+    def test_route_revert_exhausted(self) -> None:
+        """All retries see route reverts; function fails after the cap."""
+        mock_account = MagicMock()
+        mock_account.address = "0xEOA"
+
+        quotes = [
+            {
+                "tool": f"tool_{i}",
+                "transactionRequest": {
+                    "to": "0x1",
+                    "data": "0x",
+                    "value": "0x10",
+                },
+            }
+            for i in range(3)
+        ]
+
+        with (
+            patch.object(self.handler, "_get_eoa_account", return_value=mock_account),
+            patch.object(self.handler, "_check_usdc_balance", return_value=100),
+            patch.object(
+                self.handler, "_get_lifi_quote", side_effect=quotes
+            ) as mock_quote,
+            patch.object(self.handler, "_estimate_gas", return_value=(None, True)),
+            patch.object(
+                self.handler, "_get_nonce_and_gas_web3", return_value=(5, 1000)
+            ) as mock_nonce,
+        ):
+            result = self.handler._ensure_sufficient_funds_for_x402_payments()
+
+            assert result is False
+            assert mock_quote.call_count == 3
+            mock_nonce.assert_not_called()
+            # Pin the for/else exhaustion branch: the ERROR log only fires
+            # when the loop completes without break. A mutation that
+            # replaced the for/else with an inline return would skip this.
+            error_messages = [
+                call.args[0]
+                for call in self.handler.context.logger.error.call_args_list
+            ]
+            assert any(
+                "Exhausted LiFi route attempts" in msg
+                and "['tool_0', 'tool_1', 'tool_2']" in msg
+                for msg in error_messages
+            )
+
+    def test_route_revert_two_retries_then_success(self) -> None:
+        """Two consecutive reverts then success: deny list accumulates."""
+        mock_account = MagicMock()
+        mock_account.address = "0xEOA"
+
+        quotes = [
+            {
+                "tool": "paraswap",
+                "transactionRequest": {
+                    "to": "0x1",
+                    "data": "0x",
+                    "value": "0x10",
+                },
+            },
+            {
+                "tool": "sushiswap",
+                "transactionRequest": {
+                    "to": "0x2",
+                    "data": "0x",
+                    "value": "0x20",
+                },
+            },
+            {
+                "tool": "1inch",
+                "transactionRequest": {
+                    "to": "0x3",
+                    "data": "0x",
+                    "value": "0x30",
+                },
+            },
+        ]
+        gas_results = [(None, True), (None, True), (150000, False)]
+
+        with (
+            patch.object(self.handler, "_get_eoa_account", return_value=mock_account),
+            patch.object(self.handler, "_check_usdc_balance", return_value=100),
+            patch.object(
+                self.handler, "_get_lifi_quote", side_effect=quotes
+            ) as mock_quote,
+            patch.object(self.handler, "_estimate_gas", side_effect=gas_results),
+            patch.object(
+                self.handler, "_get_nonce_and_gas_web3", return_value=(5, 1000)
+            ),
+            patch.object(
+                self.handler, "_sign_and_submit_tx_web3", return_value="0xhash"
+            ),
+            patch.object(self.handler, "_check_transaction_status", return_value=True),
+            patch("packages.valory.skills.trader_abci.handlers.Web3") as MockWeb3,
+        ):
+            MockWeb3.to_checksum_address = lambda addr: addr
+            result = self.handler._ensure_sufficient_funds_for_x402_payments()
+
+            assert result is True
+            assert mock_quote.call_count == 3
+            # Each call sees a fresh snapshot of the deny list.
+            assert mock_quote.call_args_list[0].kwargs["deny_exchanges"] == []
+            assert mock_quote.call_args_list[1].kwargs["deny_exchanges"] == ["paraswap"]
+            assert mock_quote.call_args_list[2].kwargs["deny_exchanges"] == [
+                "paraswap",
+                "sushiswap",
+            ]
+
+    def test_non_route_failure_no_retry(self) -> None:
+        """A non-revert estimate_gas failure aborts immediately, no re-quote."""
+        mock_account = MagicMock()
+        mock_account.address = "0xEOA"
+
+        with (
+            patch.object(self.handler, "_get_eoa_account", return_value=mock_account),
+            patch.object(self.handler, "_check_usdc_balance", return_value=100),
+            patch.object(
+                self.handler,
+                "_get_lifi_quote",
+                return_value={
+                    "tool": "paraswap",
+                    "transactionRequest": {
+                        "to": "0x1",
+                        "data": "0x",
+                        "value": "0x10",
+                    },
+                },
+            ) as mock_quote,
+            patch.object(self.handler, "_estimate_gas", return_value=(None, False)),
+        ):
+            result = self.handler._ensure_sufficient_funds_for_x402_payments()
+
+            assert result is False
+            assert mock_quote.call_count == 1
+
+    def test_route_revert_same_tool_returned(self) -> None:
+        """If LiFi returns the same tool despite deny, abort without retrying."""
+        mock_account = MagicMock()
+        mock_account.address = "0xEOA"
+
+        quotes = [
+            {
+                "tool": "paraswap",
+                "transactionRequest": {
+                    "to": "0x1",
+                    "data": "0x",
+                    "value": "0x10",
+                },
+            },
+            {
+                "tool": "paraswap",  # LiFi ignored our denyExchanges
+                "transactionRequest": {
+                    "to": "0x1",
+                    "data": "0x",
+                    "value": "0x10",
+                },
+            },
+        ]
+
+        with (
+            patch.object(self.handler, "_get_eoa_account", return_value=mock_account),
+            patch.object(self.handler, "_check_usdc_balance", return_value=100),
+            patch.object(
+                self.handler, "_get_lifi_quote", side_effect=quotes
+            ) as mock_quote,
+            patch.object(self.handler, "_estimate_gas", return_value=(None, True)),
+        ):
+            result = self.handler._ensure_sufficient_funds_for_x402_payments()
+
+            assert result is False
+            assert mock_quote.call_count == 2
+
+    def test_quote_missing_tool_field(self) -> None:
+        """A quote with no `tool` field cannot be denied; abort the loop."""
+        mock_account = MagicMock()
+        mock_account.address = "0xEOA"
+
+        with (
+            patch.object(self.handler, "_get_eoa_account", return_value=mock_account),
+            patch.object(self.handler, "_check_usdc_balance", return_value=100),
+            patch.object(
+                self.handler,
+                "_get_lifi_quote",
+                return_value={
+                    "transactionRequest": {
+                        "to": "0x1",
+                        "data": "0x",
+                        "value": "0x10",
+                    },
+                },
+            ) as mock_quote,
+            patch.object(self.handler, "_estimate_gas", return_value=(None, True)),
+        ):
+            result = self.handler._ensure_sufficient_funds_for_x402_payments()
+
+            assert result is False
+            assert mock_quote.call_count == 1
+
 
 # ---------------------------------------------------------------------------
 # teardown / _executor_shutdown tests
@@ -2084,9 +2797,10 @@ class TestTeardownAndShutdown:
     def test_teardown(self) -> None:
         """Test teardown calls super().teardown() and _executor_shutdown."""
         handler = _make_handler()
-        with patch.object(BaseHttpHandler, "teardown") as mock_super, patch.object(
-            handler, "_executor_shutdown"
-        ) as mock_shutdown:
+        with (
+            patch.object(BaseHttpHandler, "teardown") as mock_super,
+            patch.object(handler, "_executor_shutdown") as mock_shutdown,
+        ):
             handler.teardown()
             mock_super.assert_called_once()
             mock_shutdown.assert_called_once()
@@ -2120,14 +2834,14 @@ class TestEstimateGasReturnType:
         self.handler = _make_handler()
 
     def test_estimate_gas_returns_none_on_web3_failure(self) -> None:
-        """_estimate_gas returns None when _get_web3_instance returns falsy."""
+        """_estimate_gas returns (None, False) when _get_web3_instance fails."""
         with patch.object(self.handler, "_get_web3_instance", return_value=None):
             result = self.handler._estimate_gas(
                 {"to": "0x1", "data": "0x", "value": 0},
                 "0xEOA",
                 "polygon",
             )
-        assert result is None
+        assert result == (None, False)
 
 
 # ---------------------------------------------------------------------------
@@ -2157,14 +2871,17 @@ class TestGetPolToUsdcRateZeroPrice:
 
         chain_config = self.handler._get_chain_config()
 
-        with patch(
-            "packages.valory.skills.trader_abci.handlers.requests.get",
-            return_value=mock_response,
-        ), patch.object(
-            type(self.handler),
-            "shared_state",
-            new_callable=PropertyMock,
-            return_value=mock_shared_state,
+        with (
+            patch(
+                "packages.valory.skills.trader_abci.handlers.requests.get",
+                return_value=mock_response,
+            ),
+            patch.object(
+                type(self.handler),
+                "shared_state",
+                new_callable=PropertyMock,
+                return_value=mock_shared_state,
+            ),
         ):
             result = self.handler._get_pol_to_usdc_rate(chain_config)
 
@@ -2191,14 +2908,17 @@ class TestHandleGetAgentInfoPreFSM:
         http_msg = MagicMock()
         http_dialogue = MagicMock()
 
-        with patch.object(
-            type(self.handler),
-            "synchronized_data",
-            new_callable=PropertyMock,
-            side_effect=AttributeError("not available yet"),
-        ), patch.object(
-            self.handler, "_send_internal_server_error_response"
-        ) as mock_send_error:
+        with (
+            patch.object(
+                type(self.handler),
+                "synchronized_data",
+                new_callable=PropertyMock,
+                side_effect=AttributeError("not available yet"),
+            ),
+            patch.object(
+                self.handler, "_send_internal_server_error_response"
+            ) as mock_send_error,
+        ):
             self.handler._handle_get_agent_info(http_msg, http_dialogue)
 
         mock_send_error.assert_called_once()
@@ -2225,13 +2945,16 @@ class TestHandleGetFundsStatusNoTryExcept:
         http_msg = MagicMock()
         http_dialogue = MagicMock()
 
-        with patch.object(
-            self.handler,
-            "_get_adjusted_funds_status",
-            side_effect=AttributeError("funds_status not populated"),
-        ), patch.object(
-            self.handler, "_send_internal_server_error_response"
-        ) as mock_send_error:
+        with (
+            patch.object(
+                self.handler,
+                "_get_adjusted_funds_status",
+                side_effect=AttributeError("funds_status not populated"),
+            ),
+            patch.object(
+                self.handler, "_send_internal_server_error_response"
+            ) as mock_send_error,
+        ):
             self.handler._handle_get_funds_status(http_msg, http_dialogue)
 
         mock_send_error.assert_called_once()

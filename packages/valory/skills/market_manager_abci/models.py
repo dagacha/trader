@@ -28,7 +28,10 @@ from aea.skills.base import Model
 
 from packages.valory.protocols.http import HttpMessage
 from packages.valory.skills.abstract_round_abci.base import AbciApp
-from packages.valory.skills.abstract_round_abci.models import ApiSpecs, BaseParams
+from packages.valory.skills.abstract_round_abci.models import (
+    ApiSpecs,
+    BaseParams,
+)
 from packages.valory.skills.abstract_round_abci.models import (
     BenchmarkTool as BaseBenchmarkTool,
 )
@@ -36,7 +39,9 @@ from packages.valory.skills.abstract_round_abci.models import Requests as BaseRe
 from packages.valory.skills.abstract_round_abci.models import (
     SharedState as BaseSharedState,
 )
-from packages.valory.skills.abstract_round_abci.models import TypeCheckMixin
+from packages.valory.skills.abstract_round_abci.models import (
+    TypeCheckMixin,
+)
 from packages.valory.skills.market_manager_abci.bets import BINARY_N_SLOTS
 from packages.valory.skills.market_manager_abci.rounds import MarketManagerAbciApp
 
@@ -116,6 +121,9 @@ class MarketManagerParams(BaseParams):
         )
         self.enable_multi_bets_fallback: bool = self._ensure(
             "enable_multi_bets_fallback", kwargs, bool
+        )
+        self.disabled_polymarket_tags: List[str] = self._ensure(
+            "disabled_polymarket_tags", kwargs, List[str]
         )
         super().__init__(*args, **kwargs)
 

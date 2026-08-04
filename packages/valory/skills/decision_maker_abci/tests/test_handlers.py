@@ -265,13 +265,16 @@ class TestHttpHandler:
         self.message.url = test_case.message_url
         self.message.method = test_case.message_method
 
-        with patch.object(
-            self.handler,
-            "_get_handler",
-            return_value=test_case.get_handler_return_value,
-        ), patch.object(
-            BaseHttpHandler, "handle", return_value=None
-        ) as mock_super_handle:
+        with (
+            patch.object(
+                self.handler,
+                "_get_handler",
+                return_value=test_case.get_handler_return_value,
+            ),
+            patch.object(
+                BaseHttpHandler, "handle", return_value=None
+            ) as mock_super_handle,
+        ):
             if not test_case.expected_logger_call:
                 self.handler.handle(self.message)
                 mock_super_handle.assert_called_once_with(self.message)
@@ -318,11 +321,14 @@ class TestHttpHandler:
         http_dialogue_mock.reply.return_value = http_response_mock
         self.context.http_dialogues = http_dialogues_mock
 
-        with patch.object(
-            self.handler,
-            "_get_handler",
-            return_value=(handler_that_raises, {}),
-        ), patch.object(BaseHttpHandler, "handle", return_value=None):
+        with (
+            patch.object(
+                self.handler,
+                "_get_handler",
+                return_value=(handler_that_raises, {}),
+            ),
+            patch.object(BaseHttpHandler, "handle", return_value=None),
+        ):
             self.handler.handle(self.message)
 
         # Verify error was logged
@@ -587,9 +593,10 @@ class TestHttpHandler:
         http_dialogue = MagicMock()
         http_dialogue.reply.return_value = MagicMock()
 
-        with patch.object(
-            self.handler, "_has_transitioned", return_value=False
-        ), patch.object(self.handler, "_handle_too_early") as mock_too_early:
+        with (
+            patch.object(self.handler, "_has_transitioned", return_value=False),
+            patch.object(self.handler, "_handle_too_early") as mock_too_early,
+        ):
             self.handler._handle_get_health(http_msg, http_dialogue)
             mock_too_early.assert_called_once_with(http_msg, http_dialogue)
 
@@ -607,29 +614,33 @@ class TestHttpHandler:
         http_dialogue.reply.return_value = MagicMock()
 
         # Mock _has_transitioned
-        with patch.object(
-            self.handler, "_has_transitioned", return_value=True
-        ), patch.object(
-            self.handler, "_check_required_funds", return_value=True
-        ), patch.object(
-            self.handler, "_is_mech_reliable", return_value=True
-        ), patch.object(
-            type(self.handler),
-            "synchronized_data",
-            new_callable=PropertyMock,
-        ) as mock_sync, patch.object(
-            type(self.handler),
-            "round_sequence",
-            new_callable=PropertyMock,
-        ) as mock_rs, patch.object(
-            type(self.handler),
-            "waiting_for_a_mech_response",
-            new_callable=PropertyMock,
-            return_value=False,
+        with (
+            patch.object(self.handler, "_has_transitioned", return_value=True),
+            patch.object(self.handler, "_check_required_funds", return_value=True),
+            patch.object(self.handler, "_is_mech_reliable", return_value=True),
+            patch.object(
+                type(self.handler),
+                "synchronized_data",
+                new_callable=PropertyMock,
+            ) as mock_sync,
+            patch.object(
+                type(self.handler),
+                "round_sequence",
+                new_callable=PropertyMock,
+            ) as mock_rs,
+            patch.object(
+                type(self.handler),
+                "waiting_for_a_mech_response",
+                new_callable=PropertyMock,
+                return_value=False,
+            ),
         ):
             # Configure synchronized_data mock
             mock_sync_data = MagicMock()
             mock_sync_data.is_staking_kpi_met = True
+            mock_sync_data.is_activity_target_met = False
+            mock_sync_data.activity_target = 8
+            mock_sync_data.activity_completed = 5
             mock_sync_data.service_staking_state = MockStakingState.STAKED
             mock_sync_data.period_count = 5
             mock_sync.return_value = mock_sync_data
@@ -663,6 +674,12 @@ class TestHttpHandler:
             http_dialogue.reply.assert_called_once()
             call_kwargs = http_dialogue.reply.call_args[1]
             assert call_kwargs["status_code"] == 200
+            body = json.loads(call_kwargs["body"])
+            agent_health = body["agent_health"]
+            assert agent_health["is_staking_kpi_met"] is True
+            assert agent_health["is_activity_target_met"] is False
+            assert agent_health["activity_target"] == 8
+            assert agent_health["activity_completed"] == 5
 
 
 # ---------------------------------------------------------------------------

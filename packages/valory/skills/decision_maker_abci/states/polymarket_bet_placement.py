@@ -47,8 +47,7 @@ class PolymarketBetPlacementRound(TxPreparationRound):
 
         synced_data, event = cast(Tuple[SynchronizedData, Enum], res)
 
-        # For static checking
-        # Event.BET_PLACEMENT_DONE, Event.BET_PLACEMENT_FAILED, Event.INSUFFICIENT_BALANCE, Event.BET_PLACEMENT_IMPOSSIBLE
+        # fsm-specs: returns(BET_PLACEMENT_DONE, BET_PLACEMENT_FAILED, INSUFFICIENT_BALANCE, BET_PLACEMENT_IMPOSSIBLE)
 
         # Extract event, cached_signed_orders, utilized_tools, and policy from payload
         # Payload: sender(0), tx_submitter(1), tx_hash(2), mocking_mode(3), event(4), cached_signed_orders(5), utilized_tools(6), policy(7)
@@ -63,7 +62,7 @@ class PolymarketBetPlacementRound(TxPreparationRound):
                 SynchronizedData,
                 synced_data.update(
                     synchronized_data_class=self.synchronized_data_class,
-                    **{"cached_signed_orders": cached_orders}
+                    **{"cached_signed_orders": cached_orders},
                 ),
             )
 
@@ -74,7 +73,7 @@ class PolymarketBetPlacementRound(TxPreparationRound):
                 SynchronizedData,
                 synced_data.update(
                     synchronized_data_class=self.synchronized_data_class,
-                    **{"utilized_tools": utilized_tools_update}
+                    **{"utilized_tools": utilized_tools_update},
                 ),
             )
 
@@ -84,7 +83,7 @@ class PolymarketBetPlacementRound(TxPreparationRound):
                 SynchronizedData,
                 synced_data.update(
                     synchronized_data_class=self.synchronized_data_class,
-                    **{"policy": policy_update}
+                    **{"policy": policy_update},
                 ),
             )
 

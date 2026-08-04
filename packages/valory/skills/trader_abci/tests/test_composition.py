@@ -21,17 +21,40 @@
 
 # pylint: skip-file
 
-from packages.valory.skills.decision_maker_abci.states.redeem_router import (
-    RedeemRouterRound,
-)
-from packages.valory.skills.decision_maker_abci.states.trade_count import TradeCountRound
+import pytest
+
+from packages.valory.skills.check_stop_trading_abci.rounds import CheckStopTradingRound
 from packages.valory.skills.decision_maker_abci.states.final_states import (
     FinishedMechOnlyRequestRound,
     FinishedMechOnlyRound,
+    FinishedPostBetUpdateRound,
+)
+from packages.valory.skills.decision_maker_abci.states.handle_failed_tx import (
+    HandleFailedTxRound,
 )
 from packages.valory.skills.decision_maker_abci.states.mech_only import (
     MechResponseRouterRound,
 )
+from packages.valory.skills.decision_maker_abci.states.post_bet_update import (
+    PostBetUpdateRound,
+)
+from packages.valory.skills.decision_maker_abci.states.redeem_router import (
+    RedeemRouterRound,
+)
+from packages.valory.skills.decision_maker_abci.states.trade_count import TradeCountRound
+from packages.valory.skills.market_manager_abci.rounds import (
+    FetchMarketsRouterRound,
+    FinishedMarketManagerRound,
+    FinishedPolymarketFetchMarketRound,
+)
+from packages.valory.skills.mech_interact_abci.states.final_states import (
+    FailedOffchainMechRequestRound,
+    FinishedOffchainMechDepositNeededRound,
+    FinishedOffchainMechRequestRound,
+)
+from packages.valory.skills.mech_interact_abci.states.request import MechRequestRound
+from packages.valory.skills.mech_interact_abci.states.response import MechResponseRound
+from packages.valory.skills.staking_abci.rounds import CallCheckpointRound
 from packages.valory.skills.termination_abci.rounds import (
     BackgroundRound,
     Event,
@@ -44,10 +67,110 @@ from packages.valory.skills.trader_abci.composition import (
 )
 from packages.valory.skills.tx_settlement_multiplexer_abci.rounds import (
     FinishedBetPlacementTxRound,
+    FinishedOffchainMechDepositSettledRound,
+    FinishedPolymarketWrapCollateralTxRound,
+    FinishedRedeemingTxRound,
     FinishedSellOutcomeTokensTxRound,
+    PreTxSettlementRound,
 )
 
-EXPECTED_TRANSITION_MAPPING_LENGTH = 46
+EXPECTED_TRANSITION_MAPPING_LENGTH = 63
+
+# Transitions introduced or rewired by the always-redeem-first /
+# `PostBetUpdateRound` FSM restructure (PR #904). Each pair must hold
+# exactly; a typo, swap, or accidental retarget will trip the matching
+# parametrised assertion. The count tripwire above stays in place to
+# catch additions/removals that preserve every listed edge.
+RESTRUCTURE_TRANSITIONS = {
+    # Always-redeem-first: market fetch → redeem router, so any unclaimed
+    # winnings are redeemed before the next mech/bet cycle.
+    FinishedMarketManagerRound: RedeemRouterRound,
+    FinishedPolymarketFetchMarketRound: RedeemRouterRound,
+    # Redeem terminals now feed CheckStopTrading (previously the other
+    # way around).
+    FinishedRedeemingTxRound: CheckStopTradingRound,
+    # Omen on-chain bet settlement now goes through TradeCountRound first
+    # (to increment the trade counter), which then routes to PostBetUpdateRound
+    # internally via DecisionMakerAbciApp's transition function.
+    FinishedBetPlacementTxRound: TradeCountRound,
+    FinishedSellOutcomeTokensTxRound: PostBetUpdateRound,
+    FinishedPostBetUpdateRound: CallCheckpointRound,
+}
+
+# Off-chain mech-interact transitions. Pinned individually because a
+# flat value-set assertion would let a silent swap pass — e.g. routing
+# ``FinishedOffchainMechDepositSettledRound`` to ``MechResponseRound``
+# instead of ``MechRequestRound`` would break ``_retry_pending``,
+# and routing ``FinishedOffchainMechDepositNeededRound`` to
+# ``RandomnessTransactionSubmissionRound`` would skip the
+# refill-required check that ``PreTxSettlementRound`` runs.
+OFFCHAIN_TRANSITIONS = {
+    FinishedOffchainMechRequestRound: MechResponseRound,
+    FinishedOffchainMechDepositNeededRound: PreTxSettlementRound,
+    FinishedOffchainMechDepositSettledRound: MechRequestRound,
+    FailedOffchainMechRequestRound: HandleFailedTxRound,
+}
+
+
+@pytest.mark.parametrize(
+    "src,dst",
+    list(OFFCHAIN_TRANSITIONS.items()),
+    ids=lambda cls: getattr(cls, "__name__", str(cls)),
+)
+def test_offchain_transition(src: type, dst: type) -> None:
+    """Each off-chain mech-interact transition must resolve to its exact target round."""
+    assert src in abci_app_transition_mapping, f"{src.__name__} missing from mapping"
+    assert abci_app_transition_mapping[src] is dst, (
+        f"{src.__name__} -> {abci_app_transition_mapping[src].__name__}, "
+        f"expected {dst.__name__}"
+    )
+
+
+@pytest.mark.parametrize(
+    "src,dst",
+    list(RESTRUCTURE_TRANSITIONS.items()),
+    ids=lambda cls: getattr(cls, "__name__", str(cls)),
+)
+def test_restructure_transition(src: type, dst: type) -> None:
+    """Each PR-#904 transition must resolve to its exact target round."""
+    assert src in abci_app_transition_mapping, f"{src.__name__} missing from mapping"
+    assert abci_app_transition_mapping[src] is dst, (
+        f"{src.__name__} -> {abci_app_transition_mapping[src].__name__}, "
+        f"expected {dst.__name__}"
+    )
+
+
+def test_wrap_tx_terminal_skips_to_trading_cycle() -> None:
+    """Wrap tx settlement routes directly into the trading cycle.
+
+    Safe multisend is atomic and the wrap doesn't touch CLOB-exchange
+    approvals, so the legacy post-wrap ``PolymarketPostSetApprovalRound``
+    hop (1 SRR + 6 chain reads) added no observable safety. The
+    settlement terminal now targets ``FetchMarketsRouterRound`` directly.
+    """
+    assert (
+        abci_app_transition_mapping[FinishedPolymarketWrapCollateralTxRound]
+        is FetchMarketsRouterRound
+    )
+
+
+def test_only_expected_edges_enter_post_bet_update() -> None:
+    """Exactly the Omen bet / sell tx-settlement terminals feed PostBetUpdateRound.
+
+    An accidental additional route into PostBetUpdateRound would let
+    non-bet/sell flows trigger the post-bet bookkeeping helpers.
+    """
+    edges_into = {
+        src
+        for src, dst in abci_app_transition_mapping.items()
+        if dst is PostBetUpdateRound
+    }
+    # In the merged FSM, FinishedBetPlacementTxRound goes through TradeCountRound
+    # first (to increment the counter), then TradeCountRound DONE -> PostBetUpdateRound.
+    # Only FinishedSellOutcomeTokensTxRound enters PostBetUpdateRound directly.
+    assert edges_into == {
+        FinishedSellOutcomeTokensTxRound,
+    }
 
 
 def test_abci_app_transition_mapping_type() -> None:
@@ -101,8 +224,8 @@ def test_only_omen_placement_reaches_trade_count() -> None:
 
 
 def test_sell_does_not_reach_trade_count() -> None:
-    """A settled sell (FinishedSellOutcomeTokensTxRound) bypasses the counter, routing to redemption."""
-    assert abci_app_transition_mapping[FinishedSellOutcomeTokensTxRound] is RedeemRouterRound
+    """A settled sell (FinishedSellOutcomeTokensTxRound) bypasses the counter, routing to PostBetUpdateRound."""
+    assert abci_app_transition_mapping[FinishedSellOutcomeTokensTxRound] is PostBetUpdateRound
 
 
 def test_trade_count_is_only_entry_into_counter() -> None:

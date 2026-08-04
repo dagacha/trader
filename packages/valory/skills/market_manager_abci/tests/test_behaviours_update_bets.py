@@ -124,10 +124,13 @@ class TestInit:
             # but we can verify the signature accepts **kwargs.
             # Use object.__new__ and call __init__ manually with a mock.
             behaviour = object.__new__(UpdateBetsBehaviour)
-            with patch(
-                "packages.valory.skills.market_manager_abci.behaviours.update_bets.BetsManagerBehaviour.__init__"
-            ) as mock_bets_init, patch(
-                "packages.valory.skills.market_manager_abci.behaviours.update_bets.QueryingBehaviour.__init__"
+            with (
+                patch(
+                    "packages.valory.skills.market_manager_abci.behaviours.update_bets.BetsManagerBehaviour.__init__"
+                ) as mock_bets_init,
+                patch(
+                    "packages.valory.skills.market_manager_abci.behaviours.update_bets.QueryingBehaviour.__init__"
+                ),
             ):
                 mock_bets_init.return_value = None
                 # __init__ calls super().__init__(**kwargs) which hits MRO
@@ -411,6 +414,37 @@ class TestUpdateBetsInvestments:
             pass
 
         # Since new investments are empty, should retain existing
+        assert bet.investments == original_investments
+
+    def test_balances_missing_bet_id_does_not_crash(self) -> None:
+        """Regression: a plain ``{}`` from ``get_active_bets`` must not raise.
+
+        When ``fetch_user_positions`` returns ``None`` (e.g. a brand-new
+        safe whose Conditional-Tokens subgraph entity does not exist yet,
+        so the subgraph replies ``{"data":{"user":null}}``),
+        ``get_active_bets`` early-returns a *plain* ``{}`` rather than the
+        ``defaultdict`` its success path produces. The bet's ``id`` is
+        therefore absent from ``balances``; the investment loop must treat
+        that as "no new data" and fall back to existing investments,
+        instead of raising ``KeyError`` and crashing ``UpdateBetsBehaviour``
+        every cycle.
+        """
+        bet = _make_bet(id="bet1")
+        bet.investments = {"Yes": [200], "No": [300]}
+        original_investments = deepcopy(bet.investments)
+
+        # bet1 is NOT a key in balances — the fetch-failure / fresh-safe path
+        behaviour = _make_behaviour(bets=[bet])
+        behaviour.get_active_bets = _return_gen({})  # type: ignore[method-assign]
+
+        gen = behaviour.update_bets_investments()
+        try:
+            next(gen)
+            gen.send(None)
+        except StopIteration:
+            pass
+        # No exception raised, and prior investments retained (no data loss
+        # → no duplicate bets).
         assert bet.investments == original_investments
 
 

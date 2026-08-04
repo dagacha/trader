@@ -8,7 +8,7 @@ license: Apache-2.0
 fingerprint:
   README.md: bafybeichoh5tnk4qctaazcjcrxvpwc5yasodleqoeapnfapwrrdh3tm5gu
 fingerprint_ignore_patterns: []
-agent: valory/trader:0.1.0:bafybeiddysp6xqk3ngydytkvhh5mdjkxgwkyzjba6yslconfdm5hu6gqzm
+agent: valory/trader:0.1.0:bafybeihmovjtyc5tq47k5e7lug5bjadgi5b4ugtqex4llupwknj2gkhbmm
 number_of_agents: 1
 deployment:
   agent:
@@ -83,6 +83,7 @@ models:
       slot_count: ${SLOT_COUNT:int:2}
       opening_margin: ${OPENING_MARGIN:int:300}
       languages: ${LANGUAGES:list:["en_US"]}
+      disabled_polymarket_tags: ${DISABLED_POLYMARKET_TAGS:list:["hide-from-new","rewards-50-4pt5-20","rewards-100-4pt5-100","rewards-automation-50-4pt5-50","finance-rewards-20","denmark","denmark-election","slovenia","slovenia-elections","bulgaria","venezuela","colombia","columbia","colombia-election","bangladesh-election","trump-iran","trump-xi","trade-war","tariffs","tiktok","china","trump-presidency","middle-east","iran","diplomacy-ceasefire","geopolitics","starmer","uap","ufo","aliens","march-3-primaries","primaries","primary-elections","texas-primary","house-primary","republican-primary"]}
       average_block_time: ${ABT:int:5}
       abt_error_mult: ${ABT_ERROR_MULT:int:5}
       the_graph_error_message_key: ${THE_GRAPH_ERROR_MESSAGE_KEY:str:message}
@@ -92,6 +93,8 @@ models:
       mech_chain_id: ${MECH_CHAIN_ID:str:polygon}
       mech_wrapped_native_token_address: ${MECH_WRAPPED_NATIVE_TOKEN_ADDRESS:str:0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270}
       sample_bets_closing_days: ${SAMPLE_BETS_CLOSING_DAYS:int:10}
+      polymarket_spread_min: ${POLYMARKET_SPREAD_MIN:float:0.0}
+      polymarket_spread_max: ${POLYMARKET_SPREAD_MAX:float:0.1}
       trading_strategy: ${TRADING_STRATEGY:str:kelly_criterion}
       use_fallback_strategy: ${USE_FALLBACK_STRATEGY:bool:false}
       mech_activity_checker_contract: ${MECH_ACTIVITY_CHECKER_CONTRACT:str:0x0000000000000000000000000000000000000000}
@@ -110,26 +113,31 @@ models:
       minimum_batch_size: ${MINIMUM_BATCH_SIZE:int:500}
       redeeming_batch_size: ${REDEEMING_BATCH_SIZE:int:1}
       slippage: ${SLIPPAGE:float:0.01}
+      withdrawal_slippage: ${WITHDRAWAL_SLIPPAGE:float:0.01}
+      withdrawal_return_buffer: ${WITHDRAWAL_RETURN_BUFFER:float:0.05}
+      dust_epsilon_wxdai: ${DUST_EPSILON_WXDAI:int:10000000000000000}
       policy_epsilon: ${POLICY_EPSILON:float:0.25}
       store_path: ${STORE_PATH:str:/data/}
-      irrelevant_tools: ${IRRELEVANT_TOOLS:list:["native-transfer","prediction-online-lite","claude-prediction-online-lite","prediction-online-sme-lite","prediction-request-reasoning-lite","prediction-request-reasoning-claude-lite","prediction-offline-sme","deepmind-optimization",
-        "deepmind-optimization-strong","openai-gpt-3.5-turbo","openai-gpt-3.5-turbo-instruct","openai-gpt-4","openai-text-davinci-002","openai-text-davinci-003","prediction-online-sum-url-content","prediction-online-summarized-info","stabilityai-stable-diffusion-512-v2-1","stabilityai-stable-diffusion-768-v2-1","stabilityai-stable-diffusion-v1-5","stabilityai-stable-diffusion-xl-beta-v2-2-2"]}
       staking_contract_address: ${STAKING_CONTRACT_ADDRESS:str:0x0000000000000000000000000000000000000000}
       staking_interaction_sleep_time: ${STAKING_INTERACTION_SLEEP_TIME:int:5}
       disable_trading: ${DISABLE_TRADING:bool:false}
       stop_trading_if_staking_kpi_met: ${STOP_TRADING_IF_STAKING_KPI_MET:bool:true}
+      activity_target: ${ACTIVITY_TARGET:int:8}
       enable_position_review: ${ENABLE_POSITION_REVIEW:bool:false}
       review_period_seconds: ${REVIEW_PERIOD_SECONDS:int:86400}
+      withdrawal_max_fak_attempts: ${WITHDRAWAL_MAX_FAK_ATTEMPTS:int:3}
+      withdrawal_fak_backoff_s: ${WITHDRAWAL_FAK_BACKOFF_S:list:[10,30]}
       agent_balance_threshold: ${AGENT_BALANCE_THRESHOLD:int:10000000000000000}
       refill_check_interval: ${REFILL_CHECK_INTERVAL:int:10}
       tool_punishment_multiplier: ${TOOL_PUNISHMENT_MULTIPLIER:int:1}
       redeem_round_timeout: ${REDEEM_ROUND_TIMEOUT:float:3600.0}
+      withdrawal_round_timeout: ${WITHDRAWAL_ROUND_TIMEOUT:float:1800.0}
       contract_timeout: ${CONTRACT_TIMEOUT:float:300.0}
-      file_hash_to_strategies: ${FILE_HASH_TO_STRATEGIES:dict:{"bafybeididlcixparvundh76gajplac2ab4ftzcom4cyaeli2ofl5dkdhaa":["kelly_criterion"],"bafybeigp65doxrfukxdndsyflukyf6tjigvobig42334e2gfncczteujvm":["fixed_bet"]}}
-      strategies_kwargs: ${STRATEGIES_KWARGS:dict:{"floor_balance":0,"default_max_bet_size":2500000,"absolute_min_bet_size":1000000,"absolute_max_bet_size":2500000,"n_bets":1,"min_edge":0.01,"min_oracle_prob":0.1,"fee_per_trade":10000,"grid_points":500}}
+      file_hash_to_strategies: ${FILE_HASH_TO_STRATEGIES:dict:{"bafybeidme2uybzyzagky3jtosheqmpgc6b6w4rum7cdxw2fc35nnpwblfe":["kelly_criterion"],"bafybeidahih5c7htr5g5e4nq5wcqfiwse2z6ga27jxsxll7iracehmysim":["fixed_bet"]}}
+      strategies_kwargs: ${STRATEGIES_KWARGS:dict:{"floor_balance":0,"default_max_bet_size":2500000,"absolute_min_bet_size":1000000,"absolute_max_bet_size":2500000,"n_bets":1,"min_edge":0.01,"max_edge":0.30,"min_oracle_prob":0.1,"fee_per_trade":10000,"grid_points":500}}
       use_subgraph_for_redeeming: ${USE_SUBGRAPH_FOR_REDEEMING:bool:true}
       use_mech_marketplace: ${USE_MECH_MARKETPLACE:bool:true}
-      mech_marketplace_config: ${MECH_MARKETPLACE_CONFIG:dict:{"mech_marketplace_address":"0x343F2B005cF6D70bA610CD9F1F1927049414B582","priority_mech_address":"0x1DCbC9368327776F8B20Dc041D40b8076C8AC173","priority_mech_staking_instance_address":"0x0000000000000000000000000000000000000000","priority_mech_service_id":25,"requester_staking_instance_address":"0x0000000000000000000000000000000000000000","response_timeout":300}}
+      mech_marketplace_config: ${MECH_MARKETPLACE_CONFIG:dict:{"mech_marketplace_address":"0x343F2B005cF6D70bA610CD9F1F1927049414B582","priority_mech_address":"0x1DCbC9368327776F8B20Dc041D40b8076C8AC173","priority_mech_staking_instance_address":"0x0000000000000000000000000000000000000000","priority_mech_service_id":25,"requester_staking_instance_address":"0x0000000000000000000000000000000000000000","response_timeout":300,"use_offchain":false,"offchain_url":null,"offchain_deposit_target_calls":10,"auto_deposit_cap_per_cycle":5000000,"offchain_poll_interval_seconds":3.0,"offchain_poll_timeout_seconds":300.0,"offchain_failover_max_retries":2}}
       service_endpoint: ${SERVICE_ENDPOINT:str:https://trader.autonolas.tech/}
       rpc_sleep_time: ${RPC_SLEEP_TIME:int:10}
       safe_voting_range: ${SAFE_VOTING_RANGE:int:600}
@@ -147,15 +155,19 @@ models:
       coingecko_pol_in_usd_price_url: ${COINGECKO_POL_IN_USD_PRICE_URL:str:https://api.coingecko.com/api/v3/simple/token_price/polygon-pos?contract_addresses=0x0000000000000000000000000000000000001010&vs_currencies=usd}
       genai_api_key: ${GENAI_API_KEY:str:""}
       x402_payment_requirements: ${X402_PAYMENT_REQUIREMENTS:dict:{"threshold":200000,"top_up":250000}}
-      polygon_ledger_rpc: ${POLYGON_LEDGER_RPC:str:https://1rpc.io/matic}
+      polygon_ledger_rpc: ${POLYGON_LEDGER_RPC:str:https://polygon.drpc.org}
       lifi_quote_to_amount_url: ${LIFI_QUOTE_TO_AMOUNT_URL:str:https://li.quest/v1/quote/toAmount}
       use_x402: ${USE_X402:bool:false}
       is_agent_performance_summary_enabled: ${IS_AGENT_PERFORMANCE_SUMMARY_ENABLED:bool:true}
       is_achievement_checker_enabled: ${IS_ACHIEVEMENT_CHECKER_ENABLED:bool:true}
+      balance_tracker_address: ${BALANCE_TRACKER_ADDRESS:str:0x5C50ebc17d002A4484585C8fbf62f51953493c0B}
+      mech_analytics_url: ${MECH_ANALYTICS_URL:str:}
+      use_mech_analytics: ${USE_MECH_ANALYTICS:bool:false}
       is_running_on_polymarket: ${IS_RUNNING_ON_POLYMARKET:bool:true}
       polymarket_builder_program_enabled: ${POLYMARKET_BUILDER_PROGRAM_ENABLED:bool:false}
       pol_threshold_for_swap: ${POL_THRESHOLD_FOR_SWAP:int:2000000000000000000}
-      ignored_mechs: ${IGNORED_MECHS:list:["0x1DCbC9368327776F8B20Dc041D40b8076C8AC173"]}
+      valid_mechs: ${VALID_MECHS:list:["0x45f25db135e83d7a010b05ffc1202f8473e3ae7d","0xe7f818513a48d74c99b8bde153bee0b70dbb300b","0x76a9a29441c7acd072b03e63911f0e177de56ab7"]}
+      mech_marketplace_v1_suitable_tools: ${MECH_MARKETPLACE_V1_SUITABLE_TOOLS:list:["prediction-offline","prediction-offline-sme","prediction-online","prediction-online-sme","prediction-request-reasoning","prediction-request-reasoning-claude"]}
       slippages_for_swap: ${SLIPPAGES_FOR_SWAP:dict:{"xDAI-USDC":0.003,"POL-USDC":0.004}}
       is_outcome_side_threshold_filter_enabled: ${IS_OUTCOME_SIDE_THRESHOLD_FILTER_ENABLED:bool:true}
       outcome_side_threshold_filter_threshold: ${OUTCOME_SIDE_THRESHOLD_FILTER_THRESHOLD:float:0.8}
@@ -280,7 +292,7 @@ models:
       error_index: ${NETWORK_SUBGRAPH_ERROR_INDEX:int:0}
       error_type: ${NETWORK_SUBGRAPH_ERROR_TYPE:str:dict}
       retries: ${OPEN_MARKETS_SUBGRAPH_RETRIES:int:5}
-      url: ${OPEN_MARKETS_SUBGRAPH_URL:str:https://predict-agents.subgraph.autonolas.tech}
+      url: ${OPEN_MARKETS_SUBGRAPH_URL:str:https://api.subgraph.autonolas.tech/api/proxy/predict-polymarket}
   olas_agents_subgraph:
     args:
       headers: ${HEADERS:dict:{"Content-Type":"application/json"}}
@@ -291,18 +303,7 @@ models:
       error_index: ${NETWORK_SUBGRAPH_ERROR_INDEX:int:0}
       error_type: ${NETWORK_SUBGRAPH_ERROR_TYPE:str:dict}
       retries: ${OLAS_AGENTS_SUBGRAPH_RETRIES:int:5}
-      url: ${OLAS_AGENTS_SUBGRAPH_URL:str:https://predict-agents.subgraph.autonolas.tech}
-  olas_mech_subgraph:
-    args:
-      headers: ${HEADERS:dict:{"Content-Type":"application/json"}}
-      method: ${OLAS_MECH_SUBGRAPH_METHOD:str:POST}
-      response_key: ${OLAS_MECH_SUBGRAPH_RESPONSE_KEY:str:data:sender}
-      response_type: ${OLAS_MECH_SUBGRAPH_RESPONSE_TYPE:str:dict}
-      error_key: ${NETWORK_SUBGRAPH_ERROR_KEY:str:errors}
-      error_index: ${NETWORK_SUBGRAPH_ERROR_INDEX:int:0}
-      error_type: ${NETWORK_SUBGRAPH_ERROR_TYPE:str:dict}
-      retries: ${OLAS_MECH_SUBGRAPH_RETRIES:int:5}
-      url: ${OLAS_MECH_SUBGRAPH_URL:str:https://api.subgraph.autonolas.tech/api/proxy/mech}
+      url: ${OLAS_AGENTS_SUBGRAPH_URL:str:https://api.subgraph.autonolas.tech/api/proxy/predict-polymarket}
   gnosis_staking_subgraph:
     args:
       headers: ${HEADERS:dict:{"Content-Type":"application/json"}}
@@ -331,7 +332,7 @@ type: connection
 config:
   ledger_apis:
     polygon:
-      address: ${POLYGON_LEDGER_RPC:str:https://1rpc.io/matic}
+      address: ${POLYGON_LEDGER_RPC:str:https://polygon.drpc.org}
       chain_id: ${POLYGON_LEDGER_CHAIN_ID:int:137}
       poa_chain: ${POLYGON_LEDGER_IS_POA_CHAIN:bool:true}
       default_gas_price_strategy: ${POLYGON_LEDGER_PRICING:str:eip1559}
@@ -361,12 +362,12 @@ is_abstract: true
 public_id: valory/http_server:0.22.0:bafybeicblltx7ha3ulthg7bzfccuqqyjmihhrvfeztlgrlcoxhr7kf6nbq
 type: connection
 config:
-  host: ${HTTP_SERVER_HOST:str:0.0.0.0}
+  host: ${HTTP_SERVER_HOST:str:127.0.0.1}
   port: ${HTTP_SERVER_PORT:int:8716}
   timeout: ${HTTP_SERVER_TIMEOUT:float:30.0}
   target_skill_id: valory/trader_abci:0.1.0
 ---
-public_id: dvilela/genai:0.1.0:bafybeicblltx7ha3ulthg7bzfccuqqyjmihhrvfeztlgrlcoxhr7kf6nbq
+public_id: valory/genai:0.1.0:bafybeicblltx7ha3ulthg7bzfccuqqyjmihhrvfeztlgrlcoxhr7kf6nbq
 type: connection
 config:
   genai_api_key: ${GENAI_API_KEY:str:""}
@@ -378,9 +379,9 @@ type: skill
 models:
   params:
     args:
-      fund_requirements: ${FUND_REQUIREMENTS:dict:{"polygon":{"agent":{"0x0000000000000000000000000000000000000000":{"topup":30000000000000000000,"threshold":3200000000000000000}},"safe":{"0x0000000000000000000000000000000000000000":{"topup":40000000000000000000,"threshold":10000000000000000000},"0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174":{"topup":65000000,"threshold":16000000},"0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359":{"topup":0,"threshold":0}}}}}
+      fund_requirements: ${FUND_REQUIREMENTS:dict:{"polygon":{"agent":{"0x0000000000000000000000000000000000000000":{"topup":30000000000000000000,"threshold":3200000000000000000}},"safe":{"0x0000000000000000000000000000000000000000":{"topup":40000000000000000000,"threshold":10000000000000000000},"0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB":{"topup":65000000,"threshold":16000000},"0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174":{"topup":0,"threshold":0},"0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359":{"topup":0,"threshold":0}}}}}
       rpc_urls:
-        polygon: ${POLYGON_LEDGER_RPC:str:https://1rpc.io/matic}
+        polygon: ${POLYGON_LEDGER_RPC:str:https://polygon.drpc.org}
       safe_contract_addresses: ${SAFE_CONTRACT_ADDRESSES:dict:{"polygon":"0x0000000000000000000000000000000000000000"}}
 ---
 public_id: valory/polymarket_client:0.1.0:bafybeicblltx7ha3ulthg7bzfccuqqyjmihhrvfeztlgrlcoxhr7kf6nbq
@@ -389,7 +390,16 @@ config:
   host: https://clob.polymarket.com
   chain_id: 137
   safe_contract_addresses: ${SAFE_CONTRACT_ADDRESSES:dict:{"polygon":"0x0000000000000000000000000000000000000000"}}
-  remote_builder_url: ${REMOTE_BUILDER_URL:str:http://localhost:5001/sign}
   polymarket_builder_program_enabled: ${POLYMARKET_BUILDER_PROGRAM_ENABLED:bool:false}
+  builder_code: ${POLYMARKET_BUILDER_CODE:str:0x0000000000000000000000000000000000000000000000000000000000000000}
+  clob_version: ${CLOB_VERSION:str:v2}
+  collateral_address: ${POLYMARKET_COLLATERAL_ADDRESS:str:0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB}
+  usdc_e_address: ${POLYMARKET_USDC_E_ADDRESS:str:0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174}
+  collateral_onramp_address: ${POLYMARKET_COLLATERAL_ONRAMP_ADDRESS:str:0x93070a847efEf7F70739046A929D47a521F5B8ee}
+  ctf_address: ${POLYMARKET_CTF_ADDRESS:str:0x4D97DCd97eC945f40cF65F87097ACe5EA0476045}
+  ctf_exchange: ${POLYMARKET_CTF_EXCHANGE:str:0xE111180000d2663C0091e4f400237545B87B996B}
+  neg_risk_ctf_exchange: ${POLYMARKET_NEG_RISK_CTF_EXCHANGE:str:0xe2222d279d744050d28e00520010520000310F59}
+  neg_risk_adapter: ${POLYMARKET_NEG_RISK_ADAPTER:str:0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296}
   polygon_ledger_rpc: ${POLYGON_LEDGER_RPC:str:https://polygon-rpc.com}
   is_running_on_polymarket: ${IS_RUNNING_ON_POLYMARKET:bool:true}
+  polymarket_relayer_proxy_url: ${POLYMARKET_RELAYER_PROXY_URL:str:https://mpp.valory.xyz}

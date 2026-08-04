@@ -48,6 +48,9 @@ from packages.valory.skills.decision_maker_abci.behaviours.mech_only import (
     MechOnlySelectionBehaviour,
     MechResponseRouterBehaviour,
 )
+from packages.valory.skills.decision_maker_abci.behaviours.omen_withdraw import (
+    OmenWithdrawBehaviour,
+)
 from packages.valory.skills.decision_maker_abci.behaviours.polymarket_bet_placement import (
     PolymarketBetPlacementBehaviour,
 )
@@ -62,6 +65,27 @@ from packages.valory.skills.decision_maker_abci.behaviours.polymarket_set_approv
 )
 from packages.valory.skills.decision_maker_abci.behaviours.polymarket_swap import (
     PolymarketSwapUsdcBehaviour,
+)
+from packages.valory.skills.decision_maker_abci.behaviours.polymarket_sweep import (
+    PolymarketSweepBehaviour,
+)
+from packages.valory.skills.decision_maker_abci.behaviours.polymarket_top_up import (
+    PolymarketTopUpBehaviour,
+)
+from packages.valory.skills.decision_maker_abci.behaviours.polymarket_withdraw import (
+    PolymarketWithdrawBehaviour,
+)
+from packages.valory.skills.decision_maker_abci.behaviours.polymarket_withdraw_top_up import (
+    PolymarketWithdrawTopUpBehaviour,
+)
+from packages.valory.skills.decision_maker_abci.behaviours.polymarket_wrap_collateral import (
+    PolymarketWrapCollateralBehaviour,
+)
+from packages.valory.skills.decision_maker_abci.behaviours.post_bet_update import (
+    PostBetUpdateBehaviour,
+)
+from packages.valory.skills.decision_maker_abci.behaviours.post_omen_withdraw import (
+    PostOmenWithdrawBehaviour,
 )
 from packages.valory.skills.decision_maker_abci.behaviours.randomness import (
     BenchmarkingRandomnessBehaviour,
@@ -108,7 +132,11 @@ class AgentDecisionMakerRoundBehaviour(AbstractRoundBehaviour):
         BenchmarkingRandomnessBehaviour,  # type: ignore
         CheckBenchmarkingModeBehaviour,  # type: ignore
         PolymarketBetPlacementBehaviour,  # type: ignore
+        PolymarketTopUpBehaviour,  # type: ignore
+        PolymarketSweepBehaviour,  # type: ignore
+        PolymarketWithdrawTopUpBehaviour,  # type: ignore
         PolymarketRedeemBehaviour,  # type: ignore
+        PostBetUpdateBehaviour,  # type: ignore
         RedeemRouterBehaviour,  # type: ignore
         PolymarketSetApprovalBehaviour,  # type: ignore
         PolymarketPostSetApprovalBehaviour,  # type: ignore
@@ -118,4 +146,8 @@ class AgentDecisionMakerRoundBehaviour(AbstractRoundBehaviour):
         MechOnlySelectionBehaviour,  # type: ignore
         MechOnlyReceiveBehaviour,  # type: ignore
         MechResponseRouterBehaviour,  # type: ignore
+        PolymarketWithdrawBehaviour,  # type: ignore
+        PolymarketWrapCollateralBehaviour,  # type: ignore
+        OmenWithdrawBehaviour,  # type: ignore
+        PostOmenWithdrawBehaviour,  # type: ignore
     }

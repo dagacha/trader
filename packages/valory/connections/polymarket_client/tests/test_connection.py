@@ -20,9 +20,6 @@
 """Tests for the polymarket_client connection."""
 
 import json
-import os
-import tempfile
-from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -30,15 +27,17 @@ import pytest
 import requests
 
 from packages.valory.connections.polymarket_client.connection import (
-    CONDITIONAL_TOKENS_CONTRACT,
     DATA_API_BASE_URL,
     GAMMA_API_BASE_URL,
-    MARKETS_LIMIT,
+    MAX_RATE_LIMIT_SLEEP,
     MAX_UINT256,
     PARENT_COLLECTION_ID,
     POLYMARKET_CATEGORY_TAGS,
     PolymarketClientConnection,
+    RATE_LIMIT_RETRY_DELAY,
+    RETRY_DELAY,
     SrrDialogues,
+    _validate_builder_code,
 )
 from packages.valory.connections.polymarket_client.request_types import RequestType
 
@@ -47,11 +46,15 @@ from packages.valory.connections.polymarket_client.request_types import RequestT
 # ---------------------------------------------------------------------------
 
 SAFE_ADDRESS = "0x0000000000000000000000000000000000000001"
-USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+COLLATERAL_ADDRESS = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB"  # pUSD (v2)
+USDC_E_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"  # legacy wrap source
+COLLATERAL_ONRAMP_ADDRESS = "0x93070a847efEf7F70739046A929D47a521F5B8ee"
 CTF_ADDRESS = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
-CTF_EXCHANGE = "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"
-NEG_RISK_CTF_EXCHANGE = "0xC5d563A36AE78145C45a50134d48A1215220f80a"
+CTF_EXCHANGE = "0xE111180000d2663C0091e4f400237545B87B996B"  # v2
+NEG_RISK_CTF_EXCHANGE = "0xe2222d279d744050d28e00520010520000310F59"  # v2
 NEG_RISK_ADAPTER = "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296"
+CTF_COLLATERAL_ADAPTER = "0xAdA100Db00Ca00073811820692005400218FcE1f"
+NEG_RISK_CTF_COLLATERAL_ADAPTER = "0xadA2005600Dec949baf300f4C6120000bDB6eAab"
 
 
 class _TestableConnection(PolymarketClientConnection):
@@ -66,17 +69,30 @@ def _make_connection() -> _TestableConnection:
     We bypass __init__ (which is marked pragma: no cover) and directly set instance
     attributes needed for testing. Shadowing the read-only AEA 'configuration'
     property at class level allows direct assignment on the instance.
+
+    :return: a fully-stubbed connection instance ready for unit tests
     """
     conn = object.__new__(_TestableConnection)
     conn.logger = MagicMock()
     conn.client = MagicMock()
     conn.relayer_client = MagicMock()
+    conn.relayer_proxy = MagicMock()
+    conn.dw_address = None
+    conn._client_funder = SAFE_ADDRESS
+    conn._host = "https://clob.example"
+    conn._chain_id = 137
+    conn.builder_config = None
     conn.w3 = MagicMock()
-    conn.usdc_address = USDC_ADDRESS
+    conn.collateral_address = COLLATERAL_ADDRESS
+    conn.usdc_e_address = USDC_E_ADDRESS
+    conn.collateral_onramp_address = COLLATERAL_ONRAMP_ADDRESS
     conn.ctf_address = CTF_ADDRESS
     conn.ctf_exchange = CTF_EXCHANGE
     conn.neg_risk_ctf_exchange = NEG_RISK_CTF_EXCHANGE
     conn.neg_risk_adapter = NEG_RISK_ADAPTER
+    conn.ctf_collateral_adapter = CTF_COLLATERAL_ADAPTER
+    conn.neg_risk_ctf_collateral_adapter = NEG_RISK_CTF_COLLATERAL_ADAPTER
+    conn.clob_version = "v2"
     conn.dialogues = MagicMock()
     configuration_mock = MagicMock()
     safe_contract_addresses = {"polygon": SAFE_ADDRESS}
@@ -285,6 +301,29 @@ class TestRouteRequest:
         assert response == {"error": "some error from API"}
         assert error == "some error from API"
 
+    def test_handler_error_preserves_response_dict_keys(self) -> None:
+        """A handler-returned response dict is not clobbered by the error wrap.
+
+        ``_place_bet`` returns ``signed_order_json`` in its error response so the
+        caller can cache the signed order and retry without re-signing. The
+        router must preserve those extra keys rather than overwriting the dict.
+        """
+        conn = _make_connection()
+        handler_response = {
+            "error": "duplicate order",
+            "signed_order_json": '{"cached": "order"}',
+        }
+        conn._place_bet = MagicMock(return_value=(handler_response, "duplicate order"))
+        response, error = conn._route_request(
+            {
+                "request_type": RequestType.PLACE_BET.value,
+                "params": {"token_id": "t", "amount": 1.0},  # nosec B105
+            }
+        )
+        assert error == "duplicate order"
+        assert response["error"] == "duplicate order"
+        assert response["signed_order_json"] == '{"cached": "order"}'
+
     def test_type_error_in_handler_returns_error(self) -> None:
         """Test that TypeError from handler (bad params) is caught and returned."""
         conn = _make_connection()
@@ -325,6 +364,12 @@ class TestRouteRequest:
             "_set_approval",
             "_check_approval",
             "_fetch_order_book",
+            "_sell_position",
+            "_get_order",
+            "_deploy_dw",
+            "_exec_wallet_batch",
+            "_sweep_dw",
+            "_relayer_tx",
         ]:
             setattr(conn, method, MagicMock(return_value=({"ok": True}, None)))
 
@@ -363,78 +408,128 @@ class TestTestConnection:
 class TestPlaceBet:
     """Tests for _place_bet."""
 
+    @staticmethod
+    def _make_signed_order_v2() -> "object":
+        """Build a real SignedOrderV2 instance for serialization round-trips."""
+        from py_clob_client_v2.order_utils import Side
+        from py_clob_client_v2.order_utils.model.order_data_v2 import SignedOrderV2
+        from py_clob_client_v2.order_utils.model.signature_type_v2 import (
+            SignatureTypeV2,
+        )
+
+        return SignedOrderV2(
+            salt="1",
+            maker="0x0000000000000000000000000000000000000001",
+            signer="0x0000000000000000000000000000000000000002",
+            tokenId="tok",
+            makerAmount="10",
+            takerAmount="5",
+            side=Side.BUY,
+            signatureType=SignatureTypeV2.POLY_GNOSIS_SAFE,
+            timestamp="1700000000000",
+            metadata="0x" + "00" * 32,
+            builder="0x" + "00" * 32,
+            expiration="0",
+            signature="0xdeadbeef",
+        )
+
     def test_place_bet_success_no_cache(self) -> None:
         """Places bet from scratch (no cached order) and returns response.
 
-        The response must include 'signed_order_json' so the caller can retry
-        with the same order if the submission fails later.
+        The response must include 'signed_order_json' with the v2 cache marker
+        so the caller can retry with the same order if the submission fails.
         """
         conn = _make_connection()
-        signed_mock = MagicMock()
-        order_dict = {"order": "data"}
-        signed_mock.dict.return_value = order_dict
-        conn.client.create_market_order.return_value = signed_mock
+        signed = self._make_signed_order_v2()
+        conn.client.create_market_order.return_value = signed
         conn.client.post_order.return_value = {"status": "matched"}
 
         response, error = conn._place_bet(token_id="tok123", amount=10.0)  # nosec B106
         assert error is None
         conn.client.create_market_order.assert_called_once()
         conn.client.post_order.assert_called_once()
-        # The signed order JSON must be embedded in the response for potential retries
+        # Signed-order JSON must be embedded and marked as v2 for the
+        # cache-invalidation guard in _place_bet.
         assert "signed_order_json" in response
-        assert json.loads(response["signed_order_json"]) == order_dict
+        cached_dict = json.loads(response["signed_order_json"])
+        assert cached_dict["clob_version"] == "v2"
+        assert cached_dict["timestamp"] == "1700000000000"
 
-    def test_place_bet_with_cached_order(self) -> None:
-        """Uses cached signed order instead of creating a new one.
-
-        When a cached order is provided the CLOB client must not create a fresh
-        market order, and the cached JSON must be echoed back in the response so
-        the caller can reconstruct the order if needed.
-        """
+    def test_place_bet_with_cached_v2_order(self) -> None:
+        """Uses cached v2 signed order instead of creating a new one."""
         conn = _make_connection()
-        cached = {
-            "salt": "1",
-            "maker": "0x0",
-            "signer": "0x0",
-            "taker": "0x0",
-            "tokenId": "tok",
-            "makerAmount": "10",
-            "takerAmount": "5",
-            "expiration": "0",
-            "nonce": "0",
-            "feeRateBps": "0",
-            "side": "0",
-            "signatureType": "2",
-            "signature": "0xdeadbeef",
-        }
+        from packages.valory.connections.polymarket_client.connection import (
+            _serialize_signed_order_v2,
+        )
+
+        cached = _serialize_signed_order_v2(self._make_signed_order_v2())
         cached_json = json.dumps(cached)
         conn.client.post_order.return_value = {"status": "matched"}
 
-        with patch(
-            "packages.valory.connections.polymarket_client.connection.UtilsSignedOrder",
-            MagicMock(return_value=MagicMock()),
-        ):
-            response, error = conn._place_bet(
-                token_id="tok123",
-                amount=10.0,
-                cached_signed_order_json=cached_json,  # nosec B106
-            )
-        # Must reuse the cached order - no new order creation
+        response, error = conn._place_bet(
+            token_id="tok123",
+            amount=10.0,
+            cached_signed_order_json=cached_json,  # nosec B106
+        )
+        # Must reuse the cached order — no resign.
         conn.client.create_market_order.assert_not_called()
         assert error is None
-        # The cached JSON must be propagated back in the response
         assert response is not None
-        assert "signed_order_json" in response
         assert response["signed_order_json"] == cached_json
 
+    def test_place_bet_drops_v1_cache_and_resigns(self) -> None:
+        """v1-shaped cache (no ``clob_version`` marker) is dropped; order resigned."""
+        conn = _make_connection()
+        v1_cached = {
+            "salt": "1",
+            "maker": "0x0",
+            "tokenId": "tok",
+            "makerAmount": "10",
+            "takerAmount": "5",
+            "side": 0,
+            "signatureType": 2,
+            "nonce": "0",
+            "expiration": "0",
+            "taker": "0x0",
+            "feeRateBps": "0",
+            "signature": "0xdeadbeef",
+        }
+        conn.client.create_market_order.return_value = self._make_signed_order_v2()
+        conn.client.post_order.return_value = {"status": "matched"}
+
+        response, error = conn._place_bet(
+            token_id="tok123",
+            amount=10.0,
+            cached_signed_order_json=json.dumps(v1_cached),  # nosec B106
+        )
+        # The v1 entry must be discarded and a fresh v2 order signed.
+        conn.client.create_market_order.assert_called_once()
+        assert error is None
+        assert json.loads(response["signed_order_json"])["clob_version"] == "v2"
+
+    def test_place_bet_unparseable_cache_resigns(self) -> None:
+        """Garbage cache JSON: warn and fall through to fresh signing."""
+        conn = _make_connection()
+        conn.client.create_market_order.return_value = self._make_signed_order_v2()
+        conn.client.post_order.return_value = {"status": "matched"}
+
+        response, error = conn._place_bet(
+            token_id="tok123",
+            amount=10.0,
+            cached_signed_order_json="not-json{{",  # nosec B106
+        )
+        conn.client.create_market_order.assert_called_once()
+        assert error is None
+        assert json.loads(response["signed_order_json"])["clob_version"] == "v2"
+
     def test_place_bet_poly_api_exception_with_dict_error(self) -> None:
-        """Test that PolyApiException with dict error_msg returns error in response.
+        """Check that a PolyApiException with dict error_msg returns error in response.
 
         The response must also contain 'signed_order_json' so the caller can
         retry the submission with the same order (even though order creation
         failed before posting).
         """
-        from py_clob_client.exceptions import PolyApiException
+        from py_clob_client_v2.exceptions import PolyApiException
 
         conn = _make_connection()
         exc = PolyApiException(error_msg={"error": "duplicate order"})
@@ -447,15 +542,14 @@ class TestPlaceBet:
         assert "signed_order_json" in response
 
     def test_place_bet_poly_api_exception_non_dict_error(self) -> None:
-        """Test that PolyApiException with non-dict error_msg is formatted as 'Error placing bet: ...'."""
-        from py_clob_client.exceptions import PolyApiException
+        """Check that a PolyApiException with non-dict error_msg falls to the generic branch."""
+        from py_clob_client_v2.exceptions import PolyApiException
 
         conn = _make_connection()
         exc = PolyApiException(error_msg="plain string error")
         conn.client.create_market_order.side_effect = exc
 
         response, error = conn._place_bet(token_id="tok123", amount=5.0)  # nosec B106
-        # Non-dict error falls through to the f"Error placing bet: {e}" branch
         assert error is not None
         assert error.startswith("Error placing bet:")
         assert "error" in response
@@ -463,9 +557,7 @@ class TestPlaceBet:
     def test_place_bet_post_order_none_response(self) -> None:
         """When post_order returns None, response is None but no crash."""
         conn = _make_connection()
-        signed_mock = MagicMock()
-        signed_mock.dict.return_value = {}
-        conn.client.create_market_order.return_value = signed_mock
+        conn.client.create_market_order.return_value = self._make_signed_order_v2()
         conn.client.post_order.return_value = None
 
         response, error = conn._place_bet(token_id="tok123", amount=5.0)  # nosec B106
@@ -474,62 +566,391 @@ class TestPlaceBet:
 
 
 # ---------------------------------------------------------------------------
-# _load_cache_file / _save_cache_file
+# _sell_position
 # ---------------------------------------------------------------------------
 
 
-class TestCacheFileMethods:
-    """Tests for _load_cache_file and _save_cache_file."""
+class TestSellPosition:
+    """Tests for _sell_position (phase 2 of withdrawal mode)."""
 
-    def test_load_existing_cache_file(self) -> None:
-        """Loads existing JSON cache file correctly."""
-        conn = _make_connection()
-        data = {"allowances_set": True, "tag_id_cache": {"politics": "42"}}
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(data, f)
-            tmp_path = f.name
-        try:
-            result = conn._load_cache_file(tmp_path)
-            assert result == data
-        finally:
-            os.unlink(tmp_path)
+    @staticmethod
+    def _make_signed_order_v2() -> "object":
+        """Build a real SignedOrderV2 with side=SELL for serialization round-trips."""
+        from py_clob_client_v2.order_utils import Side
+        from py_clob_client_v2.order_utils.model.order_data_v2 import SignedOrderV2
+        from py_clob_client_v2.order_utils.model.signature_type_v2 import (
+            SignatureTypeV2,
+        )
 
-    def test_load_missing_cache_file_returns_defaults(self) -> None:
-        """Returns default dict when file does not exist."""
-        conn = _make_connection()
-        result = conn._load_cache_file("/nonexistent/path/cache.json")
-        assert result == {"allowances_set": False, "tag_id_cache": {}}
+        return SignedOrderV2(
+            salt="2",
+            maker="0x0000000000000000000000000000000000000001",
+            signer="0x0000000000000000000000000000000000000002",
+            tokenId="tok",
+            makerAmount="100",
+            takerAmount="43",
+            side=Side.SELL,
+            signatureType=SignatureTypeV2.POLY_GNOSIS_SAFE,
+            timestamp="1700000000000",
+            metadata="0x" + "00" * 32,
+            builder="0x" + "00" * 32,
+            expiration="0",
+            signature="0xdeadbeef",
+        )
 
-    def test_load_invalid_json_returns_defaults(self) -> None:
-        """Returns default dict when file contains invalid JSON."""
+    def test_dispatches_to_sell_position(self) -> None:
+        """RequestType.SELL_POSITION routes to the _sell_position handler."""
         conn = _make_connection()
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            f.write("not valid json {{")
-            tmp_path = f.name
-        try:
-            result = conn._load_cache_file(tmp_path)
-            assert result == {"allowances_set": False, "tag_id_cache": {}}
-        finally:
-            os.unlink(tmp_path)
+        conn._sell_position = MagicMock(return_value=({"order_id": "x"}, None))
+        response, error = conn._route_request(
+            {
+                "request_type": RequestType.SELL_POSITION.value,
+                "params": {"token_id": "t", "amount": 100.0},  # nosec B105
+            }
+        )
+        conn._sell_position.assert_called_once_with(
+            token_id="t", amount=100.0
+        )  # nosec B106
+        assert error == ""
 
-    def test_save_cache_file_creates_file(self) -> None:
-        """Saves cache data to file and creates parent directories."""
-        conn = _make_connection()
-        data = {"allowances_set": True, "tag_id_cache": {"politics": "7"}}
-        with tempfile.TemporaryDirectory() as tmpdir:
-            cache_path = os.path.join(tmpdir, "subdir", "cache.json")
-            conn._save_cache_file(cache_path, data)
-            assert Path(cache_path).exists()
-            with open(cache_path) as f:
-                loaded = json.load(f)
-            assert loaded == data
+    def test_creates_sell_fak_order(self) -> None:
+        """``MarketOrderArgs`` carries side=SELL, order_type=FAK, amount=shares."""
+        from py_clob_client_v2 import OrderType
+        from py_clob_client_v2.order_utils import Side
 
-    def test_save_cache_file_handles_exception(self) -> None:
-        """Logs error but does not raise when save fails."""
         conn = _make_connection()
-        with patch("builtins.open", side_effect=OSError("disk full")):
-            conn._save_cache_file("/tmp/test_cache.json", {})  # nosec B108
-        conn.logger.error.assert_called_once()
+        conn.client.create_market_order.return_value = self._make_signed_order_v2()
+        conn.client.post_order.return_value = {
+            "success": True,
+            "status": "matched",
+            "orderID": "o-1",
+            "takingAmount": "100",
+            "makingAmount": "43",
+        }
+
+        response, error = conn._sell_position(
+            token_id="tok123", amount=100.0
+        )  # nosec B106
+        assert error is None
+        # Inspect the MarketOrderArgs passed to create_market_order.
+        args, _ = conn.client.create_market_order.call_args
+        mo = args[0]
+        assert mo.token_id == "tok123"  # nosec B105
+        assert mo.amount == 100.0
+        assert mo.side == Side.SELL
+        assert mo.order_type == OrderType.FAK
+
+    def test_does_not_pass_options(self) -> None:
+        """``create_market_order`` is invoked with no PartialCreateOrderOptions.
+
+        The SDK auto-resolves tick_size and neg_risk via market-info cache
+        when options is omitted. Mirrors _place_bet.
+        """
+        conn = _make_connection()
+        conn.client.create_market_order.return_value = self._make_signed_order_v2()
+        conn.client.post_order.return_value = {
+            "success": True,
+            "status": "matched",
+            "orderID": "o-2",
+            "takingAmount": "10",
+            "makingAmount": "5",
+        }
+
+        conn._sell_position(token_id="tok123", amount=10.0)  # nosec B106
+        args, kwargs = conn.client.create_market_order.call_args
+        # Only one positional (the args object) and no second positional or kwarg.
+        assert len(args) == 1
+        assert "options" not in kwargs
+
+    def test_uses_fak_for_post_order_kwarg(self) -> None:
+        """Both args.order_type AND post_order's order-type kwarg are FAK (D16)."""
+        from py_clob_client_v2 import OrderType
+
+        conn = _make_connection()
+        conn.client.create_market_order.return_value = self._make_signed_order_v2()
+        conn.client.post_order.return_value = {
+            "success": True,
+            "status": "matched",
+            "orderID": "o-3",
+            "takingAmount": "5",
+            "makingAmount": "2",
+        }
+
+        conn._sell_position(token_id="tok123", amount=5.0)  # nosec B106
+        post_args, _ = conn.client.post_order.call_args
+        # post_order(signed, order_type) — second positional must be FAK.
+        assert post_args[1] == OrderType.FAK
+
+    def test_resigns_on_every_call(self) -> None:
+        """Every ``_sell_position`` call signs a fresh order — no cache.
+
+        The CLOB poisons signed-order ids on the first acknowledgement, so
+        retries with the same signed order get rejected as ``Duplicated``.
+        See the docstring on ``_sell_position`` for the rationale.
+        """
+        conn = _make_connection()
+        conn.client.create_market_order.return_value = self._make_signed_order_v2()
+        conn.client.post_order.return_value = {
+            "success": True,
+            "status": "matched",
+            "orderID": "o-x",
+            "makingAmount": "10",
+            "takingAmount": "5",
+        }
+
+        conn._sell_position(token_id="tok123", amount=10.0)  # nosec B106
+        conn._sell_position(token_id="tok123", amount=10.0)  # nosec B106
+        # Each call hits the signer; no caching short-circuit.
+        assert conn.client.create_market_order.call_count == 2
+
+    def test_translates_polyapi_exception(self) -> None:
+        """Catch PolyApiException; return the (error_dict, error_msg) tuple shape."""
+        from py_clob_client_v2.exceptions import PolyApiException
+
+        conn = _make_connection()
+        exc = PolyApiException(error_msg={"error": "insufficient liquidity"})
+        conn.client.create_market_order.side_effect = exc
+
+        response, error = conn._sell_position(
+            token_id="tok123", amount=100.0  # nosec B106
+        )
+        assert error == "insufficient liquidity"
+        assert response["error"] == "insufficient liquidity"
+
+    def test_normalizes_response_fields(self) -> None:
+        """Response normalizes makingAmount→filled_shares, takingAmount→filled_usdc.
+
+        The mapping is role-based: for a SELL we (the maker) provided shares
+        and took USDC, so ``makingAmount`` is the share count and
+        ``takingAmount`` is the USDC count. Verified against a live partial
+        fill on Polygon mainnet.
+        """
+        conn = _make_connection()
+        conn.client.create_market_order.return_value = self._make_signed_order_v2()
+        # Partial fill: 60 of 100 shares filled, received 25.8 USDC,
+        # implied price = 25.8 / 60 = 0.43.
+        conn.client.post_order.return_value = {
+            "success": True,
+            "errorMsg": "",
+            "orderID": "0xabc",
+            "transactionsHashes": ["0xtx1"],
+            "status": "matched",
+            "makingAmount": "60",
+            "takingAmount": "25.8",
+        }
+
+        response, error = conn._sell_position(
+            token_id="tok123", amount=100.0  # nosec B106
+        )
+        assert error is None
+        assert response["order_id"] == "0xabc"
+        assert response["status"] == "matched"
+        assert response["filled_shares"] == 60.0
+        assert response["filled_usdc"] == 25.8
+        assert response["fill_price"] == pytest.approx(0.43)
+        assert response["raw"]["transactionsHashes"] == ["0xtx1"]
+        assert "signed_order_json" not in response
+
+    def test_normalizes_unfilled_live_response(self) -> None:
+        """A 'live' response (empty amounts) yields zero fills and no division error."""
+        conn = _make_connection()
+        conn.client.create_market_order.return_value = self._make_signed_order_v2()
+        conn.client.post_order.return_value = {
+            "success": True,
+            "errorMsg": "",
+            "orderID": "0xdef",
+            "transactionsHashes": [],
+            "status": "live",
+            "takingAmount": "",
+            "makingAmount": "",
+        }
+
+        response, error = conn._sell_position(
+            token_id="tok123", amount=100.0  # nosec B106
+        )
+        assert error is None
+        assert response["filled_shares"] == 0.0
+        assert response["filled_usdc"] == 0.0
+        assert response["fill_price"] == 0.0
+
+    # Old test ``test_post_order_none_response`` (which asserted the broken
+    # ``return resp, None`` shape on falsy post_order) was replaced by
+    # ``test_sell_position_returns_error_on_none_post_order`` further down,
+    # which asserts the explicit-error envelope per Issue #3.
+
+    # --- delayed-status returns immediately (polling moved to behaviour) -
+
+    @staticmethod
+    def _delayed_post_resp() -> dict:
+        """Live post_order response shape when CLOB defers async matching."""
+        return {
+            "success": True,
+            "errorMsg": "",
+            "orderID": "0xpending",
+            "transactionsHashes": [],
+            "status": "delayed",
+            "takingAmount": "",
+            "makingAmount": "",
+        }
+
+    def test_sell_position_returns_error_on_none_post_order(self) -> None:
+        """A falsy ``None`` ``post_order`` reply must surface as an SDK error.
+
+        Without this, a protocol-layer regression (SDK contract change,
+        HTTP 5xx with empty body) is silently mapped to "no liquidity" via
+        the behaviour-side per-position retry exhaustion path. The fix
+        makes the connection return an explicit ``{"error": ...}`` envelope
+        so the behaviour records ``"sdk error: ..."``, which is
+        distinguishable in logs from a genuine empty-bid-book outcome.
+        """
+        conn = _make_connection()
+        conn.client.create_market_order.return_value = self._make_signed_order_v2()
+        conn.client.post_order.return_value = None
+
+        response, error = conn._sell_position(
+            token_id="tok123", amount=20.4  # nosec B106
+        )
+
+        assert error == "post_order returned empty response"
+        assert isinstance(response, dict)
+        assert response.get("error") == "post_order returned empty response"
+
+    def test_sell_position_returns_error_on_empty_dict_post_order(self) -> None:
+        """An empty-dict ``post_order`` reply has the same SDK-error treatment."""
+        conn = _make_connection()
+        conn.client.create_market_order.return_value = self._make_signed_order_v2()
+        conn.client.post_order.return_value = {}
+
+        response, error = conn._sell_position(
+            token_id="tok123", amount=20.4  # nosec B106
+        )
+
+        assert error == "post_order returned empty response"
+        assert isinstance(response, dict)
+        assert response.get("error") == "post_order returned empty response"
+
+    def test_sell_position_logs_error_on_falsy_response(self) -> None:
+        """The connection must log the empty-response error at error level."""
+        conn = _make_connection()
+        conn.client.create_market_order.return_value = self._make_signed_order_v2()
+        conn.client.post_order.return_value = None
+
+        conn._sell_position(token_id="tok123", amount=20.4)  # nosec B106
+
+        assert any(
+            "post_order returned empty response" in str(call.args[0])
+            for call in conn.logger.error.call_args_list
+        )
+
+    def test_sell_position_delayed_returns_immediately_no_poll(self) -> None:
+        """``status=delayed`` returns immediately; polling lives behaviour-side.
+
+        Polling was migrated out of the connection so the AEA worker thread
+        is not blocked on ``time.sleep``. The behaviour drives the
+        cooperative poll via ``RequestType.GET_ORDER`` instead.
+        """
+        conn = _make_connection()
+        conn.client.create_market_order.return_value = self._make_signed_order_v2()
+        post_resp = self._delayed_post_resp()
+        conn.client.post_order.return_value = post_resp
+
+        with patch("time.sleep") as sleep_mock:
+            response, error = conn._sell_position(
+                token_id="tok123", amount=20.4  # nosec B106
+            )
+
+        assert error is None
+        assert response["order_id"] == "0xpending"
+        assert response["status"] == "delayed"
+        assert response["filled_shares"] == 0.0
+        assert response["filled_usdc"] == 0.0
+        assert response["fill_price"] == 0.0
+        assert response["raw"] is post_resp
+        # Connection must NOT poll get_order or sleep on this path.
+        conn.client.get_order.assert_not_called()
+        sleep_mock.assert_not_called()
+
+    def test_matched_response_skips_polling(self) -> None:
+        """A synchronous ``matched`` reply uses post_order fields directly.
+
+        ``get_order`` must not be called when there's nothing to resolve.
+        """
+        conn = _make_connection()
+        conn.client.create_market_order.return_value = self._make_signed_order_v2()
+        conn.client.post_order.return_value = {
+            "success": True,
+            "errorMsg": "",
+            "orderID": "0xdone",
+            "transactionsHashes": ["0xtx1"],
+            "status": "matched",
+            "makingAmount": "20.4",
+            "takingAmount": "0.8772",
+        }
+
+        response, error = conn._sell_position(
+            token_id="tok123", amount=20.4  # nosec B106
+        )
+
+        assert error is None
+        assert response["filled_shares"] == pytest.approx(20.4)
+        assert response["filled_usdc"] == pytest.approx(0.8772)
+        conn.client.get_order.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _get_order
+# ---------------------------------------------------------------------------
+
+
+class TestGetOrder:
+    """Tests for the GET_ORDER handler (single-shot order lookup).
+
+    The behaviour drives the polling loop; the connection just dispatches a
+    single call to ``client.get_order`` and returns the raw response.
+    """
+
+    def test_get_order_returns_raw_response(self) -> None:
+        """``_get_order`` returns the raw ``client.get_order`` payload."""
+        conn = _make_connection()
+        terminal_payload = {
+            "id": "0xpending",
+            "status": "ORDER_STATUS_MATCHED",
+            "size_matched": "20400000",
+            "original_size": "20400000",
+            "price": "0.043",
+        }
+        conn.client.get_order.return_value = terminal_payload
+
+        response, error = conn._get_order(order_id="0xpending")  # nosec B106
+
+        assert error is None
+        assert response is terminal_payload
+        conn.client.get_order.assert_called_once_with("0xpending")
+
+    def test_get_order_passes_through_none(self) -> None:
+        """The SDK can return None before indexing; we forward as-is."""
+        conn = _make_connection()
+        conn.client.get_order.return_value = None
+
+        response, error = conn._get_order(order_id="0xpending")  # nosec B106
+
+        assert error is None
+        assert response is None
+
+    def test_get_order_propagates_poly_api_exception(self) -> None:
+        """``PolyApiException`` is mapped to the standard error tuple shape."""
+        from py_clob_client_v2.exceptions import PolyApiException
+
+        conn = _make_connection()
+        conn.client.get_order.side_effect = PolyApiException(
+            error_msg={"error": "Unauthorized"}
+        )
+
+        response, error = conn._get_order(order_id="0xpending")  # nosec B106
+
+        assert error is not None
+        assert "Unauthorized" in error
+        assert isinstance(response, dict) and "error" in response
 
 
 # ---------------------------------------------------------------------------
@@ -597,194 +1018,391 @@ class TestRequestWithRetries:
         call_kwargs = mock_get.call_args[1]
         assert call_kwargs["params"] == params
 
+    def test_backoff_is_exponential_not_linear(self) -> None:
+        """Sleep durations follow exponential backoff (RETRY_DELAY * 2**attempt).
 
-# ---------------------------------------------------------------------------
-# _fetch_tag_id
-# ---------------------------------------------------------------------------
-
-
-class TestFetchTagId:
-    """Tests for _fetch_tag_id."""
-
-    def test_returns_cached_tag_id(self) -> None:
-        """Returns tag_id from in-memory cache without making API call."""
-        conn = _make_connection()
-        cache = {"politics": "99"}
-        tag_id, error = conn._fetch_tag_id("politics", cache)
-        assert tag_id == "99"
-        assert error is None
-
-    def test_fetches_tag_id_from_api_and_caches(self) -> None:
-        """Fetches tag_id from API when not in cache, then caches it."""
-        conn = _make_connection()
-        cache = {}
-        conn._request_with_retries = MagicMock(
-            return_value=({"id": "42", "slug": "science"}, None)
-        )
-        tag_id, error = conn._fetch_tag_id("science", cache)
-        assert tag_id == "42"
-        assert error is None
-        assert cache["science"] == "42"
-
-    def test_api_error_propagates(self) -> None:
-        """Returns (None, error_message) when API fails."""
-        conn = _make_connection()
-        conn._request_with_retries = MagicMock(
-            return_value=(None, "connection refused")
-        )
-        tag_id, error = conn._fetch_tag_id("finance", {})
-        assert tag_id is None
-        assert "Error fetching tag" in error
-
-    def test_no_id_in_response(self) -> None:
-        """Returns error when API response lacks 'id' field."""
-        conn = _make_connection()
-        conn._request_with_retries = MagicMock(
-            return_value=({"slug": "finance"}, None)  # no 'id' key
-        )
-        tag_id, error = conn._fetch_tag_id("finance", {})
-        assert tag_id is None
-        assert "No tag ID found" in error
-
-    def test_updates_persistent_cache_file(self) -> None:
-        """Updates persistent cache file when cache_file_path provided."""
-        conn = _make_connection()
-        cache = {}
-        cache_data = {"allowances_set": False, "tag_id_cache": {}}
-        conn._request_with_retries = MagicMock(return_value=({"id": "77"}, None))
-        conn._save_cache_file = MagicMock()
-
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
-            cache_path = f.name
-        try:
-            tag_id, error = conn._fetch_tag_id(
-                "technology", cache, cache_file_path=cache_path, cache_data=cache_data
-            )
-            assert tag_id == "77"
-            conn._save_cache_file.assert_called_once()
-        finally:
-            os.unlink(cache_path)
-
-    def test_initialises_missing_tag_id_cache_in_cache_data(self) -> None:
-        """Handles cache_data without 'tag_id_cache' key by initialising it."""
-        conn = _make_connection()
-        cache = {}
-        cache_data = {"allowances_set": False}  # no tag_id_cache
-        conn._request_with_retries = MagicMock(return_value=({"id": "55"}, None))
-        conn._save_cache_file = MagicMock()
-
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
-            cache_path = f.name
-        try:
-            tag_id, _ = conn._fetch_tag_id(
-                "health", cache, cache_file_path=cache_path, cache_data=cache_data
-            )
-            assert cache_data["tag_id_cache"]["health"] == "55"
-        finally:
-            os.unlink(cache_path)
-
-    def test_handles_none_tag_id_cache_in_cache_data(self) -> None:
-        """Handles cache_data with tag_id_cache=None by re-initialising it."""
-        conn = _make_connection()
-        cache = {}
-        cache_data = {"allowances_set": False, "tag_id_cache": None}
-        conn._request_with_retries = MagicMock(return_value=({"id": "66"}, None))
-        conn._save_cache_file = MagicMock()
-
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
-            cache_path = f.name
-        try:
-            tag_id, _ = conn._fetch_tag_id(
-                "business", cache, cache_file_path=cache_path, cache_data=cache_data
-            )
-            assert isinstance(cache_data["tag_id_cache"], dict)
-            assert cache_data["tag_id_cache"]["business"] == "66"
-        finally:
-            os.unlink(cache_path)
-
-
-# ---------------------------------------------------------------------------
-# _fetch_markets_by_tag
-# ---------------------------------------------------------------------------
-
-
-class TestFetchMarketsByTag:
-    """Tests for _fetch_markets_by_tag."""
-
-    def test_returns_single_page(self) -> None:
-        """Returns markets from a single page (less than MARKETS_LIMIT)."""
-        conn = _make_connection()
-        markets = [{"id": f"m{i}"} for i in range(5)]
-        conn._request_with_retries = MagicMock(return_value=(markets, None))
-
-        result, error = conn._fetch_markets_by_tag(
-            "42", "2025-01-01T00:00:00Z", "2025-01-05T00:00:00Z"
-        )
-        assert result == markets
-        assert error is None
-
-    def test_paginates_multiple_pages(self) -> None:
-        """Paginates until a page with fewer than MARKETS_LIMIT items is returned."""
-        conn = _make_connection()
-        page1 = [{"id": f"m{i}"} for i in range(MARKETS_LIMIT)]
-        page2 = [{"id": f"m{i}"} for i in range(10)]
-
-        conn._request_with_retries = MagicMock(
-            side_effect=[(page1, None), (page2, None)]
-        )
-
-        result, error = conn._fetch_markets_by_tag(
-            "42", "2025-01-01T00:00:00Z", "2025-01-05T00:00:00Z"
-        )
-        assert len(result) == MARKETS_LIMIT + 10
-        assert error is None
-
-    def test_api_error_propagates(self) -> None:
-        """Returns (None, error) when API call fails."""
-        conn = _make_connection()
-        conn._request_with_retries = MagicMock(
-            return_value=(None, "connection timeout")
-        )
-        result, error = conn._fetch_markets_by_tag(
-            "42", "2025-01-01T00:00:00Z", "2025-01-05T00:00:00Z"
-        )
-        assert result is None
-        assert error == "connection timeout"
-
-    def test_empty_response_stops_pagination(self) -> None:
-        """Stops pagination when empty list is returned."""
-        conn = _make_connection()
-        conn._request_with_retries = MagicMock(return_value=([], None))
-        result, error = conn._fetch_markets_by_tag(
-            "42", "2025-01-01T00:00:00Z", "2025-01-05T00:00:00Z"
-        )
-        assert result == []
-        assert error is None
-
-    def test_sends_correct_params_to_gamma_api(self) -> None:
-        """_fetch_markets_by_tag passes tag_id, dates, MARKETS_LIMIT, and offset=0 to the API.
-
-        The API must receive all five required parameters. Using the wrong limit
-        or missing the tag_id would silently return unrelated markets.
+        The previous implementation used a linear `RETRY_DELAY * (attempt + 1)`
+        despite a comment claiming exponential. We probe with max_retries=4 so
+        the third sleep distinguishes exponential (4x) from linear (3x).
         """
         conn = _make_connection()
-        conn._request_with_retries = MagicMock(return_value=([], None))
+        with (
+            patch("requests.get") as mock_get,
+            patch(
+                "packages.valory.connections.polymarket_client.connection.time.sleep"
+            ) as mock_sleep,
+        ):
+            mock_get.side_effect = requests.exceptions.RequestException("boom")
+            conn._request_with_retries("https://example.com/api", max_retries=4)
 
-        tag_id = "42"
-        end_date_min = "2025-01-01T00:00:00Z"
-        end_date_max = "2025-01-05T00:00:00Z"
-        conn._fetch_markets_by_tag(tag_id, end_date_min, end_date_max)
+        # 4 attempts → 3 sleeps (no sleep after the final attempt).
+        durations = [call.args[0] for call in mock_sleep.call_args_list]
+        assert durations == [
+            RETRY_DELAY * 1,
+            RETRY_DELAY * 2,
+            RETRY_DELAY * 4,
+        ]
 
-        call_args = conn._request_with_retries.call_args
-        actual_url = call_args[0][0]
-        actual_params = call_args[1]["params"]
+    def test_backoff_uses_rate_limit_base_on_429(self) -> None:
+        """A 429 response triggers a longer base delay to respect rate limits.
 
-        assert f"{GAMMA_API_BASE_URL}/markets" in actual_url
-        assert actual_params["tag_id"] == tag_id
-        assert actual_params["end_date_min"] == end_date_min
-        assert actual_params["end_date_max"] == end_date_max
-        assert actual_params["limit"] == MARKETS_LIMIT
-        assert actual_params["offset"] == 0
+        The retry loop catches ``HTTPError`` from ``raise_for_status()`` via
+        the broad ``RequestException`` clause, so 429s share the same backoff
+        path as transient errors. Without a status-aware base, dropping the
+        transient base to 1s would hammer a rate-limited endpoint at
+        ~7s cumulative; this asserts the rate-limit case still uses the
+        longer ``RATE_LIMIT_RETRY_DELAY`` base.
+        """
+        conn = _make_connection()
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        http_error = requests.exceptions.HTTPError("429 Too Many Requests")
+        http_error.response = mock_response
+        mock_response.raise_for_status.side_effect = http_error
+
+        with (
+            patch("requests.get", return_value=mock_response),
+            patch(
+                "packages.valory.connections.polymarket_client.connection.time.sleep"
+            ) as mock_sleep,
+        ):
+            conn._request_with_retries("https://example.com/api", max_retries=3)
+
+        durations = [call.args[0] for call in mock_sleep.call_args_list]
+        assert durations == [
+            RATE_LIMIT_RETRY_DELAY * 1,
+            RATE_LIMIT_RETRY_DELAY * 2,
+        ]
+
+    def test_backoff_uses_transient_base_on_connection_error(self) -> None:
+        """Connection-level errors (no HTTP response) use the short base delay.
+
+        Counterpart to the 429 case: a transient ``ConnectionError`` should
+        not pay the rate-limit penalty since there is no rate-limited server
+        to back off from.
+        """
+        conn = _make_connection()
+        with (
+            patch("requests.get") as mock_get,
+            patch(
+                "packages.valory.connections.polymarket_client.connection.time.sleep"
+            ) as mock_sleep,
+        ):
+            mock_get.side_effect = requests.exceptions.ConnectionError("dns")
+            conn._request_with_retries("https://example.com/api", max_retries=3)
+
+        durations = [call.args[0] for call in mock_sleep.call_args_list]
+        assert durations == [RETRY_DELAY * 1, RETRY_DELAY * 2]
+
+    def test_backoff_total_budget_is_bounded(self) -> None:
+        """Total blocking sleep across all retries must stay under 10 seconds.
+
+        The previous 10s base produced 30s of blocking sleep on a single-thread
+        connection pool; the fix reduces RETRY_DELAY so the cumulative budget
+        fits well within any realistic round timeout.
+        """
+        conn = _make_connection()
+        with (
+            patch("requests.get") as mock_get,
+            patch(
+                "packages.valory.connections.polymarket_client.connection.time.sleep"
+            ) as mock_sleep,
+        ):
+            mock_get.side_effect = requests.exceptions.RequestException("boom")
+            conn._request_with_retries("https://example.com/api", max_retries=3)
+
+        total = sum(call.args[0] for call in mock_sleep.call_args_list)
+        assert total < 10
+
+    @staticmethod
+    def _make_429_with_header(retry_after: str) -> requests.exceptions.HTTPError:
+        """Build a 429 HTTPError whose response carries the given Retry-After value."""
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        mock_response.headers = {"Retry-After": retry_after}
+        http_error = requests.exceptions.HTTPError("429 Too Many Requests")
+        http_error.response = mock_response
+        mock_response.raise_for_status.side_effect = http_error
+        return http_error, mock_response
+
+    def test_retry_after_header_extends_429_backoff(self) -> None:
+        """``Retry-After: 30`` lifts both sleeps above the 10s/20s exponential base.
+
+        RFC 9110 §10.2.3 lets a 429 carry ``Retry-After`` to tell the client when
+        to retry. Without honoring it, the 30s exponential budget can fire all
+        three attempts inside a 60s server cooldown — exactly the failure mode
+        the rate-limit-aware backoff was meant to prevent.
+        """
+        conn = _make_connection()
+        _, mock_response = self._make_429_with_header("30")
+
+        with (
+            patch("requests.get", return_value=mock_response),
+            patch(
+                "packages.valory.connections.polymarket_client.connection.time.sleep"
+            ) as mock_sleep,
+        ):
+            conn._request_with_retries("https://example.com/api", max_retries=3)
+
+        durations = [call.args[0] for call in mock_sleep.call_args_list]
+        # max(10*1, 30) = 30, max(10*2, 30) = 30
+        assert durations == [30.0, 30.0]
+
+    def test_retry_after_header_capped_at_max(self) -> None:
+        """A pathological ``Retry-After: 3600`` clamps to ``MAX_RATE_LIMIT_SLEEP``.
+
+        Honoring the server is good; blocking a single-threaded connection for
+        an hour is not. The cap bounds the worst-case per-attempt sleep so a
+        misconfigured (or malicious) server cannot stall the agent indefinitely.
+        """
+        conn = _make_connection()
+        _, mock_response = self._make_429_with_header("3600")
+
+        with (
+            patch("requests.get", return_value=mock_response),
+            patch(
+                "packages.valory.connections.polymarket_client.connection.time.sleep"
+            ) as mock_sleep,
+        ):
+            conn._request_with_retries("https://example.com/api", max_retries=3)
+
+        durations = [call.args[0] for call in mock_sleep.call_args_list]
+        assert durations == [
+            float(MAX_RATE_LIMIT_SLEEP),
+            float(MAX_RATE_LIMIT_SLEEP),
+        ]
+
+    def test_no_retry_after_header_uses_exponential_base(self) -> None:
+        """A 429 without a ``Retry-After`` header keeps the plain exponential.
+
+        Most 429 responses don't carry ``Retry-After`` — the absent-header path
+        must behave exactly like the pre-Retry-After implementation so this
+        change stays additive.
+        """
+        conn = _make_connection()
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        mock_response.headers = {}  # explicitly no Retry-After
+        http_error = requests.exceptions.HTTPError("429 Too Many Requests")
+        http_error.response = mock_response
+        mock_response.raise_for_status.side_effect = http_error
+
+        with (
+            patch("requests.get", return_value=mock_response),
+            patch(
+                "packages.valory.connections.polymarket_client.connection.time.sleep"
+            ) as mock_sleep,
+        ):
+            conn._request_with_retries("https://example.com/api", max_retries=3)
+
+        durations = [call.args[0] for call in mock_sleep.call_args_list]
+        assert durations == [
+            RATE_LIMIT_RETRY_DELAY * 1,
+            RATE_LIMIT_RETRY_DELAY * 2,
+        ]
+
+    def test_retry_after_header_invalid_falls_back(self) -> None:
+        """HTTP-date or garbage ``Retry-After`` falls back to the exponential base.
+
+        ``Retry-After`` permits an HTTP-date form (RFC 9110 §10.2.3); we don't
+        parse it. Anything that doesn't ``float()`` cleanly — HTTP-date, garbage,
+        empty — must not crash or skew the backoff: the loop should behave as
+        if the header were absent.
+        """
+        conn = _make_connection()
+        _, mock_response = self._make_429_with_header("Fri, 31 Dec 1999 23:59:59 GMT")
+
+        with (
+            patch("requests.get", return_value=mock_response),
+            patch(
+                "packages.valory.connections.polymarket_client.connection.time.sleep"
+            ) as mock_sleep,
+        ):
+            conn._request_with_retries("https://example.com/api", max_retries=3)
+
+        durations = [call.args[0] for call in mock_sleep.call_args_list]
+        assert durations == [
+            RATE_LIMIT_RETRY_DELAY * 1,
+            RATE_LIMIT_RETRY_DELAY * 2,
+        ]
+
+
+# ---------------------------------------------------------------------------
+# _filter_tradeable_markets
+# ---------------------------------------------------------------------------
+
+
+class TestFilterTradeableMarkets:
+    """Tests for _filter_tradeable_markets.
+
+    /events returns some nested markets that are tagged Yes/No but are not
+    actually tradeable (missing outcomePrices / clobTokenIds, or active=False).
+    The old /markets endpoint filtered these server-side. This filter matches
+    that behaviour client-side so the downstream behaviour doesn't warn on them.
+    """
+
+    def test_drops_market_missing_outcome_prices(self) -> None:
+        """Market with empty outcomePrices is dropped."""
+        conn = _make_connection()
+        markets = [
+            {
+                "id": "m1",
+                "outcomePrices": "[]",
+                "clobTokenIds": '["t1","t2"]',
+                "active": True,
+            },
+            {
+                "id": "m2",
+                "outcomePrices": '["0.5","0.5"]',
+                "clobTokenIds": '["t1","t2"]',
+                "active": True,
+            },
+        ]
+        result = conn._filter_tradeable_markets(markets)
+        assert [m["id"] for m in result] == ["m2"]
+
+    def test_drops_market_missing_clob_token_ids(self) -> None:
+        """Market with empty clobTokenIds is dropped."""
+        conn = _make_connection()
+        markets = [
+            {
+                "id": "m1",
+                "outcomePrices": '["0.5","0.5"]',
+                "clobTokenIds": "[]",
+                "active": True,
+            },
+            {
+                "id": "m2",
+                "outcomePrices": '["0.5","0.5"]',
+                "clobTokenIds": '["t1","t2"]',
+                "active": True,
+            },
+        ]
+        result = conn._filter_tradeable_markets(markets)
+        assert [m["id"] for m in result] == ["m2"]
+
+    def test_drops_market_with_active_false(self) -> None:
+        """Market with active=False is dropped even if other fields are populated."""
+        conn = _make_connection()
+        markets = [
+            {
+                "id": "m1",
+                "outcomePrices": '["0.5","0.5"]',
+                "clobTokenIds": '["t1","t2"]',
+                "active": False,
+            },
+            {
+                "id": "m2",
+                "outcomePrices": '["0.5","0.5"]',
+                "clobTokenIds": '["t1","t2"]',
+                "active": True,
+            },
+        ]
+        result = conn._filter_tradeable_markets(markets)
+        assert [m["id"] for m in result] == ["m2"]
+
+    def test_drops_market_missing_active_field(self) -> None:
+        """Market without an `active` key is treated as not-tradeable and dropped."""
+        conn = _make_connection()
+        markets = [
+            {
+                "id": "m1",
+                "outcomePrices": '["0.5","0.5"]',
+                "clobTokenIds": '["t1","t2"]',
+            },
+        ]
+        result = conn._filter_tradeable_markets(markets)
+        assert result == []
+
+    def test_drops_market_with_missing_fields(self) -> None:
+        """Market with no outcomePrices / clobTokenIds keys at all is dropped."""
+        conn = _make_connection()
+        markets = [{"id": "m1", "active": True}]
+        result = conn._filter_tradeable_markets(markets)
+        assert result == []
+
+    def test_drops_market_with_malformed_json_fields(self) -> None:
+        """Market whose outcomePrices / clobTokenIds is not valid JSON is dropped."""
+        conn = _make_connection()
+        markets = [
+            {
+                "id": "m1",
+                "outcomePrices": "not json",
+                "clobTokenIds": '["t1","t2"]',
+                "active": True,
+            },
+        ]
+        result = conn._filter_tradeable_markets(markets)
+        assert result == []
+
+    def test_keeps_fully_populated_active_market(self) -> None:
+        """A market with populated fields and active=True is kept."""
+        conn = _make_connection()
+        markets = [
+            {
+                "id": "m1",
+                "outcomePrices": '["0.4","0.6"]',
+                "clobTokenIds": '["tok1","tok2"]',
+                "active": True,
+            },
+        ]
+        result = conn._filter_tradeable_markets(markets)
+        assert [m["id"] for m in result] == ["m1"]
+
+    def test_empty_input_returns_empty(self) -> None:
+        """No markets → empty list."""
+        conn = _make_connection()
+        assert conn._filter_tradeable_markets([]) == []
+
+
+# ---------------------------------------------------------------------------
+# _fetch_markets applies tradeable filter
+# ---------------------------------------------------------------------------
+
+
+class TestFetchMarketsAppliesTradeableFilter:
+    """Ensure _fetch_markets runs the new tradeable filter alongside the others."""
+
+    def test_fetch_markets_drops_inactive_or_unpriced_markets(self) -> None:
+        """Markets that pass yes/no but fail the tradeable filter are excluded."""
+        conn = _make_connection()
+        # Mix of yes/no markets: one tradeable, one missing prices, one inactive
+        markets = [
+            {
+                "id": "keep",
+                "createdAt": "2026-01-01T00:00:00Z",
+                "outcomes": '["Yes","No"]',
+                "outcomePrices": '["0.4","0.6"]',
+                "clobTokenIds": '["tok1","tok2"]',
+                "active": True,
+                "_poly_tags": ["politics"],
+            },
+            {
+                "id": "drop_prices",
+                "createdAt": "2026-01-01T00:00:00Z",
+                "outcomes": '["Yes","No"]',
+                "outcomePrices": "[]",
+                "clobTokenIds": '["tok1","tok2"]',
+                "active": True,
+                "_poly_tags": ["politics"],
+            },
+            {
+                "id": "drop_inactive",
+                "createdAt": "2026-01-01T00:00:00Z",
+                "outcomes": '["Yes","No"]',
+                "outcomePrices": '["0.4","0.6"]',
+                "clobTokenIds": '["tok1","tok2"]',
+                "active": False,
+                "_poly_tags": ["politics"],
+            },
+        ]
+        conn._fetch_markets_by_tag_slug = MagicMock(return_value=(markets, None))
+
+        result, error = conn._fetch_markets()
+        assert error is None
+        for cat_markets in result.values():
+            ids = [m["id"] for m in cat_markets]
+            assert ids == ["keep"]
 
 
 # ---------------------------------------------------------------------------
@@ -931,34 +1549,46 @@ class TestFetchMarkets:
     """Tests for _fetch_markets."""
 
     def test_successful_fetch_returns_markets_by_category(self) -> None:
-        """Returns dict of category->markets with Yes/No filtering applied.
+        """Returns dict of category->markets with Yes/No + tradeable filtering applied.
 
-        Markets that do NOT have Yes/No outcomes or that are too old must be
-        excluded from the result even if they are returned by the API.
+        Markets that do NOT have Yes/No outcomes, that are too old, or that
+        are untradeable must be excluded even if returned by the API.
         """
         conn = _make_connection()
-        conn._load_cache_file = MagicMock(
-            return_value={"allowances_set": False, "tag_id_cache": {}}
-        )
-        conn._fetch_tag_id = MagicMock(return_value=("tag123", None))
-        # Mix: one valid Yes/No market and two that should be filtered out
+        # Mix: one valid tradeable market and two that should be filtered out
         markets = [
-            # passes both filters
+            # passes all filters
             {
                 "id": "m1",
                 "createdAt": "2026-01-01T00:00:00Z",
                 "outcomes": '["Yes","No"]',
+                "outcomePrices": '["0.5","0.5"]',
+                "clobTokenIds": '["t1","t2"]',
+                "active": True,
+                "_poly_tags": ["politics"],
             },
             # fails yes/no filter (multi-outcome)
             {
                 "id": "m2",
                 "createdAt": "2026-01-01T00:00:00Z",
                 "outcomes": '["A","B","C"]',
+                "outcomePrices": '["0.3","0.3","0.4"]',
+                "clobTokenIds": '["t1","t2","t3"]',
+                "active": True,
+                "_poly_tags": ["politics"],
             },
             # fails createdAt filter (too old - empty string < MIN_CREATED_AT)
-            {"id": "m3", "createdAt": "", "outcomes": '["Yes","No"]'},
+            {
+                "id": "m3",
+                "createdAt": "",
+                "outcomes": '["Yes","No"]',
+                "outcomePrices": '["0.5","0.5"]',
+                "clobTokenIds": '["t1","t2"]',
+                "active": True,
+                "_poly_tags": ["politics"],
+            },
         ]
-        conn._fetch_markets_by_tag = MagicMock(return_value=(markets, None))
+        conn._fetch_markets_by_tag_slug = MagicMock(return_value=(markets, None))
 
         result, error = conn._fetch_markets()
         assert error is None
@@ -971,29 +1601,11 @@ class TestFetchMarkets:
             assert len(cat_markets) == 1
             assert cat_markets[0]["id"] == "m1"
 
-    def test_tag_id_error_skips_category(self) -> None:
-        """Category is skipped when tag_id fetch fails."""
-        conn = _make_connection()
-        conn._load_cache_file = MagicMock(
-            return_value={"allowances_set": False, "tag_id_cache": {}}
-        )
-        conn._fetch_tag_id = MagicMock(return_value=(None, "tag not found"))
-        conn._fetch_markets_by_tag = MagicMock()
-
-        result, error = conn._fetch_markets()
-        assert error is None
-        assert result == {}  # All categories skipped
-        conn._fetch_markets_by_tag.assert_not_called()
-
     def test_markets_fetch_error_continues_other_categories(self) -> None:
         """Continues to next category when market fetch fails for one."""
         conn = _make_connection()
-        conn._load_cache_file = MagicMock(
-            return_value={"allowances_set": False, "tag_id_cache": {}}
-        )
-        conn._fetch_tag_id = MagicMock(return_value=("tag123", None))
         # First category fails, rest succeed with empty list
-        conn._fetch_markets_by_tag = MagicMock(
+        conn._fetch_markets_by_tag_slug = MagicMock(
             side_effect=[(None, "api error")]
             + [([], None)] * (len(POLYMARKET_CATEGORY_TAGS) - 1)
         )
@@ -1003,51 +1615,189 @@ class TestFetchMarkets:
         # All categories with successful fetch (empty) should be present
         assert len(result) == len(POLYMARKET_CATEGORY_TAGS) - 1
 
-    def test_uses_cache_file_path(self) -> None:
-        """Loads and uses tag_id cache from file when cache_file_path provided."""
-        conn = _make_connection()
-        cached_data = {
-            "allowances_set": False,
-            "tag_id_cache": {
-                cat: f"id_{i}" for i, cat in enumerate(POLYMARKET_CATEGORY_TAGS)
-            },
-        }
-        conn._load_cache_file = MagicMock(return_value=cached_data)
-        conn._fetch_tag_id = MagicMock(
-            side_effect=lambda cat, cache, *args, **kw: (cache.get(cat, None), None)
-        )
-        conn._fetch_markets_by_tag = MagicMock(return_value=([], None))
-
-        result, error = conn._fetch_markets(
-            cache_file_path="/tmp/cache.json"  # nosec B108
-        )
-        assert error is None
-        conn._load_cache_file.assert_called_once_with("/tmp/cache.json")  # nosec B108
-
     def test_unexpected_exception_returns_error(self) -> None:
         """Catches unexpected exceptions and returns error message."""
         conn = _make_connection()
-        conn._load_cache_file = MagicMock(side_effect=RuntimeError("disk full"))
-
-        result, error = conn._fetch_markets(
-            cache_file_path="/tmp/cache.json"  # nosec B108
+        conn._fetch_markets_by_tag_slug = MagicMock(
+            side_effect=RuntimeError("disk full")
         )
+
+        result, error = conn._fetch_markets()
         assert result is None
         assert "Unexpected error" in error
 
-    def test_none_tag_id_cache_in_loaded_data(self) -> None:
-        """Handles loaded cache_data with tag_id_cache=None."""
-        conn = _make_connection()
-        conn._load_cache_file = MagicMock(
-            return_value={"allowances_set": False, "tag_id_cache": None}
-        )
-        conn._fetch_tag_id = MagicMock(return_value=("tag123", None))
-        conn._fetch_markets_by_tag = MagicMock(return_value=([], None))
+    def test_fetch_markets_warns_on_full_tradeable_drop(self) -> None:
+        """WARN when the tradeable filter drops 100% of a non-empty input.
 
-        result, error = conn._fetch_markets(
-            cache_file_path="/tmp/cache.json"  # nosec B108
+        Guards against silent collapse if Polymarket ever changes how
+        outcomePrices / clobTokenIds are encoded, or introduces a new
+        lifecycle state that makes `active` falsy for every market.
+        """
+        conn = _make_connection()
+        # Five yes/no markets, all inactive → tradeable filter drops all five.
+        markets = [
+            {
+                "id": f"m{i}",
+                "createdAt": "2026-01-01T00:00:00Z",
+                "outcomes": '["Yes","No"]',
+                "outcomePrices": '["0.5","0.5"]',
+                "clobTokenIds": '["t1","t2"]',
+                "active": False,
+                "_poly_tags": ["politics"],
+            }
+            for i in range(5)
+        ]
+        conn._fetch_markets_by_tag_slug = MagicMock(return_value=(markets, None))
+
+        result, error = conn._fetch_markets()
+        assert error is None
+        # Every category should have logged the 100% drop warning once.
+        warning_calls = [
+            c for c in conn.logger.warning.call_args_list if "dropped 100%" in str(c)
+        ]
+        assert len(warning_calls) == len(POLYMARKET_CATEGORY_TAGS)
+
+
+# ---------------------------------------------------------------------------
+# _fetch_markets_by_tag_slug (new /events-based fetcher)
+# ---------------------------------------------------------------------------
+
+
+class TestFetchMarketsByTagSlug:
+    """Tests for _fetch_markets_by_tag_slug (the /events?tag_slug=X fetcher)."""
+
+    def test_flattens_events_and_attaches_poly_tags(self) -> None:
+        """Each event's tag slugs are attached to every child market as _poly_tags."""
+        conn = _make_connection()
+        events = [
+            {
+                "id": "e1",
+                "tags": [{"slug": "politics"}, {"slug": "elections"}],
+                "markets": [{"id": "m1"}, {"id": "m2"}],
+            },
+            {
+                "id": "e2",
+                "tags": [{"slug": "world"}],
+                "markets": [{"id": "m3"}],
+            },
+        ]
+        conn._request_with_retries = MagicMock(return_value=({"events": events}, None))
+
+        result, error = conn._fetch_markets_by_tag_slug(
+            "politics", "2025-01-01T00:00:00Z", "2025-01-05T00:00:00Z"
+        )
+
+        assert error is None
+        assert len(result) == 3
+        ids = [m["id"] for m in result]
+        assert ids == ["m1", "m2", "m3"]
+        assert result[0]["_poly_tags"] == ["politics", "elections"]
+        assert result[1]["_poly_tags"] == ["politics", "elections"]
+        assert result[2]["_poly_tags"] == ["world"]
+
+    def test_paginates_until_next_cursor_absent(self) -> None:
+        """Paginates /events/keyset until a response omits next_cursor."""
+        from packages.valory.connections.polymarket_client.connection import (
+            EVENTS_LIMIT,
+        )
+
+        page1 = [
+            {"id": f"e{i}", "tags": [], "markets": [{"id": f"m{i}"}]}
+            for i in range(EVENTS_LIMIT)
+        ]
+        page2 = [
+            {"id": f"e{i}x", "tags": [], "markets": [{"id": f"m{i}x"}]}
+            for i in range(3)
+        ]
+        conn = _make_connection()
+        conn._request_with_retries = MagicMock(
+            side_effect=[
+                ({"events": page1, "next_cursor": "cursor-1"}, None),
+                ({"events": page2}, None),
+            ]
+        )
+
+        result, error = conn._fetch_markets_by_tag_slug(
+            "politics", "2025-01-01T00:00:00Z", "2025-01-05T00:00:00Z"
         )
         assert error is None
+        assert len(result) == EVENTS_LIMIT + 3
+        # Second call must forward the cursor from page 1.
+        second_call_params = conn._request_with_retries.call_args_list[1][1]["params"]
+        assert second_call_params["after_cursor"] == "cursor-1"
+
+    def test_empty_response_stops_pagination(self) -> None:
+        """Empty events list stops pagination."""
+        conn = _make_connection()
+        conn._request_with_retries = MagicMock(return_value=({"events": []}, None))
+        result, error = conn._fetch_markets_by_tag_slug(
+            "politics", "2025-01-01T00:00:00Z", "2025-01-05T00:00:00Z"
+        )
+        assert result == []
+        assert error is None
+
+    def test_api_error_propagates(self) -> None:
+        """Returns (None, error) on API error."""
+        conn = _make_connection()
+        conn._request_with_retries = MagicMock(return_value=(None, "boom"))
+        result, error = conn._fetch_markets_by_tag_slug(
+            "politics", "2025-01-01T00:00:00Z", "2025-01-05T00:00:00Z"
+        )
+        assert result is None
+        assert error == "boom"
+
+    def test_sends_correct_params_to_events_endpoint(self) -> None:
+        """Hits /events/keyset with tag_slug, date window, limit, and no cursor on first call."""
+        from packages.valory.connections.polymarket_client.connection import (
+            EVENTS_LIMIT,
+        )
+
+        conn = _make_connection()
+        conn._request_with_retries = MagicMock(return_value=({"events": []}, None))
+
+        conn._fetch_markets_by_tag_slug(
+            "politics", "2025-01-01T00:00:00Z", "2025-01-05T00:00:00Z"
+        )
+
+        call_args = conn._request_with_retries.call_args
+        actual_url = call_args[0][0]
+        actual_params = call_args[1]["params"]
+
+        assert actual_url == f"{GAMMA_API_BASE_URL}/events/keyset"
+        assert actual_params["tag_slug"] == "politics"
+        assert actual_params["end_date_min"] == "2025-01-01T00:00:00Z"
+        assert actual_params["end_date_max"] == "2025-01-05T00:00:00Z"
+        assert actual_params["limit"] == EVENTS_LIMIT
+        assert "offset" not in actual_params
+        assert "after_cursor" not in actual_params
+
+    def test_event_with_no_tags_yields_empty_poly_tags(self) -> None:
+        """Markets under an event with no tags get _poly_tags=[] (not missing)."""
+        conn = _make_connection()
+        events = [{"id": "e1", "markets": [{"id": "m1"}]}]
+        conn._request_with_retries = MagicMock(return_value=({"events": events}, None))
+
+        result, error = conn._fetch_markets_by_tag_slug(
+            "politics", "2025-01-01T00:00:00Z", "2025-01-05T00:00:00Z"
+        )
+        assert error is None
+        assert result[0]["_poly_tags"] == []
+
+    def test_event_with_no_markets_contributes_nothing(self) -> None:
+        """An event without a markets list is skipped."""
+        conn = _make_connection()
+        events = [
+            {"id": "e1", "tags": [{"slug": "x"}]},
+            {"id": "e2", "tags": [{"slug": "y"}], "markets": [{"id": "m1"}]},
+        ]
+        conn._request_with_retries = MagicMock(return_value=({"events": events}, None))
+
+        result, error = conn._fetch_markets_by_tag_slug(
+            "politics", "2025-01-01T00:00:00Z", "2025-01-05T00:00:00Z"
+        )
+        assert error is None
+        assert len(result) == 1
+        assert result[0]["id"] == "m1"
 
 
 # ---------------------------------------------------------------------------
@@ -1171,6 +1921,20 @@ class TestGetPositions:
         call_kwargs = mock_get.call_args[1]
         assert call_kwargs["params"]["user"] == SAFE_ADDRESS
 
+    def test_address_override_sent_as_user_param(self) -> None:
+        """An explicit address overrides the Safe as the 'user' query param."""
+        conn = _make_connection()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = []
+        conn.configuration.config.get.return_value = {"polygon": SAFE_ADDRESS}
+        dw = "0x5AE1AA40AB7790b7eEE44a780Ef34FF217F8785C"
+
+        with patch("requests.get", return_value=mock_resp) as mock_get:
+            conn._get_positions(address=dw)
+
+        call_kwargs = mock_get.call_args[1]
+        assert call_kwargs["params"]["user"] == dw
+
     def test_request_exception_returns_error(self) -> None:
         """Returns (None, error) on RequestException."""
         conn = _make_connection()
@@ -1263,6 +2027,16 @@ class TestFetchAllPositions:
         result, error = conn._fetch_all_positions()
         assert result is None
         assert "Unexpected error" in error
+
+    def test_address_threaded_to_get_positions(self) -> None:
+        """An explicit address is forwarded to every _get_positions page call."""
+        conn = _make_connection()
+        conn._get_positions = MagicMock(return_value=([], None))
+        dw = "0x5AE1AA40AB7790b7eEE44a780Ef34FF217F8785C"
+
+        conn._fetch_all_positions(address=dw)
+
+        assert conn._get_positions.call_args[1]["address"] == dw
 
 
 # ---------------------------------------------------------------------------
@@ -1427,7 +2201,7 @@ class TestRedeemPositions:
         result, error = conn._redeem_positions(
             condition_id="0x" + "ab" * 32,
             index_sets=[1, 2],
-            collateral_token=USDC_ADDRESS,
+            collateral_token=COLLATERAL_ADDRESS,
             is_neg_risk=False,
         )
         assert result == tx_data
@@ -1444,16 +2218,15 @@ class TestRedeemPositions:
 
         result, error = conn._redeem_positions(
             condition_id="ab" * 32,
-            index_sets=[2],  # 2 = 1 << 1 -> outcome_index=1
-            collateral_token=USDC_ADDRESS,
+            index_sets=[2],
+            collateral_token=COLLATERAL_ADDRESS,
             is_neg_risk=True,
-            size=100.0,
         )
         assert result == tx_data
         assert error is None
 
-    def test_neg_risk_index_set_1_outcome_0(self) -> None:
-        """index_sets=[1] maps to outcome_index=0 for neg risk."""
+    def test_neg_risk_single_held_index_set(self) -> None:
+        """A single held bitmask in index_sets is encoded straight through."""
         conn = _make_connection()
         result_mock = MagicMock()
         result_mock.get_transaction.return_value = {}
@@ -1461,10 +2234,9 @@ class TestRedeemPositions:
 
         result, error = conn._redeem_positions(
             condition_id="ab" * 32,
-            index_sets=[1],  # 1 = 1 << 0 -> outcome_index=0
-            collateral_token=USDC_ADDRESS,
+            index_sets=[1],
+            collateral_token=COLLATERAL_ADDRESS,
             is_neg_risk=True,
-            size=50.0,
         )
         assert error is None
 
@@ -1478,9 +2250,8 @@ class TestRedeemPositions:
         result, error = conn._redeem_positions(
             condition_id="ab" * 32,
             index_sets=[],
-            collateral_token=USDC_ADDRESS,
+            collateral_token=COLLATERAL_ADDRESS,
             is_neg_risk=True,
-            size=50.0,
         )
         assert error is None
 
@@ -1492,7 +2263,7 @@ class TestRedeemPositions:
         result, error = conn._redeem_positions(
             condition_id="ab" * 32,
             index_sets=[1],
-            collateral_token=USDC_ADDRESS,
+            collateral_token=COLLATERAL_ADDRESS,
         )
         assert result is None
         assert "not initialized" in error
@@ -1505,7 +2276,7 @@ class TestRedeemPositions:
         result, error = conn._redeem_positions(
             condition_id="ab" * 32,
             index_sets=[1],
-            collateral_token=USDC_ADDRESS,
+            collateral_token=COLLATERAL_ADDRESS,
         )
         assert result is None
         assert "Error redeeming positions" in error
@@ -1526,7 +2297,7 @@ class TestRedeemPositions:
         conn._redeem_positions(
             condition_id="ab" * 32,
             index_sets=[1],
-            collateral_token=USDC_ADDRESS,
+            collateral_token=COLLATERAL_ADDRESS,
             is_neg_risk=False,
         )
 
@@ -1536,12 +2307,19 @@ class TestRedeemPositions:
         assert expected == "01b7037c"
         tx = conn.relayer_client.execute.call_args[1]["transactions"][0]
         assert tx.data[2:10] == expected
+        # Defensive: the v1 2-arg selector must never appear anywhere in the
+        # encoded calldata. Catches a regression that re-introduces the
+        # broken overload alongside the v2 one.
+        assert "dbeccb23" not in tx.data
 
-    def test_neg_risk_calldata_uses_adapter_selector(self) -> None:
-        """Neg-risk market uses 4-byte selector dbeccb23 (redeemPositions(bytes32,uint256[])).
+    def test_neg_risk_calldata_uses_4arg_selector(self) -> None:
+        """Neg-risk market uses the same 4-arg selector 01b7037c as standard markets.
 
-        The neg-risk adapter takes different arguments than the standard CTF contract.
-        Using the wrong selector would silently fail on-chain.
+        Why: under CLOB v2, NegRiskCtfCollateralAdapter accepts the standard
+        redeemPositions(address,bytes32,bytes32,uint256[]) overload. The v1
+        2-arg overload (0xdbeccb23) reverts with GS013 for v2-resolved markets
+        flagged negativeRisk because they're plain CTF binary conditions, not
+        registered with the NegRiskAdapter.
         """
         from eth_hash.auto import keccak
 
@@ -1553,15 +2331,20 @@ class TestRedeemPositions:
         conn._redeem_positions(
             condition_id="ab" * 32,
             index_sets=[1],
-            collateral_token=USDC_ADDRESS,
+            collateral_token=COLLATERAL_ADDRESS,
             is_neg_risk=True,
-            size=10.0,
         )
 
-        expected = keccak(b"redeemPositions(bytes32,uint256[])")[:4].hex()
-        assert expected == "dbeccb23"
+        expected = keccak(b"redeemPositions(address,bytes32,bytes32,uint256[])")[
+            :4
+        ].hex()
+        assert expected == "01b7037c"
         tx = conn.relayer_client.execute.call_args[1]["transactions"][0]
         assert tx.data[2:10] == expected
+        # Defensive: the v1 2-arg selector must never appear anywhere in the
+        # encoded calldata. Catches a regression that re-introduces the
+        # broken overload alongside the v2 one.
+        assert "dbeccb23" not in tx.data
 
     def test_condition_id_0x_prefix_stripped(self) -> None:
         """A 0x-prefixed and non-prefixed condition_id produce identical calldata.
@@ -1578,7 +2361,7 @@ class TestRedeemPositions:
         conn._redeem_positions(
             condition_id="0x" + "ab" * 32,
             index_sets=[1],
-            collateral_token=USDC_ADDRESS,
+            collateral_token=COLLATERAL_ADDRESS,
             is_neg_risk=False,
         )
         tx_with_prefix = conn.relayer_client.execute.call_args[1]["transactions"][0]
@@ -1587,19 +2370,58 @@ class TestRedeemPositions:
         conn._redeem_positions(
             condition_id="ab" * 32,
             index_sets=[1],
-            collateral_token=USDC_ADDRESS,
+            collateral_token=COLLATERAL_ADDRESS,
             is_neg_risk=False,
         )
         tx_without_prefix = conn.relayer_client.execute.call_args[1]["transactions"][0]
 
         assert tx_with_prefix.data == tx_without_prefix.data
 
-    def test_neg_risk_correct_redeem_amounts_for_outcome_1(self) -> None:
-        """index_sets=[2] (1<<1) maps to outcome_index=1, yielding redeem_amounts=[0, size].
+    def test_standard_market_targets_ctf_collateral_adapter(self) -> None:
+        """Standard market redeem must target CtfCollateralAdapter, not raw CTF.
 
-        The ABI encoding must place the amount at position 1 (the No outcome),
-        not position 0. A bit-shift calculation error would silently redeem the
-        wrong outcome.
+        Routing through the adapter unwraps USDC.e to pUSD inside the same
+        transaction, so the Safe receives pUSD directly.
+        """
+        conn = _make_connection()
+        result_mock = MagicMock()
+        result_mock.get_transaction.return_value = {}
+        conn.relayer_client.execute.return_value = result_mock
+
+        conn._redeem_positions(
+            condition_id="ab" * 32,
+            index_sets=[1],
+            collateral_token=COLLATERAL_ADDRESS,
+            is_neg_risk=False,
+        )
+
+        tx = conn.relayer_client.execute.call_args[1]["transactions"][0]
+        assert tx.to == CTF_COLLATERAL_ADAPTER
+
+    def test_neg_risk_targets_neg_risk_ctf_collateral_adapter(self) -> None:
+        """Neg-risk redeem must target NegRiskCtfCollateralAdapter, not raw NegRiskAdapter."""
+        conn = _make_connection()
+        result_mock = MagicMock()
+        result_mock.get_transaction.return_value = {}
+        conn.relayer_client.execute.return_value = result_mock
+
+        conn._redeem_positions(
+            condition_id="ab" * 32,
+            index_sets=[1],
+            collateral_token=COLLATERAL_ADDRESS,
+            is_neg_risk=True,
+        )
+
+        tx = conn.relayer_client.execute.call_args[1]["transactions"][0]
+        assert tx.to == NEG_RISK_CTF_COLLATERAL_ADAPTER
+
+    def test_neg_risk_calldata_encodes_4arg_payload_correctly(self) -> None:
+        """Neg-risk redeem encodes (collateral, parentCollectionId, conditionId, indexSets).
+
+        Why: a regression to the old 2-arg shape would shift the offsets and
+        submit malformed calldata. The adapter itself ignores the indexSets
+        argument and reads both balances on-chain, but pinning the encoded
+        shape catches a wire-format regression.
         """
         from eth_abi import decode as abi_decode
 
@@ -1610,18 +2432,54 @@ class TestRedeemPositions:
 
         conn._redeem_positions(
             condition_id="ab" * 32,
-            index_sets=[2],  # 2 = 1 << 1 → outcome_index = 1
-            collateral_token=USDC_ADDRESS,
+            index_sets=[2],  # held outcome = 1 -> bitmask 1<<1
+            collateral_token=COLLATERAL_ADDRESS,
             is_neg_risk=True,
-            size=50.0,
         )
 
         tx = conn.relayer_client.execute.call_args[1]["transactions"][0]
-        # Skip "0x" and 4-byte selector, then ABI-decode the remaining args
         calldata_bytes = bytes.fromhex(tx.data[2:])
         args_bytes = calldata_bytes[4:]  # skip 4-byte selector
-        _condition_id, redeem_amounts = abi_decode(["bytes32", "uint256[]"], args_bytes)
-        assert list(redeem_amounts) == [0, 50]
+        collateral, _parent, condition_id, index_sets = abi_decode(
+            ["address", "bytes32", "bytes32", "uint256[]"], args_bytes
+        )
+        assert collateral.lower() == COLLATERAL_ADDRESS.lower()
+        assert condition_id.hex() == "ab" * 32
+        assert list(index_sets) == [2]
+
+    def test_neg_risk_and_standard_produce_identical_calldata(self) -> None:
+        """Both branches submit byte-identical calldata; only tx.to differs.
+
+        Why: after the CLOB v2 fix, neg-risk and standard redeems share the
+        same 4-arg redeemPositions overload. A divergence would mean one
+        branch regressed to a different selector or argument layout.
+        """
+        conn = _make_connection()
+        result_mock = MagicMock()
+        result_mock.get_transaction.return_value = {}
+        conn.relayer_client.execute.return_value = result_mock
+
+        conn._redeem_positions(
+            condition_id="ab" * 32,
+            index_sets=[1],
+            collateral_token=COLLATERAL_ADDRESS,
+            is_neg_risk=False,
+        )
+        standard_tx = conn.relayer_client.execute.call_args[1]["transactions"][0]
+
+        conn.relayer_client.reset_mock()
+        conn._redeem_positions(
+            condition_id="ab" * 32,
+            index_sets=[1],
+            collateral_token=COLLATERAL_ADDRESS,
+            is_neg_risk=True,
+        )
+        neg_risk_tx = conn.relayer_client.execute.call_args[1]["transactions"][0]
+
+        assert standard_tx.data == neg_risk_tx.data
+        assert standard_tx.to != neg_risk_tx.to
+        assert standard_tx.to == CTF_COLLATERAL_ADAPTER
+        assert neg_risk_tx.to == NEG_RISK_CTF_COLLATERAL_ADAPTER
 
 
 # ---------------------------------------------------------------------------
@@ -1695,7 +2553,7 @@ class TestSetApproval:
     """Tests for _set_approval."""
 
     def test_success(self) -> None:
-        """Executes 6 approval transactions and returns transaction data."""
+        """Executes 8 approval transactions and returns transaction data."""
         conn = _make_connection()
         tx_data = {"hash": "0xabc"}
         result_mock = MagicMock()
@@ -1706,9 +2564,13 @@ class TestSetApproval:
         assert result == tx_data
         assert error is None
 
-        # 6 transactions should be passed
+        # 8 transactions: the original 6 (collateral×3 + CTF×3 for v2 Exchange,
+        # NegRisk Exchange, NegRiskAdapter) plus 2 ERC-1155 setApprovalForAll
+        # for the CtfCollateralAdapter / NegRiskCtfCollateralAdapter pair.
+        # No pUSD allowances are granted to the collateral adapters: their
+        # redeem path doesn't pull ERC-20 from the Safe.
         call_kwargs = conn.relayer_client.execute.call_args[1]
-        assert len(call_kwargs["transactions"]) == 6
+        assert len(call_kwargs["transactions"]) == 8
 
     def test_no_relayer_client_returns_error(self) -> None:
         """Returns error when relayer_client is None."""
@@ -1729,10 +2591,13 @@ class TestSetApproval:
         assert "Error setting approvals" in error
 
     def test_usdc_approve_transactions_target_usdc_contract(self) -> None:
-        """ERC-20 approve transactions (indices 0, 2, 4) all target the USDC contract.
+        """ERC-20 approve transactions all target the collateral contract.
 
-        These are the three `approve(ctf_exchange, MAX_UINT256)` calls. Targeting
-        the wrong contract would grant allowances to the wrong token address.
+        These are the `approve(spender, MAX_UINT256)` calls — 3 in total, one
+        per spender (CTF Exchange, NegRisk Exchange, NegRiskAdapter).
+        Targeting the wrong contract would grant allowances to the wrong
+        token address. The collateral adapters intentionally receive no
+        ERC-20 allowance — only ERC-1155 operator rights.
         """
         conn = _make_connection()
         result_mock = MagicMock()
@@ -1743,13 +2608,15 @@ class TestSetApproval:
 
         txns = conn.relayer_client.execute.call_args[1]["transactions"]
         for idx in [0, 2, 4]:
-            assert txns[idx].to == USDC_ADDRESS, f"txns[{idx}].to should be USDC"
+            assert txns[idx].to == COLLATERAL_ADDRESS, f"txns[{idx}].to should be pUSD"
 
     def test_ctf_approval_transactions_target_ctf_contract(self) -> None:
-        """ERC-1155 setApprovalForAll transactions (indices 1, 3, 5) all target the CTF contract.
+        """ERC-1155 setApprovalForAll transactions all target the CTF contract.
 
-        These are the three `setApprovalForAll(spender, True)` calls. Targeting
-        the wrong contract would grant operator access on the wrong token.
+        Five `setApprovalForAll(operator, True)` calls — one per operator
+        (CTF Exchange, NegRisk Exchange, NegRiskAdapter, CtfCollateralAdapter,
+        NegRiskCtfCollateralAdapter). Targeting the wrong contract would grant
+        operator access on the wrong token.
         """
         conn = _make_connection()
         result_mock = MagicMock()
@@ -1759,8 +2626,39 @@ class TestSetApproval:
         conn._set_approval()
 
         txns = conn.relayer_client.execute.call_args[1]["transactions"]
-        for idx in [1, 3, 5]:
+        for idx in [1, 3, 5, 6, 7]:
             assert txns[idx].to == CTF_ADDRESS, f"txns[{idx}].to should be CTF"
+
+    def test_includes_collateral_adapter_setapprovalforall(self) -> None:
+        """The redeem-critical CTF.setApprovalForAll(adapter, true) is included for both adapters.
+
+        Without ERC-1155 operator rights for the collateral adapters on the
+        CTF, the adapters can't burn the Safe's position tokens during redeem
+        and the call silently emits PayoutRedemption with payout=0.
+        """
+        conn = _make_connection()
+        result_mock = MagicMock()
+        result_mock.get_transaction.return_value = {}
+        conn.relayer_client.execute.return_value = result_mock
+
+        conn._set_approval()
+
+        txns = conn.relayer_client.execute.call_args[1]["transactions"]
+        ctf_setApprovalForAll_selector = "0xa22cb465"
+        ctf_op_targets = {
+            t.data
+            for t in txns
+            if t.to == CTF_ADDRESS and t.data.startswith(ctf_setApprovalForAll_selector)
+        }
+        # Each setApprovalForAll(operator, true) calldata embeds the operator
+        # address in the second 32-byte arg; check both adapters appear.
+        assert any(
+            CTF_COLLATERAL_ADAPTER[2:].lower() in d.lower() for d in ctf_op_targets
+        ), "CtfCollateralAdapter setApprovalForAll missing"
+        assert any(
+            NEG_RISK_CTF_COLLATERAL_ADAPTER[2:].lower() in d.lower()
+            for d in ctf_op_targets
+        ), "NegRiskCtfCollateralAdapter setApprovalForAll missing"
 
 
 # ---------------------------------------------------------------------------
@@ -1777,10 +2675,12 @@ class TestOnChainChecks:
         # Return 32 bytes representing uint256 = 1000
         allowance_bytes = (1000).to_bytes(32, byteorder="big")
         conn.w3.keccak.return_value = b"\x12\x34\x56\x78" + b"\x00" * 28
-        conn.w3.to_checksum_address.return_value = USDC_ADDRESS
+        conn.w3.to_checksum_address.return_value = COLLATERAL_ADDRESS
         conn.w3.eth.call.return_value = allowance_bytes
 
-        result = conn._check_erc20_allowance(USDC_ADDRESS, SAFE_ADDRESS, CTF_EXCHANGE)
+        result = conn._check_erc20_allowance(
+            COLLATERAL_ADDRESS, SAFE_ADDRESS, CTF_EXCHANGE
+        )
         assert result == 1000
 
     def test_check_erc1155_approval_true(self) -> None:
@@ -1813,10 +2713,10 @@ class TestOnChainChecks:
         """
         conn = _make_connection()
         conn.w3.keccak.return_value = b"\x12\x34\x56\x78" + b"\x00" * 28
-        conn.w3.to_checksum_address.return_value = USDC_ADDRESS
+        conn.w3.to_checksum_address.return_value = COLLATERAL_ADDRESS
         conn.w3.eth.call.return_value = (1000).to_bytes(32, byteorder="big")
 
-        conn._check_erc20_allowance(USDC_ADDRESS, SAFE_ADDRESS, CTF_EXCHANGE)
+        conn._check_erc20_allowance(COLLATERAL_ADDRESS, SAFE_ADDRESS, CTF_EXCHANGE)
 
         conn.w3.keccak.assert_called_once_with(text="allowance(address,address)")
 
@@ -1885,17 +2785,23 @@ class TestCheckApproval:
         """Returns partial approval status correctly."""
         conn = _make_connection()
         conn.configuration.config.get.return_value = {"polygon": SAFE_ADDRESS}
-        # USDC allowances: first set, second and third not
+        # 3 USDC allowance checks: CTF Exchange, NegRisk Exchange, NegRiskAdapter.
         conn._check_erc20_allowance = MagicMock(
             side_effect=[MAX_UINT256, 0, MAX_UINT256]
         )
-        conn._check_erc1155_approval = MagicMock(side_effect=[True, False, True])
+        # 5 ERC-1155 approval checks: CTF Exchange, NegRisk Exchange,
+        # NegRiskAdapter, CtfCollateralAdapter, NegRiskCtfCollateralAdapter.
+        conn._check_erc1155_approval = MagicMock(
+            side_effect=[True, False, True, True, True]
+        )
 
         result, error = conn._check_approval()
         assert error is None
         assert result["all_approvals_set"] is False
         assert result["usdc_allowances"]["ctf_exchange"] == MAX_UINT256
         assert result["usdc_allowances"]["neg_risk_ctf_exchange"] == 0
+        assert result["ctf_approvals"]["ctf_collateral_adapter"] is True
+        assert result["ctf_approvals"]["neg_risk_ctf_collateral_adapter"] is True
 
     def test_exception_returns_error(self) -> None:
         """Returns (None, error) on generic exception."""
@@ -1920,9 +2826,15 @@ class TestCheckApproval:
         assert "ctf_exchange" in result["usdc_allowances"]
         assert "neg_risk_ctf_exchange" in result["usdc_allowances"]
         assert "neg_risk_adapter" in result["usdc_allowances"]
+        # Collateral adapters intentionally absent from usdc_allowances —
+        # they receive only ERC-1155 operator rights.
+        assert "ctf_collateral_adapter" not in result["usdc_allowances"]
+        assert "neg_risk_ctf_collateral_adapter" not in result["usdc_allowances"]
         assert "ctf_exchange" in result["ctf_approvals"]
         assert "neg_risk_ctf_exchange" in result["ctf_approvals"]
         assert "neg_risk_adapter" in result["ctf_approvals"]
+        assert "ctf_collateral_adapter" in result["ctf_approvals"]
+        assert "neg_risk_ctf_collateral_adapter" in result["ctf_approvals"]
 
     def test_allowance_of_1_passes_approval_check(self) -> None:
         """An allowance of exactly 1 satisfies the > 0 threshold for all_approvals_set.
@@ -1972,11 +2884,14 @@ class TestRequestWithRetriesJsonDecodeError:
         mock_response.raise_for_status.return_value = None
         mock_response.json.side_effect = json.JSONDecodeError("msg", "doc", 0)
 
-        with patch(
-            "packages.valory.connections.polymarket_client.connection.requests.get",
-            return_value=mock_response,
-        ), patch(
-            "packages.valory.connections.polymarket_client.connection.time.sleep",
+        with (
+            patch(
+                "packages.valory.connections.polymarket_client.connection.requests.get",
+                return_value=mock_response,
+            ),
+            patch(
+                "packages.valory.connections.polymarket_client.connection.time.sleep",
+            ),
         ):
             result, error = conn._request_with_retries("https://example.com/api")
 
@@ -2137,6 +3052,229 @@ class TestFetchOrderBook:
         assert result is None
         assert "API timeout" in error
 
+    def test_v2_dict_response(self) -> None:
+        """v2 ``get_order_book`` returns a plain dict with dict levels.
+
+        Post-cutover this is the live path; the v1-attribute branch exists
+        only for compatibility. Both the outer-dict branch and the nested
+        ``_level_to_dict`` dict branch must handle it.
+        """
+        conn = _make_connection()
+        conn.client.get_order_book.return_value = {
+            "asks": [{"price": "0.55", "size": "100"}],
+            "bids": [{"price": "0.45", "size": "50"}],
+            "min_order_size": "5",
+        }
+
+        result, error = conn._fetch_order_book("token_123")
+
+        assert error is None
+        assert result == {
+            "asks": [{"price": "0.55", "size": "100"}],
+            "bids": [{"price": "0.45", "size": "50"}],
+            "min_order_size": "5",
+        }
+
+    def test_v2_dict_response_missing_keys(self) -> None:
+        """v2 dict response with absent keys falls back to empty/None."""
+        conn = _make_connection()
+        conn.client.get_order_book.return_value = {}
+
+        result, error = conn._fetch_order_book("token_123")
+
+        assert error is None
+        assert result == {"asks": [], "bids": [], "min_order_size": None}
+
+
+# ---------------------------------------------------------------------------
+# _validate_builder_code
+# ---------------------------------------------------------------------------
+
+
+class TestValidateBuilderCode:
+    """Shape-check for the operator-supplied builder_code.
+
+    A silently-accepted malformed builder_code misattributes every order's
+    revenue share, so the shape check must reject anything that isn't a
+    ``0x``-prefixed 66-char bytes32 and blank it out with a WARNING.
+    """
+
+    def test_empty_string_returns_empty_no_warning(self) -> None:
+        """Empty input is the 'disabled' case — no validation, no warning."""
+        logger = MagicMock()
+        assert _validate_builder_code("", logger) == ""
+        logger.warning.assert_not_called()
+
+    def test_none_returns_empty_no_warning(self) -> None:
+        """None is also the 'disabled' case — tolerated silently."""
+        logger = MagicMock()
+        assert _validate_builder_code(None, logger) == ""
+        logger.warning.assert_not_called()
+
+    def test_well_formed_bytes32_passes(self) -> None:
+        """0x-prefixed 66-char input is returned unchanged with no warning."""
+        logger = MagicMock()
+        code = "0x" + "a" * 64
+        assert _validate_builder_code(code, logger) == code
+        logger.warning.assert_not_called()
+
+    def test_missing_0x_prefix_blanks_and_warns(self) -> None:
+        """A 66-char string without the 0x prefix must be rejected."""
+        logger = MagicMock()
+        code = "a" * 66
+        assert _validate_builder_code(code, logger) == ""
+        logger.warning.assert_called_once()
+
+    def test_truncated_bytes32_blanks_and_warns(self) -> None:
+        """A 0x-prefixed but short (<66 chars) string must be rejected."""
+        logger = MagicMock()
+        code = "0x" + "a" * 32
+        assert _validate_builder_code(code, logger) == ""
+        logger.warning.assert_called_once()
+
+    def test_too_long_bytes32_blanks_and_warns(self) -> None:
+        """A 0x-prefixed but over-length (>66 chars) string must be rejected."""
+        logger = MagicMock()
+        code = "0x" + "a" * 80
+        assert _validate_builder_code(code, logger) == ""
+        logger.warning.assert_called_once()
+
+    def test_non_hex_chars_after_0x_blanks_and_warns(self) -> None:
+        """0x-prefixed, right length, but non-hex body must be rejected.
+
+        Without a hex-content check, a misconfigured env var like
+        ``0xZZ…`` (or an accidental substitution) would pass the shape
+        gate and silently produce orders with bad attribution.
+        """
+        logger = MagicMock()
+        code = "0x" + "Z" * 64
+        assert _validate_builder_code(code, logger) == ""
+        logger.warning.assert_called_once()
+
+    def test_whitespace_stripped_before_validation(self) -> None:
+        """Leading/trailing whitespace is tolerated (paste-from-UI case)."""
+        logger = MagicMock()
+        inner = "0x" + "ab" * 32
+        assert _validate_builder_code(f"  {inner}\n", logger) == inner
+        logger.warning.assert_not_called()
+
+    def test_mixed_case_hex_passes(self) -> None:
+        """Mixed-case hex (e.g. checksummed) passes without forcing lowercase."""
+        logger = MagicMock()
+        code = "0x" + "AbCd" * 16
+        assert _validate_builder_code(code, logger) == code
+        logger.warning.assert_not_called()
+
+    def test_all_zero_bytes32_returns_empty_no_warning(self) -> None:
+        """The all-zero bytes32 default is the 'disabled' case, not attribution.
+
+        It is the connection-config default, so blanking it (rather than
+        warning) keeps the dedicated 'builder_code is empty' info path intact
+        and avoids a misleading 'Using builder_code=0x00000000...' log.
+        """
+        logger = MagicMock()
+        code = "0x" + "00" * 32
+        assert _validate_builder_code(code, logger) == ""
+        logger.warning.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# SignedOrderV2 serialize / deserialize
+# ---------------------------------------------------------------------------
+
+
+class TestSignedOrderV2RoundTrip:
+    """Round-trip serialize/deserialize must preserve IntEnum field types."""
+
+    @staticmethod
+    def _fresh_signed_order() -> Any:
+        from py_clob_client_v2.order_utils import Side
+        from py_clob_client_v2.order_utils.model.order_data_v2 import SignedOrderV2
+        from py_clob_client_v2.order_utils.model.signature_type_v2 import (
+            SignatureTypeV2,
+        )
+
+        return SignedOrderV2(
+            salt="1",
+            maker="0x0000000000000000000000000000000000000001",
+            signer="0x0000000000000000000000000000000000000002",
+            tokenId="tok",
+            makerAmount="10",
+            takerAmount="5",
+            side=Side.BUY,
+            signatureType=SignatureTypeV2.POLY_GNOSIS_SAFE,
+            timestamp="1700000000000",
+            metadata="0x" + "00" * 32,
+            builder="0x" + "00" * 32,
+            expiration="0",
+            signature="0xdeadbeef",
+        )
+
+    def test_deserialize_restores_side_enum(self) -> None:
+        """Side field must be a Side instance after round-trip, not a raw int."""
+        from py_clob_client_v2.order_utils import Side
+
+        from packages.valory.connections.polymarket_client.connection import (
+            _deserialize_signed_order_v2,
+            _serialize_signed_order_v2,
+        )
+
+        fresh = self._fresh_signed_order()
+        rehydrated = _deserialize_signed_order_v2(_serialize_signed_order_v2(fresh))
+        assert isinstance(rehydrated.side, Side)
+        assert rehydrated.side is Side.BUY
+
+    def test_deserialize_restores_signature_type_enum(self) -> None:
+        """The signatureType field must be a SignatureTypeV2 instance after round-trip."""
+        from py_clob_client_v2.order_utils.model.signature_type_v2 import (
+            SignatureTypeV2,
+        )
+
+        from packages.valory.connections.polymarket_client.connection import (
+            _deserialize_signed_order_v2,
+            _serialize_signed_order_v2,
+        )
+
+        fresh = self._fresh_signed_order()
+        rehydrated = _deserialize_signed_order_v2(_serialize_signed_order_v2(fresh))
+        assert isinstance(rehydrated.signatureType, SignatureTypeV2)
+        assert rehydrated.signatureType is SignatureTypeV2.POLY_GNOSIS_SAFE
+
+    def test_deserialize_preserves_non_enum_fields(self) -> None:
+        """Non-enum fields must survive the round-trip unchanged."""
+        from packages.valory.connections.polymarket_client.connection import (
+            _deserialize_signed_order_v2,
+            _serialize_signed_order_v2,
+        )
+
+        fresh = self._fresh_signed_order()
+        rehydrated = _deserialize_signed_order_v2(_serialize_signed_order_v2(fresh))
+        assert rehydrated.salt == fresh.salt
+        assert rehydrated.tokenId == fresh.tokenId
+        assert rehydrated.makerAmount == fresh.makerAmount
+        assert rehydrated.takerAmount == fresh.takerAmount
+        assert rehydrated.signature == fresh.signature
+
+    def test_deserialize_skips_already_typed_enums(self) -> None:
+        """Idempotent on already-typed enums — no double conversion."""
+        import dataclasses
+
+        from py_clob_client_v2.order_utils import Side
+        from py_clob_client_v2.order_utils.model.signature_type_v2 import (
+            SignatureTypeV2,
+        )
+
+        from packages.valory.connections.polymarket_client.connection import (
+            _deserialize_signed_order_v2,
+        )
+
+        payload = dataclasses.asdict(self._fresh_signed_order())
+        payload["side"] = Side.BUY
+        payload["signatureType"] = SignatureTypeV2.POLY_GNOSIS_SAFE
+        rehydrated = _deserialize_signed_order_v2(payload)
+        assert rehydrated.side is Side.BUY
+        assert rehydrated.signatureType is SignatureTypeV2.POLY_GNOSIS_SAFE
+
 
 # ---------------------------------------------------------------------------
 # Module-level constants
@@ -2146,10 +3284,6 @@ class TestFetchOrderBook:
 class TestModuleConstants:
     """Tests for module-level constants."""
 
-    def test_polymarket_category_tags_count(self) -> None:
-        """POLYMARKET_CATEGORY_TAGS contains exactly 10 categories."""
-        assert len(POLYMARKET_CATEGORY_TAGS) == 10
-
     def test_max_uint256_value(self) -> None:
         """MAX_UINT256 is 2^256 - 1."""
         assert MAX_UINT256 == 2**256 - 1
@@ -2158,8 +3292,3 @@ class TestModuleConstants:
         """PARENT_COLLECTION_ID is 32 zero bytes."""
         assert PARENT_COLLECTION_ID == b"\x00" * 32
         assert len(PARENT_COLLECTION_ID) == 32
-
-    def test_conditional_tokens_contract_is_checksummed(self) -> None:
-        """CONDITIONAL_TOKENS_CONTRACT is a non-empty string."""
-        assert isinstance(CONDITIONAL_TOKENS_CONTRACT, str)
-        assert CONDITIONAL_TOKENS_CONTRACT.startswith("0x")

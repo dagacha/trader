@@ -31,11 +31,13 @@ from packages.valory.skills.decision_maker_abci.payloads import (
     MechOnlyReceivePayload,
     MechOnlySelectionPayload,
     MultisigTxPayload,
+    OmenWithdrawalPayload,
     PolymarketBetPlacementPayload,
     PolymarketPostSetApprovalPayload,
     PolymarketRedeemPayload,
     PolymarketSetApprovalPayload,
     PolymarketSwapPayload,
+    PostOmenWithdrawalPayload,
     RedeemPayload,
     SamplingPayload,
     SubscriptionPayload,
@@ -200,6 +202,28 @@ from packages.valory.skills.decision_maker_abci.payloads import (
             {
                 "mech_only_queue": '["m1"]',
             },
+        ),
+        (
+            OmenWithdrawalPayload,
+            {
+                "tx_submitter": "OmenWithdrawRound",
+                "tx_hash": "dummy tx hash",
+                "mocking_mode": False,
+                "event": "prepare_tx",
+            },
+        ),
+        (
+            OmenWithdrawalPayload,
+            {
+                "tx_submitter": None,
+                "tx_hash": None,
+                "mocking_mode": None,
+                "event": "withdrawal_done",
+            },
+        ),
+        (
+            PostOmenWithdrawalPayload,
+            {"vote": True},
         ),
     ],
 )

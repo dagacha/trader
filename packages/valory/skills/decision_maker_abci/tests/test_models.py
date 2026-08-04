@@ -384,6 +384,10 @@ class TestSharedStateInit:
         assert state.bet_id_row_manager == {}
         assert state.benchmarking_mech_calls == 0
         assert state.mech_timed_out is False
+        # Must default to None, not False: the staking-regime cache distinguishes
+        # "never computed" (None ⇒ read on-chain) from a computed OLD verdict
+        # (False ⇒ cache hit). A False default would suppress the first read.
+        assert state.staking_regime_is_new is None
 
 
 class TestSharedState:
@@ -558,9 +562,12 @@ class TestSharedState:
         self.state.context.params = mock_params
         self.state.redeeming_progress = MagicMock()
 
-        with patch.object(
-            type(self.state).__mro__[1], "setup", return_value=None  # type: ignore[arg-type]
-        ), pytest.raises(ValueError, match="not in the strategies"):
+        with (
+            patch.object(
+                type(self.state).__mro__[1], "setup", return_value=None  # type: ignore[arg-type]
+            ),
+            pytest.raises(ValueError, match="not in the strategies"),
+        ):
             self.state.setup()
 
 
@@ -571,9 +578,12 @@ def _build_decision_maker_params_kwargs() -> dict:
         "skill_context": mock_context,
         "name": "params",
         "agent_registry_address": "0xaddr",
+        "mech_marketplace_v1_suitable_tools": [],
         "sample_bets_closing_days": 7,
         "max_trades": 0,
         "max_mech_requests_per_cycle": 10,
+        "polymarket_spread_min": 0.0,
+        "polymarket_spread_max": 1.0,
         "trading_strategy": "kelly_criterion",
         "use_fallback_strategy": False,
         "tools_accuracy_hash": "hash123",
@@ -588,6 +598,7 @@ def _build_decision_maker_params_kwargs() -> dict:
         "max_filtering_retries": 3,
         "redeeming_batch_size": 5,
         "redeem_round_timeout": 30.0,
+        "withdrawal_round_timeout": 1800.0,
         "slippage": 0.1,
         "policy_epsilon": 0.2,
         "tool_punishment_multiplier": 2,
@@ -606,12 +617,22 @@ def _build_decision_maker_params_kwargs() -> dict:
         "tool_quarantine_duration": 10800,
         "enable_position_review": False,
         "review_period_seconds": 3600,
+        "withdrawal_max_fak_attempts": 3,
+        "withdrawal_fak_backoff_s": [10, 30],
+        "withdrawal_slippage": 0.01,
+        "withdrawal_return_buffer": 0.05,
+        "dust_epsilon_wxdai": 10**16,
         "polymarket_builder_program_enabled": False,
-        "polymarket_usdc_address": "0xusdc",
+        "polymarket_collateral_address": "0xpusd",
+        "polymarket_usdc_e_address": "0xusdce",
+        "polymarket_collateral_onramp_address": "0xonramp",
+        "polymarket_usdc_e_wrap_dust_threshold": 1000000,
         "polymarket_ctf_address": "0xctf",
         "polymarket_ctf_exchange_address": "0xexch",
         "polymarket_neg_risk_ctf_exchange_address": "0xnegexch",
         "polymarket_neg_risk_adapter_address": "0xnegadapt",
+        "polymarket_ctf_collateral_adapter_address": "0xctfcoladapt",
+        "polymarket_neg_risk_ctf_collateral_adapter_address": "0xnegctfcoladapt",
         "pol_threshold_for_swap": 1000,
         "slippages_for_swap": {"ETH": 0.01},
         "is_outcome_side_threshold_filter_enabled": False,
@@ -633,9 +654,10 @@ class TestDecisionMakerParams:
                 return 0
             return MagicMock()
 
-        with patch.object(
-            DecisionMakerParams, "_ensure", side_effect=mock_ensure
-        ), pytest.raises(ValueError, match="must be positive"):
+        with (
+            patch.object(DecisionMakerParams, "_ensure", side_effect=mock_ensure),
+            pytest.raises(ValueError, match="must be positive"),
+        ):
             DecisionMakerParams(
                 skill_context=MagicMock(),
                 agent_registry_address="0xaddr",
@@ -663,6 +685,7 @@ class TestDecisionMakerParams:
         assert params.max_filtering_retries == 3
         assert params.redeeming_batch_size == 5
         assert params.redeem_round_timeout == 30.0
+        assert params.withdrawal_round_timeout == 1800.0
         assert params.tool_punishment_multiplier == 2
         assert params.contract_timeout == 10.0
         assert params.use_subgraph_for_redeeming is True
@@ -677,18 +700,48 @@ class TestDecisionMakerParams:
         assert params.tool_quarantine_duration == 10800
         assert params.enable_position_review is False
         assert params.review_period_seconds == 3600
+        assert params.withdrawal_max_fak_attempts == 3
+        assert params.withdrawal_fak_backoff_s == [10, 30]
+        assert params.withdrawal_slippage == 0.01
+        assert params.withdrawal_return_buffer == 0.05
+        assert params.dust_epsilon_wxdai == 10**16
         assert params.min_confidence_for_selling == 0.5
         assert params.polymarket_builder_program_enabled is False
-        assert params.polymarket_usdc_address == "0xusdc"
+        assert params.polymarket_collateral_address == "0xpusd"
+        assert params.polymarket_usdc_e_address == "0xusdce"
+        assert params.polymarket_collateral_onramp_address == "0xonramp"
+        assert params.polymarket_usdc_e_wrap_dust_threshold == 1000000
         assert params.polymarket_ctf_address == "0xctf"
         assert params.polymarket_ctf_exchange_address == "0xexch"
         assert params.polymarket_neg_risk_ctf_exchange_address == "0xnegexch"
         assert params.polymarket_neg_risk_adapter_address == "0xnegadapt"
+        assert params.polymarket_ctf_collateral_adapter_address == "0xctfcoladapt"
+        assert (
+            params.polymarket_neg_risk_ctf_collateral_adapter_address
+            == "0xnegctfcoladapt"
+        )
         assert params.pol_threshold_for_swap == 1000
         assert params.slippages_for_swap == {"ETH": 0.01}
         assert params.is_outcome_side_threshold_filter_enabled is False
         assert params.outcome_side_threshold_filter_threshold == 0.5
         assert params.exclude_neg_risk_markets is False
+        assert params.polymarket_spread_min == 0.0
+        assert params.polymarket_spread_max == 1.0
+
+    def test_inverted_spread_band_raises(self) -> None:
+        """polymarket_spread_min > polymarket_spread_max raises at init.
+
+        An inverted band makes ``not lo <= spread <= hi`` unsatisfiable, which
+        would otherwise silently skip every CLOB bet with no startup error.
+        """
+        kwargs = _build_decision_maker_params_kwargs()
+        kwargs["polymarket_spread_min"] = 0.5
+        kwargs["polymarket_spread_max"] = 0.1
+        with (
+            patch.object(DecisionMakerParams.__mro__[1], "__init__", return_value=None),
+            pytest.raises(ValueError, match="polymarket_spread_min"),
+        ):
+            DecisionMakerParams(**kwargs)
 
     def test_max_mech_requests_per_cycle_zero_raises(self) -> None:
         """Test that max_mech_requests_per_cycle <= 0 raises ValueError."""
@@ -721,6 +774,33 @@ class TestDecisionMakerParams:
         result = params.prompt_template
         assert isinstance(result, PromptTemplate)
         assert result.template == "@{yes} @{no} @{question}"
+
+    def test_withdrawal_backoff_length_mismatch_raises(self) -> None:
+        """Length mismatch between attempts count and backoff list raises ValueError.
+
+        Contract: ``len(backoff) == max_attempts - 1`` because the schedule
+        represents inter-attempt sleeps (no sleep after the final attempt).
+        """
+        kwargs = _build_decision_maker_params_kwargs()
+        kwargs["withdrawal_max_fak_attempts"] = 3
+        kwargs["withdrawal_fak_backoff_s"] = [10, 30, 60]  # one entry too many
+        with (
+            patch.object(DecisionMakerParams.__mro__[1], "__init__", return_value=None),
+            pytest.raises(ValueError, match="withdrawal_fak_backoff_s length"),
+        ):
+            DecisionMakerParams(**kwargs)
+
+    def test_withdrawal_backoff_length_n_minus_one_accepted(self) -> None:
+        """``len(backoff) == max_attempts - 1`` is the canonical accepted length."""
+        kwargs = _build_decision_maker_params_kwargs()
+        kwargs["withdrawal_max_fak_attempts"] = 3
+        kwargs["withdrawal_fak_backoff_s"] = [10, 30]
+        with patch.object(
+            DecisionMakerParams.__mro__[1], "__init__", return_value=None
+        ):
+            params = DecisionMakerParams(**kwargs)
+        assert params.withdrawal_fak_backoff_s == [10, 30]
+        assert params.withdrawal_max_fak_attempts == 3
 
     def test_slippage_getter(self) -> None:
         """Test slippage getter returns the private _slippage value."""

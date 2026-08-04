@@ -55,17 +55,46 @@ def test_check_benchmarking_mode_round_events() -> None:
     assert round_instance.negative_event == Event.BENCHMARKING_DISABLED
 
 
-def test_end_block_polymarket_allowances_set() -> None:
-    """Test end_block on Polymarket with allowances already set."""
+def _current_allowances(tmpdir) -> None:  # type: ignore[no-untyped-def]
+    """Write a ``polymarket.json`` stamped with the current CLOB version."""
+    from packages.valory.skills.decision_maker_abci.states.check_benchmarking import (
+        POLYMARKET_ALLOWANCES_FILE_CLOB_VERSION,
+    )
+
+    with open(Path(tmpdir) / "polymarket.json", "w") as f:
+        json.dump(
+            {
+                "allowances_set": True,
+                "clob_version": POLYMARKET_ALLOWANCES_FILE_CLOB_VERSION,
+            },
+            f,
+        )
+
+
+def _write_dw(tmpdir, data) -> None:  # type: ignore[no-untyped-def]
+    """Write a ``deposit_wallet.json`` with the given payload."""
+    with open(Path(tmpdir) / "deposit_wallet.json", "w") as f:
+        json.dump(data, f)
+
+
+def test_end_block_allowances_current_and_dw_present_skips() -> None:
+    """Allowances current AND a DW owned by the agent EOA skips approval.
+
+    This is the only configuration that may bypass SET_APPROVAL: a
+    restart with valid state. Owner matching is case-insensitive.
+    """
     mock_context = MagicMock()
     mock_context.params.is_running_on_polymarket = True
+    mock_context.agent_address = "0xAGENT"
     mock_synced_data = MagicMock(spec=SynchronizedData)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         mock_context.params.store_path = tmpdir
-        allowances_path = Path(tmpdir) / "polymarket.json"
-        with open(allowances_path, "w") as f:
-            json.dump({"allowances_set": True}, f)
+        _current_allowances(tmpdir)
+        _write_dw(
+            tmpdir,
+            {"dw_address": "0xDW", "dw_owner": "0xagent", "approvals_done": True},
+        )
 
         round_instance = CheckBenchmarkingModeRound(
             synchronized_data=mock_synced_data, context=mock_context
@@ -75,6 +104,210 @@ def test_end_block_polymarket_allowances_set() -> None:
     assert result is not None
     _, event = result
     assert event == Event.BENCHMARKING_DISABLED
+
+
+def test_end_block_allowances_current_but_no_dw_reapproves() -> None:
+    """Allowances current but NO DepositWallet recorded re-enters setup.
+
+    Covers a fresh canonical-Safe or grandfathered Polystrat whose
+    ``polymarket.json`` already looks current: setup must still run to
+    provision the DepositWallet.
+    """
+    mock_context = MagicMock()
+    mock_context.params.is_running_on_polymarket = True
+    mock_context.agent_address = "0xAGENT"
+    mock_synced_data = MagicMock(spec=SynchronizedData)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_context.params.store_path = tmpdir
+        _current_allowances(tmpdir)  # no deposit_wallet.json
+
+        round_instance = CheckBenchmarkingModeRound(
+            synchronized_data=mock_synced_data, context=mock_context
+        )
+        result = round_instance.end_block()
+
+    assert result is not None
+    _, event = result
+    assert event == Event.SET_APPROVAL
+
+
+def test_end_block_allowances_current_but_dw_owner_mismatch_reapproves() -> None:
+    """Allowances current but a DW owned by a different EOA re-enters setup.
+
+    Covers mnemonic-recovery rotation: the recorded ``dw_owner`` no longer
+    matches the agent EOA, so the DW must be re-provisioned under the new
+    EOA.
+    """
+    mock_context = MagicMock()
+    mock_context.params.is_running_on_polymarket = True
+    mock_context.agent_address = "0xAGENT"
+    mock_synced_data = MagicMock(spec=SynchronizedData)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_context.params.store_path = tmpdir
+        _current_allowances(tmpdir)
+        _write_dw(tmpdir, {"dw_address": "0xDW", "dw_owner": "0xOLD"})
+
+        round_instance = CheckBenchmarkingModeRound(
+            synchronized_data=mock_synced_data, context=mock_context
+        )
+        result = round_instance.end_block()
+
+    assert result is not None
+    _, event = result
+    assert event == Event.SET_APPROVAL
+
+
+def test_end_block_allowances_current_but_dw_no_address_reapproves() -> None:
+    """A DW record without an address is treated as not-ready (re-enters setup)."""
+    mock_context = MagicMock()
+    mock_context.params.is_running_on_polymarket = True
+    mock_context.agent_address = "0xAGENT"
+    mock_synced_data = MagicMock(spec=SynchronizedData)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_context.params.store_path = tmpdir
+        _current_allowances(tmpdir)
+        _write_dw(tmpdir, {"dw_owner": "0xAGENT"})  # no dw_address
+
+        round_instance = CheckBenchmarkingModeRound(
+            synchronized_data=mock_synced_data, context=mock_context
+        )
+        result = round_instance.end_block()
+
+    assert result is not None
+    _, event = result
+    assert event == Event.SET_APPROVAL
+
+
+def test_end_block_allowances_current_but_dw_invalid_json_reapproves() -> None:
+    """A malformed ``deposit_wallet.json`` is treated as not-ready."""
+    mock_context = MagicMock()
+    mock_context.params.is_running_on_polymarket = True
+    mock_context.agent_address = "0xAGENT"
+    mock_synced_data = MagicMock(spec=SynchronizedData)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_context.params.store_path = tmpdir
+        _current_allowances(tmpdir)
+        with open(Path(tmpdir) / "deposit_wallet.json", "w") as f:
+            f.write("not valid json")
+
+        round_instance = CheckBenchmarkingModeRound(
+            synchronized_data=mock_synced_data, context=mock_context
+        )
+        result = round_instance.end_block()
+
+    assert result is not None
+    _, event = result
+    assert event == Event.SET_APPROVAL
+
+
+def test_end_block_polymarket_stale_v1_allowances_file_reapproves() -> None:
+    """A legacy v1 file (no ``clob_version``) must trigger re-approval.
+
+    This guards the v2-cutover invariant: an agent carrying a v1-era
+    ``allowances_set: true`` file must not bypass the approval round,
+    because the v1 allowances point at retired exchange contracts.
+    """
+    mock_context = MagicMock()
+    mock_context.params.is_running_on_polymarket = True
+    mock_synced_data = MagicMock(spec=SynchronizedData)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_context.params.store_path = tmpdir
+        allowances_path = Path(tmpdir) / "polymarket.json"
+        with open(allowances_path, "w") as f:
+            json.dump({"allowances_set": True}, f)  # no clob_version
+
+        round_instance = CheckBenchmarkingModeRound(
+            synchronized_data=mock_synced_data, context=mock_context
+        )
+        result = round_instance.end_block()
+
+    # With a stale (unversioned) file, the round must NOT short-circuit
+    # to BENCHMARKING_DISABLED — it falls through to SET_APPROVAL so the
+    # agent re-issues approvals against v2 addresses.
+    assert result is not None
+    _, event = result
+    assert event == Event.SET_APPROVAL
+
+
+def test_end_block_polymarket_stale_v2_allowances_file_reapproves() -> None:
+    """A v2 file must trigger re-approval after the v3 collateral-adapter cutover.
+
+    Bumping ``POLYMARKET_ALLOWANCES_FILE_CLOB_VERSION`` to ``v3`` invalidates
+    every Safe's prior ``allowances_set: true`` stamped under v2, so the
+    agent re-issues the expanded approval set that includes
+    ``setApprovalForAll`` for the new ``CtfCollateralAdapter`` /
+    ``NegRiskCtfCollateralAdapter``. Without that bump, redeem would target
+    the new adapters with stale operator approvals and silently no-op.
+    """
+    mock_context = MagicMock()
+    mock_context.params.is_running_on_polymarket = True
+    mock_synced_data = MagicMock(spec=SynchronizedData)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_context.params.store_path = tmpdir
+        allowances_path = Path(tmpdir) / "polymarket.json"
+        with open(allowances_path, "w") as f:
+            json.dump({"allowances_set": True, "clob_version": "v2"}, f)
+
+        round_instance = CheckBenchmarkingModeRound(
+            synchronized_data=mock_synced_data, context=mock_context
+        )
+        result = round_instance.end_block()
+
+    assert result is not None
+    _, event = result
+    assert event == Event.SET_APPROVAL
+
+
+def test_clob_version_constant_is_v4() -> None:
+    """The CLOB-version stamp must be ``v4``.
+
+    Tying the constant down ensures the v3→v4 migration trigger lands; a
+    silent revert to ``v3`` would let stale persisted files short-circuit
+    the approval round and skip ``setApprovalForAll`` against the new
+    collateral-adapter addresses.
+    """
+    from packages.valory.skills.decision_maker_abci.states.check_benchmarking import (
+        POLYMARKET_ALLOWANCES_FILE_CLOB_VERSION,
+    )
+
+    assert POLYMARKET_ALLOWANCES_FILE_CLOB_VERSION == "v4"
+
+
+def test_end_block_polymarket_stale_v3_allowances_file_reapproves() -> None:
+    """A v3 file must trigger re-approval after the v4 collateral-adapter swap.
+
+    Bumping ``POLYMARKET_ALLOWANCES_FILE_CLOB_VERSION`` to ``v4`` invalidates
+    every Safe's prior ``allowances_set: true`` stamped under v3 (the
+    original ``CtfCollateralAdapter`` / ``NegRiskCtfCollateralAdapter``
+    addresses). Without that bump, the round short-circuits to
+    ``BENCHMARKING_DISABLED`` and the agent never grants
+    ``setApprovalForAll`` to the new adapter addresses — so the first
+    ``redeemPositions`` call against them reverts.
+    """
+    mock_context = MagicMock()
+    mock_context.params.is_running_on_polymarket = True
+    mock_synced_data = MagicMock(spec=SynchronizedData)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_context.params.store_path = tmpdir
+        allowances_path = Path(tmpdir) / "polymarket.json"
+        with open(allowances_path, "w") as f:
+            json.dump({"allowances_set": True, "clob_version": "v3"}, f)
+
+        round_instance = CheckBenchmarkingModeRound(
+            synchronized_data=mock_synced_data, context=mock_context
+        )
+        result = round_instance.end_block()
+
+    assert result is not None
+    _, event = result
+    assert event == Event.SET_APPROVAL
 
 
 def test_end_block_polymarket_allowances_not_set() -> None:
