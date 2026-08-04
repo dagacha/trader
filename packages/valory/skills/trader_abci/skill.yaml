@@ -9,14 +9,14 @@ fingerprint:
   README.md: bafybeiab4xgadptz4mhvno4p6xvkh7p4peg7iuhotabydriu74dmj6ljga
   __init__.py: bafybeidp3c6ychle2a6gvrzznmgvkgtzkcxras42gmq3kfey4xwmxa3rom
   behaviours.py: bafybeigz7mlskyhiusv7rhon7dalzyx7w5yd64nyyjy4bmz2mju72nm7jy
-  composition.py: bafybeihdeuedpo5ucvjfbqr6woma6xuutnwhswhv3ne6l6othfhyokarwa
+  composition.py: bafybeieqtixh6gh7zrygqytauo22moppfg3hyka2i3kwpn6eyqht3a4zwa
   dialogues.py: bafybeifoywfxhnowfy2ofkltizyhuiuv3tgqakwjzm7vj4y4gb2ozhjpey
-  fsm_specification.yaml: bafybeiascmjuel3oxf3izuxfjzwewimzgttbwkogxsugdnseyzz2j5ncqa
+  fsm_specification.yaml: bafybeigw3anigtkhiredxnu3xmfyv37c4t4qqwbugwacsbkqy67rehz4mq
   handlers.py: bafybeibgqokqbdc3idco33nty4jqjrn2mqsf5sir65toj5grbrgmh52rri
   models.py: bafybeifir6ffdwmszi32tvvdxxs6dpiqatk272lpzupulmnn2nnpkli2om
   tests/__init__.py: bafybeiadatapyjh3e7ucg2ehz77oms3ihrbutwb2cs2tkjehy54utwvuyi
   tests/test_behaviours.py: bafybeicovtjruufnh2yd5lhfvc6pgcletuyj2s3jaz5sz55wsdo2w22xle
-  tests/test_composition.py: bafybeig36duqq3d5b6g45licy6f3texgbdkpguz3xme7hv43ijogptg5uy
+  tests/test_composition.py: bafybeiaatb2tn6lxx2bj6drxv6m6npg3voktaethniy7elwibmuzwml324
   tests/test_dialogues.py: bafybeibatogwoj6ieapcbiwonij6vskhogc65vfv53tyauqzeyiwmnd2im
   tests/test_handlers.py: bafybeihvj6zpqszsccbxcciiufyy2n2tba3uobxhowo54uqily2g5qu6lq
   tests/test_models.py: bafybeic4buelge2gbl3mongwoaempxhfrhq2hp7uvoevkz42v2uidyr2rm
@@ -56,8 +56,8 @@ skills:
 - valory/transaction_settlement_abci:0.1.0:bafybeiajyrszyyo6z4lxogutv4ougiaeoxak6xkq5gtrbey32gbgnirznq
 - valory/termination_abci:0.1.0:bafybeia33hlouukdpwaxctunauudv5gpfdxndimra7yqiof4a3skcwdqkq
 - valory/market_manager_abci:0.1.0:bafybeihpf3vc67zkn55ycq6z2n6tasibtkihxwjts3xwu3w2govki6ld3m
-- valory/decision_maker_abci:0.1.0:bafybeih27dozjctynhwig6be5trdfkq5sfvid3liq2vvqqfbgrohepdvey
-- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeicddrsqpckcoblqmgrjz6nqkswtiaryehp66hhr4oyqnl4xrj3nsq
+- valory/decision_maker_abci:0.1.0:bafybeicr6fb6rnszzisfdwlwjsielazcpizbpo3lbkny4f7ju5fnwrio6i
+- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeiha2apmfh6adjnfstb2ddjhoynwiohotwfqqhbrjrbgjjdu4hnbku
 - valory/staking_abci:0.1.0:bafybeihzojfq3eomfl26livdkupzl3l2b52kvr4hmklrllt5fxu2rilcvq
 - valory/check_stop_trading_abci:0.1.0:bafybeidqk64vk6wzs6sjw6q2hxwksi6wrvok75g37uo2byf27wsn6mjqri
 - valory/mech_interact_abci:0.1.0:bafybeied5l5xlygjyo3uju5bw52pidjvbkgdahhuzvahh6qis7kd3ht6ta
@@ -200,6 +200,8 @@ models:
       mech_chain_id: gnosis
       mech_wrapped_native_token_address: '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d'
       sample_bets_closing_days: 10
+      max_trades: 0
+      max_mech_requests_per_cycle: 10
       trading_strategy: strategy_name
       use_fallback_strategy: true
       ipfs_address: https://gateway.autonolas.tech/ipfs/

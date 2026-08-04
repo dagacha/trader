@@ -40,6 +40,7 @@ from packages.valory.skills.decision_maker_abci.states.check_benchmarking import
 from packages.valory.skills.decision_maker_abci.states.decision_receive import (
     DecisionReceiveRound,
 )
+from packages.valory.skills.decision_maker_abci.states.trade_cap import TradeCapRound
 from packages.valory.skills.decision_maker_abci.states.decision_request import (
     DecisionRequestRound,
 )
@@ -47,7 +48,20 @@ from packages.valory.skills.decision_maker_abci.states.final_states import (
     BenchmarkingModeDisabledRound,
     FinishedDecisionMakerRound,
     FinishedDecisionRequestRound,
+    FinishedMechOnlyRequestRound,
+    FinishedMechOnlyRound,
     FinishedWithoutDecisionRound,
+)
+from packages.valory.skills.decision_maker_abci.states.handle_failed_tx import (
+    HandleFailedTxRound,
+)
+from packages.valory.skills.decision_maker_abci.states.mech_only import (
+    MechOnlyReceiveRound,
+    MechOnlySelectionRound,
+    MechResponseRouterRound,
+)
+from packages.valory.skills.decision_maker_abci.states.polymarket_bet_placement import (
+    PolymarketBetPlacementRound,
 )
 from packages.valory.skills.decision_maker_abci.states.polymarket_swap import (
     PolymarketSwapUsdcRound,
@@ -67,6 +81,7 @@ from packages.valory.skills.decision_maker_abci.states.sell_outcome_tokens impor
 from packages.valory.skills.decision_maker_abci.states.tool_selection import (
     ToolSelectionRound,
 )
+from packages.valory.skills.decision_maker_abci.states.trade_count import TradeCountRound
 
 
 @pytest.fixture
@@ -127,7 +142,71 @@ def test_randomness_round_transition(setup_app: DecisionMakerAbciApp) -> None:
     transition_function = app.transition_function[RandomnessRound]
 
     # Transition on done
+    assert transition_function[Event.DONE] == TradeCapRound
+
+
+def test_trade_cap_round_transition(setup_app: DecisionMakerAbciApp) -> None:
+    """Test transitions from TradeCapRound."""
+    transition_function = setup_app.transition_function[TradeCapRound]
+
     assert transition_function[Event.DONE] == SamplingRound
+    assert transition_function[Event.MECH_ONLY] == MechOnlySelectionRound
+    assert transition_function[Event.NO_MAJORITY] == TradeCapRound
+
+
+def test_mech_only_selection_round_transition(setup_app: DecisionMakerAbciApp) -> None:
+    """Test transitions from MechOnlySelectionRound."""
+    transition_function = setup_app.transition_function[MechOnlySelectionRound]
+
+    assert transition_function[Event.DONE] == FinishedMechOnlyRequestRound
+    assert transition_function[Event.NO_MARKETS] == FinishedMechOnlyRound
+    assert transition_function[Event.NO_MAJORITY] == MechOnlySelectionRound
+
+
+def test_mech_only_receive_round_transition(setup_app: DecisionMakerAbciApp) -> None:
+    """Test transitions from MechOnlyReceiveRound."""
+    transition_function = setup_app.transition_function[MechOnlyReceiveRound]
+
+    assert transition_function[Event.DONE] == MechOnlySelectionRound
+    assert transition_function[Event.NO_MARKETS] == FinishedMechOnlyRound
+    assert transition_function[Event.NO_MAJORITY] == MechOnlyReceiveRound
+
+
+def test_mech_response_router_round_transition(setup_app: DecisionMakerAbciApp) -> None:
+    """Test transitions from MechResponseRouterRound."""
+    transition_function = setup_app.transition_function[MechResponseRouterRound]
+
+    assert transition_function[Event.DONE] == DecisionReceiveRound
+    assert transition_function[Event.MECH_ONLY] == MechOnlyReceiveRound
+    assert transition_function[Event.NO_MAJORITY] == MechResponseRouterRound
+
+
+def test_trade_count_round_transition(setup_app: DecisionMakerAbciApp) -> None:
+    """Test transitions from TradeCountRound."""
+    transition_function = setup_app.transition_function[TradeCountRound]
+
+    # A successful count advances to redemption, never back to sampling or betting
+    assert transition_function[Event.DONE] == RedeemRouterRound
+    assert transition_function[Event.NO_MAJORITY] == TradeCountRound
+    assert transition_function[Event.ROUND_TIMEOUT] == TradeCountRound
+
+
+def test_trade_count_round_is_entry_point(setup_app: DecisionMakerAbciApp) -> None:
+    """TradeCountRound is an initial state with no db pre-conditions (composed entry)."""
+    assert TradeCountRound in setup_app.initial_states
+    assert setup_app.db_pre_conditions[TradeCountRound] == set()
+
+
+def test_trade_count_round_persisted_across_periods(
+    setup_app: DecisionMakerAbciApp,
+) -> None:
+    """The successful trade counter is persisted across reset periods."""
+    from packages.valory.skills.abstract_round_abci.base import get_name
+
+    assert (
+        get_name(SynchronizedData.successful_trade_count)
+        in setup_app.cross_period_persisted_keys
+    )
 
 
 def test_tool_selection_round_transition(setup_app: DecisionMakerAbciApp) -> None:
@@ -193,3 +272,104 @@ def test_final_states(setup_app: DecisionMakerAbciApp) -> None:
     assert FinishedDecisionMakerRound in app.final_states
     assert BenchmarkingModeDisabledRound in app.final_states
     assert FinishedWithoutDecisionRound in app.final_states
+
+
+def test_mech_only_finished_rounds_are_final(setup_app: DecisionMakerAbciApp) -> None:
+    """The two new post-cap finished rounds are final states."""
+    app = setup_app
+    assert FinishedMechOnlyRequestRound in app.final_states
+    assert FinishedMechOnlyRound in app.final_states
+
+
+def test_mech_response_router_is_initial_state(
+    setup_app: DecisionMakerAbciApp,
+) -> None:
+    """MechResponseRouterRound is a composition entry point (initial state)."""
+    assert MechResponseRouterRound in setup_app.initial_states
+    assert setup_app.db_pre_conditions[MechResponseRouterRound] == set()
+
+
+def test_decision_receive_no_longer_initial_state(
+    setup_app: DecisionMakerAbciApp,
+) -> None:
+    """DecisionReceiveRound is no longer a composition entry point (routed via the router)."""
+    assert DecisionReceiveRound not in setup_app.initial_states
+
+
+def test_mech_only_queue_persisted_across_periods(
+    setup_app: DecisionMakerAbciApp,
+) -> None:
+    """The post-cap queue is persisted across reset periods."""
+    from packages.valory.skills.abstract_round_abci.base import get_name
+
+    assert (
+        get_name(SynchronizedData.mech_only_queue)
+        in setup_app.cross_period_persisted_keys
+    )
+
+
+# ---------------------------------------------------------------------------
+# No-bet invariant: FSM reachability check for the capped path
+# ---------------------------------------------------------------------------
+
+# Rounds that must NEVER be reached on the post-cap (mech-only) path.
+FORBIDDEN_ROUNDS = {
+    BetPlacementRound,
+    PolymarketBetPlacementRound,
+    SellOutcomeTokensRound,
+    BlacklistingRound,
+    SamplingRound,
+    DecisionReceiveRound,
+    DecisionRequestRound,
+    ToolSelectionRound,
+    PolymarketSwapUsdcRound,
+    RedeemRound,
+    RedeemRouterRound,
+    HandleFailedTxRound,
+}
+
+
+def test_capped_path_never_reaches_bet_or_sell_rounds(
+    setup_app: DecisionMakerAbciApp,
+) -> None:
+    """No state reachable on the capped path reaches any bet/sell/trading round.
+
+    The capped path is entered via ``TradeCapRound[MECH_ONLY]`` and re-enters
+    the decision-maker through ``MechResponseRouterRound`` after each Mech
+    round-trip.  ``MechResponseRouterRound`` branches on ``mech_only_mode``:
+    when capped it emits ``MECH_ONLY`` (to ``MechOnlyReceiveRound``), never
+    ``DONE`` (which would lead to ``DecisionReceiveRound`` and the normal
+    trading flow).  This test follows only the capped branch.
+    """
+    transition_function = setup_app.transition_function
+
+    # Entry points on the capped path:
+    #   MechOnlySelectionRound  <- TradeCapRound[MECH_ONLY]
+    #   MechResponseRouterRound  <- composition (FinishedMechResponseRound) after a Mech round-trip
+    reachable = {MechOnlySelectionRound, MechResponseRouterRound}
+    frontier = list(reachable)
+
+    while frontier:
+        state = frontier.pop()
+        transitions = transition_function.get(state, {})
+        for event, target in transitions.items():
+            # On the capped path, MechResponseRouterRound emits MECH_ONLY, not DONE.
+            # The DONE edge leads to the normal trading flow (DecisionReceiveRound),
+            # which is forbidden on the capped path.  Skip it.
+            if state is MechResponseRouterRound and event == Event.DONE:
+                continue
+            if target not in reachable:
+                reachable.add(target)
+                frontier.append(target)
+
+    forbidden_reached = reachable & FORBIDDEN_ROUNDS
+    assert not forbidden_reached, (
+        f"The capped path reaches forbidden trading rounds: {forbidden_reached}"
+    )
+
+    # Sanity: the expected capped-path states are all reachable.
+    assert MechOnlySelectionRound in reachable
+    assert MechOnlyReceiveRound in reachable
+    assert MechResponseRouterRound in reachable
+    assert FinishedMechOnlyRequestRound in reachable
+    assert FinishedMechOnlyRound in reachable

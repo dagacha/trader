@@ -21,6 +21,17 @@
 
 # pylint: skip-file
 
+from packages.valory.skills.decision_maker_abci.states.redeem_router import (
+    RedeemRouterRound,
+)
+from packages.valory.skills.decision_maker_abci.states.trade_count import TradeCountRound
+from packages.valory.skills.decision_maker_abci.states.final_states import (
+    FinishedMechOnlyRequestRound,
+    FinishedMechOnlyRound,
+)
+from packages.valory.skills.decision_maker_abci.states.mech_only import (
+    MechResponseRouterRound,
+)
 from packages.valory.skills.termination_abci.rounds import (
     BackgroundRound,
     Event,
@@ -31,8 +42,12 @@ from packages.valory.skills.trader_abci.composition import (
     abci_app_transition_mapping,
     termination_config,
 )
+from packages.valory.skills.tx_settlement_multiplexer_abci.rounds import (
+    FinishedBetPlacementTxRound,
+    FinishedSellOutcomeTokensTxRound,
+)
 
-EXPECTED_TRANSITION_MAPPING_LENGTH = 44
+EXPECTED_TRANSITION_MAPPING_LENGTH = 46
 
 
 def test_abci_app_transition_mapping_type() -> None:
@@ -78,3 +93,46 @@ def test_termination_config_abci_app() -> None:
 def test_trader_abci_app_is_type() -> None:
     """Test that TraderAbciApp is a type (class), not an instance."""
     assert isinstance(TraderAbciApp, type)
+
+
+def test_only_omen_placement_reaches_trade_count() -> None:
+    """Only a settled Omen placement (FinishedBetPlacementTxRound) routes to the counter."""
+    assert abci_app_transition_mapping[FinishedBetPlacementTxRound] is TradeCountRound
+
+
+def test_sell_does_not_reach_trade_count() -> None:
+    """A settled sell (FinishedSellOutcomeTokensTxRound) bypasses the counter, routing to redemption."""
+    assert abci_app_transition_mapping[FinishedSellOutcomeTokensTxRound] is RedeemRouterRound
+
+
+def test_trade_count_is_only_entry_into_counter() -> None:
+    """No other finished round besides FinishedBetPlacementTxRound routes to TradeCountRound."""
+    routes_to_counter = [
+        round_cls
+        for round_cls, target in abci_app_transition_mapping.items()
+        if target is TradeCountRound
+    ]
+    assert routes_to_counter == [FinishedBetPlacementTxRound]
+
+
+def test_mech_only_request_routes_to_mech_request() -> None:
+    """The capped Mech request batch routes into the mech-interact request flow."""
+    from packages.valory.skills.mech_interact_abci.states.request import MechRequestRound
+
+    assert abci_app_transition_mapping[FinishedMechOnlyRequestRound] is MechRequestRound
+
+
+def test_mech_only_finished_routes_to_checkpoint() -> None:
+    """An exhausted post-cap queue routes the cycle to the staking checkpoint."""
+    from packages.valory.skills.staking_abci.rounds import CallCheckpointRound
+
+    assert abci_app_transition_mapping[FinishedMechOnlyRound] is CallCheckpointRound
+
+
+def test_mech_response_routes_through_router() -> None:
+    """Mech responses now enter the decision maker through the response router, not directly."""
+    from packages.valory.skills.mech_interact_abci.states.final_states import (
+        FinishedMechResponseRound,
+    )
+
+    assert abci_app_transition_mapping[FinishedMechResponseRound] is MechResponseRouterRound

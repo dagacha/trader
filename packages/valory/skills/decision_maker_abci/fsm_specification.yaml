@@ -14,12 +14,14 @@ alphabet_in:
 - DONE_SELL
 - FETCH_ERROR
 - INSUFFICIENT_BALANCE
+- MECH_ONLY
 - MECH_RESPONSE_ERROR
 - MOCK_MECH_REQUEST
 - MOCK_TX
 - NEW_SIMULATED_RESAMPLE
 - NONE
 - NO_MAJORITY
+- NO_MARKETS
 - NO_OP
 - NO_REDEEMING
 - POLYMARKET_DONE
@@ -36,6 +38,8 @@ final_states:
 - BenchmarkingModeDisabledRound
 - FinishedDecisionMakerRound
 - FinishedDecisionRequestRound
+- FinishedMechOnlyRequestRound
+- FinishedMechOnlyRound
 - FinishedPolymarketRedeemRound
 - FinishedPolymarketSwapTxPreparationRound
 - FinishedRedeemTxPreparationRound
@@ -47,12 +51,14 @@ final_states:
 label: DecisionMakerAbciApp
 start_states:
 - CheckBenchmarkingModeRound
-- DecisionReceiveRound
 - DecisionRequestRound
 - HandleFailedTxRound
+- MechResponseRouterRound
 - PolymarketPostSetApprovalRound
 - RandomnessRound
 - RedeemRouterRound
+- TradeCapRound
+- TradeCountRound
 states:
 - BenchmarkingDoneRound
 - BenchmarkingModeDisabledRound
@@ -64,6 +70,8 @@ states:
 - DecisionRequestRound
 - FinishedDecisionMakerRound
 - FinishedDecisionRequestRound
+- FinishedMechOnlyRequestRound
+- FinishedMechOnlyRound
 - FinishedPolymarketRedeemRound
 - FinishedPolymarketSwapTxPreparationRound
 - FinishedRedeemTxPreparationRound
@@ -72,6 +80,9 @@ states:
 - FinishedWithoutRedeemingRound
 - HandleFailedTxRound
 - ImpossibleRound
+- MechOnlyReceiveRound
+- MechOnlySelectionRound
+- MechResponseRouterRound
 - PolymarketBetPlacementRound
 - PolymarketPostSetApprovalRound
 - PolymarketRedeemRound
@@ -84,8 +95,10 @@ states:
 - SamplingRound
 - SellOutcomeTokensRound
 - ToolSelectionRound
+- TradeCapRound
+- TradeCountRound
 transition_func:
-    (BenchmarkingRandomnessRound, DONE): SamplingRound
+    (BenchmarkingRandomnessRound, DONE): TradeCapRound
     (BenchmarkingRandomnessRound, NONE): ImpossibleRound
     (BenchmarkingRandomnessRound, NO_MAJORITY): BenchmarkingRandomnessRound
     (BenchmarkingRandomnessRound, ROUND_TIMEOUT): BenchmarkingRandomnessRound
@@ -126,6 +139,21 @@ transition_func:
     (HandleFailedTxRound, BLACKLIST): BlacklistingRound
     (HandleFailedTxRound, NO_MAJORITY): HandleFailedTxRound
     (HandleFailedTxRound, NO_OP): RedeemRound
+    (MechOnlyReceiveRound, DONE): MechOnlySelectionRound
+    (MechOnlyReceiveRound, NONE): ImpossibleRound
+    (MechOnlyReceiveRound, NO_MAJORITY): MechOnlyReceiveRound
+    (MechOnlyReceiveRound, NO_MARKETS): FinishedMechOnlyRound
+    (MechOnlyReceiveRound, ROUND_TIMEOUT): MechOnlyReceiveRound
+    (MechOnlySelectionRound, DONE): FinishedMechOnlyRequestRound
+    (MechOnlySelectionRound, NONE): ImpossibleRound
+    (MechOnlySelectionRound, NO_MAJORITY): MechOnlySelectionRound
+    (MechOnlySelectionRound, NO_MARKETS): FinishedMechOnlyRound
+    (MechOnlySelectionRound, ROUND_TIMEOUT): MechOnlySelectionRound
+    (MechResponseRouterRound, DONE): DecisionReceiveRound
+    (MechResponseRouterRound, MECH_ONLY): MechOnlyReceiveRound
+    (MechResponseRouterRound, NONE): ImpossibleRound
+    (MechResponseRouterRound, NO_MAJORITY): MechResponseRouterRound
+    (MechResponseRouterRound, ROUND_TIMEOUT): MechResponseRouterRound
     (PolymarketBetPlacementRound, BET_PLACEMENT_DONE): RedeemRouterRound
     (PolymarketBetPlacementRound, BET_PLACEMENT_FAILED): PolymarketBetPlacementRound
     (PolymarketBetPlacementRound, BET_PLACEMENT_IMPOSSIBLE): BlacklistingRound
@@ -159,7 +187,7 @@ transition_func:
     (PolymarketSwapUsdcRound, NO_MAJORITY): PolymarketSwapUsdcRound
     (PolymarketSwapUsdcRound, PREPARE_TX): FinishedPolymarketSwapTxPreparationRound
     (PolymarketSwapUsdcRound, ROUND_TIMEOUT): PolymarketSwapUsdcRound
-    (RandomnessRound, DONE): SamplingRound
+    (RandomnessRound, DONE): TradeCapRound
     (RandomnessRound, NONE): ImpossibleRound
     (RandomnessRound, NO_MAJORITY): RandomnessRound
     (RandomnessRound, ROUND_TIMEOUT): RandomnessRound
@@ -191,3 +219,12 @@ transition_func:
     (ToolSelectionRound, NONE): ToolSelectionRound
     (ToolSelectionRound, NO_MAJORITY): ToolSelectionRound
     (ToolSelectionRound, ROUND_TIMEOUT): ToolSelectionRound
+    (TradeCapRound, DONE): SamplingRound
+    (TradeCapRound, MECH_ONLY): MechOnlySelectionRound
+    (TradeCapRound, NONE): ImpossibleRound
+    (TradeCapRound, NO_MAJORITY): TradeCapRound
+    (TradeCapRound, ROUND_TIMEOUT): TradeCapRound
+    (TradeCountRound, DONE): RedeemRouterRound
+    (TradeCountRound, NONE): ImpossibleRound
+    (TradeCountRound, NO_MAJORITY): TradeCountRound
+    (TradeCountRound, ROUND_TIMEOUT): TradeCountRound

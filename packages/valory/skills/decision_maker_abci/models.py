@@ -385,6 +385,14 @@ class DecisionMakerParams(
         if self.sample_bets_closing_days <= 0:
             msg = "The number of days to sample bets from must be positive!"
             raise ValueError(msg)
+        self.max_trades: int = self._ensure("max_trades", kwargs, int)
+        if self.max_trades < 0:
+            raise ValueError("max_trades must be non-negative!")
+        self.max_mech_requests_per_cycle: int = self._ensure(
+            "max_mech_requests_per_cycle", kwargs, int
+        )
+        if self.max_mech_requests_per_cycle <= 0:
+            raise ValueError("max_mech_requests_per_cycle must be positive!")
 
         # the trading strategy to use for placing bets
         self.trading_strategy: str = self._ensure("trading_strategy", kwargs, str)

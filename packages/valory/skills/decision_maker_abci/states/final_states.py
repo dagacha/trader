@@ -79,3 +79,11 @@ class FinishedPolymarketRedeemRound(DegenerateRound):
 
 class FinishedPolymarketSwapTxPreparationRound(DegenerateRound):
     """A round representing that Polymarket swap has finished and needs to go to tx settlement."""
+
+
+class FinishedMechOnlyRequestRound(DegenerateRound):
+    """A round representing that a post-cap Mech request batch is ready for the mech-interact flow."""
+
+
+class FinishedMechOnlyRound(DegenerateRound):
+    """A round representing that post-cap Mech analysis is complete and the cycle may checkpoint."""

@@ -56,6 +56,8 @@ from packages.valory.skills.decision_maker_abci.states.final_states import (
     BenchmarkingModeDisabledRound,
     FinishedDecisionMakerRound,
     FinishedDecisionRequestRound,
+    FinishedMechOnlyRequestRound,
+    FinishedMechOnlyRound,
     FinishedPolymarketRedeemRound,
     FinishedPolymarketSwapTxPreparationRound,
     FinishedRedeemTxPreparationRound,
@@ -67,6 +69,9 @@ from packages.valory.skills.decision_maker_abci.states.final_states import (
 from packages.valory.skills.decision_maker_abci.states.handle_failed_tx import (
     HandleFailedTxRound,
 )
+from packages.valory.skills.decision_maker_abci.states.mech_only import (
+    MechResponseRouterRound,
+)
 from packages.valory.skills.decision_maker_abci.states.polymarket_post_set_approval import (
     PolymarketPostSetApprovalRound,
 )
@@ -74,6 +79,7 @@ from packages.valory.skills.decision_maker_abci.states.randomness import Randomn
 from packages.valory.skills.decision_maker_abci.states.redeem_router import (
     RedeemRouterRound,
 )
+from packages.valory.skills.decision_maker_abci.states.trade_count import TradeCountRound
 from packages.valory.skills.market_manager_abci.rounds import (
     FailedMarketManagerRound,
     FetchMarketsRouterRound,
@@ -166,10 +172,10 @@ abci_app_transition_mapping: AbciAppTransitionMapping = {
     FinishedDecisionRequestRound: MechRequestRound,
     FinishedMechRequestRound: PreTxSettlementRound,
     FinishedMechRequestTxRound: MechResponseRound,
-    FinishedMechResponseRound: DecisionReceiveRound,
+    FinishedMechResponseRound: MechResponseRouterRound,
     FinishedMechResponseTimeoutRound: HandleFailedTxRound,
     FinishedMechRequestSkipRound: RedeemRouterRound,
-    FinishedBetPlacementTxRound: RedeemRouterRound,
+    FinishedBetPlacementTxRound: TradeCountRound,
     FinishedSellOutcomeTokensTxRound: RedeemRouterRound,
     FinishedRedeemingTxRound: CallCheckpointRound,
     FinishedPolymarketSwapTxPreparationRound: PreTxSettlementRound,
@@ -188,6 +194,8 @@ abci_app_transition_mapping: AbciAppTransitionMapping = {
     # this has no effect, because the `BenchmarkingDoneRound` is terminal
     BenchmarkingDoneRound: ResetAndPauseRound,
     FinishedMechPurchaseSubscriptionRound: PreTxSettlementRound,
+    FinishedMechOnlyRequestRound: MechRequestRound,
+    FinishedMechOnlyRound: CallCheckpointRound,
 }
 
 termination_config = BackgroundAppConfig(

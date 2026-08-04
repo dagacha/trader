@@ -43,6 +43,11 @@ from packages.valory.skills.decision_maker_abci.behaviours.decision_request impo
 from packages.valory.skills.decision_maker_abci.behaviours.handle_failed_tx import (
     HandleFailedTxBehaviour,
 )
+from packages.valory.skills.decision_maker_abci.behaviours.mech_only import (
+    MechOnlyReceiveBehaviour,
+    MechOnlySelectionBehaviour,
+    MechResponseRouterBehaviour,
+)
 from packages.valory.skills.decision_maker_abci.behaviours.polymarket_bet_placement import (
     PolymarketBetPlacementBehaviour,
 )
@@ -75,6 +80,12 @@ from packages.valory.skills.decision_maker_abci.behaviours.sell_outcome_tokens i
 from packages.valory.skills.decision_maker_abci.behaviours.tool_selection import (
     ToolSelectionBehaviour,
 )
+from packages.valory.skills.decision_maker_abci.behaviours.trade_count import (
+    TradeCountBehaviour,
+)
+from packages.valory.skills.decision_maker_abci.behaviours.trade_cap import (
+    TradeCapBehaviour,
+)
 from packages.valory.skills.decision_maker_abci.rounds import DecisionMakerAbciApp
 
 
@@ -102,4 +113,9 @@ class AgentDecisionMakerRoundBehaviour(AbstractRoundBehaviour):
         PolymarketSetApprovalBehaviour,  # type: ignore
         PolymarketPostSetApprovalBehaviour,  # type: ignore
         PolymarketSwapUsdcBehaviour,  # type: ignore
+        TradeCountBehaviour,  # type: ignore
+        TradeCapBehaviour,  # type: ignore
+        MechOnlySelectionBehaviour,  # type: ignore
+        MechOnlyReceiveBehaviour,  # type: ignore
+        MechResponseRouterBehaviour,  # type: ignore
     }

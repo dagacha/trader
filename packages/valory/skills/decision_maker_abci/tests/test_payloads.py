@@ -28,6 +28,8 @@ from packages.valory.skills.decision_maker_abci.payloads import (
     BlacklistingPayload,
     DecisionReceivePayload,
     DecisionRequestPayload,
+    MechOnlyReceivePayload,
+    MechOnlySelectionPayload,
     MultisigTxPayload,
     PolymarketBetPlacementPayload,
     PolymarketPostSetApprovalPayload,
@@ -38,6 +40,8 @@ from packages.valory.skills.decision_maker_abci.payloads import (
     SamplingPayload,
     SubscriptionPayload,
     ToolSelectionPayload,
+    TradeCapPayload,
+    TradeCountPayload,
     VotingPayload,
 )
 
@@ -170,6 +174,31 @@ from packages.valory.skills.decision_maker_abci.payloads import (
                 "tx_hash": "dummy tx hash",
                 "mocking_mode": False,
                 "should_swap": True,
+            },
+        ),
+        (
+            TradeCountPayload,
+            {
+                "successful_trade_count": 5,
+            },
+        ),
+        (
+            TradeCapPayload,
+            {
+                "mech_only": True,
+            },
+        ),
+        (
+            MechOnlySelectionPayload,
+            {
+                "mech_requests": '[{"prompt": "p"}]',
+                "mech_only_queue": '["m1", "m2"]',
+            },
+        ),
+        (
+            MechOnlyReceivePayload,
+            {
+                "mech_only_queue": '["m1"]',
             },
         ),
     ],

@@ -91,6 +91,33 @@ class VotingPayload(BaseTxPayload):
 
     vote: bool
 
+@dataclass(frozen=True)
+class TradeCountPayload(BaseTxPayload):
+    """Consensus payload recording a successfully settled Omen trade."""
+
+    successful_trade_count: int
+
+@dataclass(frozen=True)
+class TradeCapPayload(BaseTxPayload):
+    """Consensus payload selecting normal or post-cap operation."""
+
+    mech_only: bool
+
+
+@dataclass(frozen=True)
+class MechOnlySelectionPayload(BaseTxPayload):
+    """Consensus payload carrying Mech request metadata for a post-cap batch."""
+
+    mech_requests: Optional[str]
+    mech_only_queue: Optional[str]
+
+
+@dataclass(frozen=True)
+class MechOnlyReceivePayload(BaseTxPayload):
+    """Consensus payload advancing the post-cap Mech queue after a delivery."""
+
+    mech_only_queue: str
+
 
 @dataclass(frozen=True)
 class BlacklistingPayload(UpdateBetsPayload):

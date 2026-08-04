@@ -445,6 +445,38 @@ def test_should_be_sold_non_bool(
     assert sync_data.should_be_sold is False
 
 
+def test_successful_trade_count(
+    sync_data: SynchronizedData, mocked_db: MagicMock
+) -> None:
+    """Test the successful_trade_count property."""
+    mocked_db.get.return_value = 3
+    assert sync_data.successful_trade_count == 3
+
+
+def test_successful_trade_count_default(
+    sync_data: SynchronizedData, mocked_db: MagicMock
+) -> None:
+    """Test the successful_trade_count property defaults to zero when unset."""
+    mocked_db.get.return_value = None
+    assert sync_data.successful_trade_count == 0
+
+
+def test_mech_only_mode_true(
+    sync_data: SynchronizedData, mocked_db: MagicMock
+) -> None:
+    """Test the mech_only_mode property when set to True."""
+    mocked_db.get.return_value = True
+    assert sync_data.mech_only_mode is True
+
+
+def test_mech_only_mode_default(
+    sync_data: SynchronizedData, mocked_db: MagicMock
+) -> None:
+    """Test the mech_only_mode property defaults to False when unset."""
+    mocked_db.get.return_value = None
+    assert sync_data.mech_only_mode is False
+
+
 def test_redeemed_condition_ids_none(
     sync_data: SynchronizedData, mocked_db: MagicMock
 ) -> None:

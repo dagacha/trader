@@ -572,6 +572,8 @@ def _build_decision_maker_params_kwargs() -> dict:
         "name": "params",
         "agent_registry_address": "0xaddr",
         "sample_bets_closing_days": 7,
+        "max_trades": 0,
+        "max_mech_requests_per_cycle": 10,
         "trading_strategy": "kelly_criterion",
         "use_fallback_strategy": False,
         "tools_accuracy_hash": "hash123",
@@ -648,6 +650,8 @@ class TestDecisionMakerParams:
         ):
             params = DecisionMakerParams(**kwargs)
         assert params.sample_bets_closing_days == 7
+        assert params.max_trades == 0
+        assert params.max_mech_requests_per_cycle == 10
         assert params.trading_strategy == "kelly_criterion"
         assert params.slippage == 0.1
         assert params.epsilon == 0.2
@@ -685,6 +689,30 @@ class TestDecisionMakerParams:
         assert params.is_outcome_side_threshold_filter_enabled is False
         assert params.outcome_side_threshold_filter_threshold == 0.5
         assert params.exclude_neg_risk_markets is False
+
+    def test_max_mech_requests_per_cycle_zero_raises(self) -> None:
+        """Test that max_mech_requests_per_cycle <= 0 raises ValueError."""
+
+        def mock_ensure(key: str, kwargs: dict, type_: Any) -> Any:
+            """Return controlled values for _ensure calls."""
+            if key == "sample_bets_closing_days":
+                return 7
+            if key == "max_trades":
+                return 0
+            if key == "max_mech_requests_per_cycle":
+                return 0
+            return MagicMock()
+
+        with patch.object(
+            DecisionMakerParams, "_ensure", side_effect=mock_ensure
+        ), pytest.raises(
+            ValueError, match="max_mech_requests_per_cycle must be positive"
+        ):
+            DecisionMakerParams(
+                skill_context=MagicMock(),
+                agent_registry_address="0xaddr",
+                max_mech_requests_per_cycle=0,
+            )
 
     def test_prompt_template_property(self) -> None:
         """Test prompt_template property returns a PromptTemplate."""

@@ -87,6 +87,8 @@ class Event(Enum):
     SKIP = "skip"
     SET_APPROVAL = "set_approval"
     PREPARE_TX = "prepare_tx"
+    MECH_ONLY = "mech_only"
+    NO_MARKETS = "no_markets"
 
 
 class SynchronizedData(
@@ -104,6 +106,27 @@ class SynchronizedData(
     def sampled_bet_index(self) -> int:
         """Get the sampled bet."""
         return int(self.db.get_strict("sampled_bet_index"))
+
+    @property
+    def successful_trade_count(self) -> int:
+        """Return the number of successfully settled Omen placements."""
+        successful_trade_count = self.db.get("successful_trade_count", 0)
+        if successful_trade_count is None:
+            return 0
+        return int(successful_trade_count)
+
+    @property
+    def mech_only_mode(self) -> bool:
+        """Return whether new position opening is disabled for this cycle."""
+        return bool(self.db.get("mech_only_mode", False))
+
+    @property
+    def mech_only_queue(self) -> List[str]:
+        """Return the persisted queue of market ids remaining for post-cap Mech analysis."""
+        serialized = self.db.get("mech_only_queue", None)
+        if serialized is None:
+            return []
+        return list(json.loads(serialized))
 
     @property
     def benchmarking_finished(self) -> bool:
