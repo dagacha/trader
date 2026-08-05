@@ -170,7 +170,7 @@ transition_func:
     (HandleFailedTxRound, BLACKLIST): BlacklistingRound
     (HandleFailedTxRound, NO_MAJORITY): HandleFailedTxRound
     (HandleFailedTxRound, NO_OP): RedeemRound
-    (MechOnlyReceiveRound, DONE): MechOnlySelectionRound
+    (MechOnlyReceiveRound, DONE): FinishedMechOnlyRound
     (MechOnlyReceiveRound, NONE): ImpossibleRound
     (MechOnlyReceiveRound, NO_MAJORITY): MechOnlyReceiveRound
     (MechOnlyReceiveRound, NO_MARKETS): FinishedMechOnlyRound

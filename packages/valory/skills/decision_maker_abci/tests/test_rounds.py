@@ -183,7 +183,8 @@ def test_mech_only_receive_round_transition(setup_app: DecisionMakerAbciApp) -> 
     """Test transitions from MechOnlyReceiveRound."""
     transition_function = setup_app.transition_function[MechOnlyReceiveRound]
 
-    assert transition_function[Event.DONE] == MechOnlySelectionRound
+    # One batch per cycle: DONE ends the cycle at the checkpoint, not back to selection.
+    assert transition_function[Event.DONE] == FinishedMechOnlyRound
     assert transition_function[Event.NO_MARKETS] == FinishedMechOnlyRound
     assert transition_function[Event.NO_MAJORITY] == MechOnlyReceiveRound
 

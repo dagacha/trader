@@ -179,7 +179,7 @@ class DecisionMakerAbciApp(AbciApp[Event]):
             - round timeout: 4.
             - none: 42.
         5. MechOnlyReceiveRound
-            - done: 4.
+            - done: 45.
             - no markets: 45.
             - no majority: 5.
             - round timeout: 5.
@@ -445,7 +445,10 @@ class DecisionMakerAbciApp(AbciApp[Event]):
             Event.NONE: ImpossibleRound,
         },
         MechOnlyReceiveRound: {
-            Event.DONE: MechOnlySelectionRound,
+            # One batch per cycle: after consuming a Mech delivery, end the
+            # cycle at the checkpoint.  The remaining queue persists to the
+            # next period via cross_period_persisted_keys.
+            Event.DONE: FinishedMechOnlyRound,
             Event.NO_MARKETS: FinishedMechOnlyRound,
             Event.NO_MAJORITY: MechOnlyReceiveRound,
             Event.ROUND_TIMEOUT: MechOnlyReceiveRound,

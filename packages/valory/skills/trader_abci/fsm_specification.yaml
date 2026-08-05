@@ -248,7 +248,7 @@ transition_func:
     (MechInformationRound, NONE): ChatuiLoadRound
     (MechInformationRound, NO_MAJORITY): MechInformationRound
     (MechInformationRound, ROUND_TIMEOUT): MechInformationRound
-    (MechOnlyReceiveRound, DONE): MechOnlySelectionRound
+    (MechOnlyReceiveRound, DONE): CallCheckpointRound
     (MechOnlyReceiveRound, NONE): ImpossibleRound
     (MechOnlyReceiveRound, NO_MAJORITY): MechOnlyReceiveRound
     (MechOnlyReceiveRound, NO_MARKETS): CallCheckpointRound
