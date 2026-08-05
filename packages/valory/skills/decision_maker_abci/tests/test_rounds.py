@@ -227,6 +227,39 @@ def test_trade_count_round_persisted_across_periods(
     )
 
 
+def test_trade_count_round_in_db_post_conditions(
+    setup_app: DecisionMakerAbciApp,
+) -> None:
+    """TradeCountRound must write successful_trade_count to the DB on completion."""
+    from packages.valory.skills.abstract_round_abci.base import get_name
+
+    post = setup_app.db_post_conditions
+    assert TradeCountRound in post
+    assert get_name(SynchronizedData.successful_trade_count) in post[TradeCountRound]
+
+
+def test_mech_only_selection_round_in_db_post_conditions(
+    setup_app: DecisionMakerAbciApp,
+) -> None:
+    """MechOnlySelectionRound must write mech_only_queue to the DB on completion."""
+    from packages.valory.skills.abstract_round_abci.base import get_name
+
+    post = setup_app.db_post_conditions
+    assert MechOnlySelectionRound in post
+    assert get_name(SynchronizedData.mech_only_queue) in post[MechOnlySelectionRound]
+
+
+def test_mech_only_receive_round_in_db_post_conditions(
+    setup_app: DecisionMakerAbciApp,
+) -> None:
+    """MechOnlyReceiveRound must write mech_only_queue to the DB on completion."""
+    from packages.valory.skills.abstract_round_abci.base import get_name
+
+    post = setup_app.db_post_conditions
+    assert MechOnlyReceiveRound in post
+    assert get_name(SynchronizedData.mech_only_queue) in post[MechOnlyReceiveRound]
+
+
 def test_tool_selection_round_transition(setup_app: DecisionMakerAbciApp) -> None:
     """Test transitions from ToolSelectionRound."""
     app = setup_app

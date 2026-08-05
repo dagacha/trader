@@ -858,6 +858,15 @@ class DecisionMakerAbciApp(AbciApp[Event]):
         },
         FinishedMechOnlyRequestRound: set(),
         FinishedMechOnlyRound: set(),
+        TradeCountRound: {
+            get_name(SynchronizedData.successful_trade_count),
+        },
+        MechOnlySelectionRound: {
+            get_name(SynchronizedData.mech_only_queue),
+        },
+        MechOnlyReceiveRound: {
+            get_name(SynchronizedData.mech_only_queue),
+        },
         EpochResetRound: {
             get_name(SynchronizedData.successful_trade_count),
             get_name(SynchronizedData.mech_only_queue),
