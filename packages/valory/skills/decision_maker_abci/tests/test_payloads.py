@@ -28,6 +28,7 @@ from packages.valory.skills.decision_maker_abci.payloads import (
     BlacklistingPayload,
     DecisionReceivePayload,
     DecisionRequestPayload,
+    EpochResetPayload,
     MechOnlyReceivePayload,
     MechOnlySelectionPayload,
     MultisigTxPayload,
@@ -201,6 +202,13 @@ from packages.valory.skills.decision_maker_abci.payloads import (
             MechOnlyReceivePayload,
             {
                 "mech_only_queue": '["m1"]',
+            },
+        ),
+        (
+            EpochResetPayload,
+            {
+                "successful_trade_count": 0,
+                "mech_only_queue": "[]",
             },
         ),
         (

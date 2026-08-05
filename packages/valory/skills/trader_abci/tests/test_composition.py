@@ -35,6 +35,9 @@ from packages.valory.skills.decision_maker_abci.states.handle_failed_tx import (
 from packages.valory.skills.decision_maker_abci.states.mech_only import (
     MechResponseRouterRound,
 )
+from packages.valory.skills.decision_maker_abci.states.epoch_reset import (
+    EpochResetRound,
+)
 from packages.valory.skills.decision_maker_abci.states.post_bet_update import (
     PostBetUpdateRound,
 )
@@ -252,10 +255,10 @@ def test_mech_only_finished_routes_to_checkpoint() -> None:
     assert abci_app_transition_mapping[FinishedMechOnlyRound] is CallCheckpointRound
 
 
-def test_mech_response_routes_through_router() -> None:
-    """Mech responses now enter the decision maker through the response router, not directly."""
+def test_mech_response_routes_through_epoch_reset() -> None:
+    """Mech responses enter the decision maker through EpochResetRound, then MechResponseRouterRound."""
     from packages.valory.skills.mech_interact_abci.states.final_states import (
         FinishedMechResponseRound,
     )
 
-    assert abci_app_transition_mapping[FinishedMechResponseRound] is MechResponseRouterRound
+    assert abci_app_transition_mapping[FinishedMechResponseRound] is EpochResetRound

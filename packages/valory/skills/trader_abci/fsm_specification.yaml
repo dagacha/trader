@@ -100,6 +100,7 @@ states:
 - CollectSignatureRound
 - DecisionReceiveRound
 - DecisionRequestRound
+- EpochResetRound
 - FailedMultiplexerRound
 - FetchMarketsRouterRound
 - FetchPerformanceDataRound
@@ -221,6 +222,10 @@ transition_func:
     (DecisionRequestRound, NO_MAJORITY): DecisionRequestRound
     (DecisionRequestRound, ROUND_TIMEOUT): DecisionRequestRound
     (DecisionRequestRound, SLOTS_UNSUPPORTED_ERROR): BlacklistingRound
+    (EpochResetRound, DONE): MechResponseRouterRound
+    (EpochResetRound, NONE): ImpossibleRound
+    (EpochResetRound, NO_MAJORITY): EpochResetRound
+    (EpochResetRound, ROUND_TIMEOUT): EpochResetRound
     (FetchMarketsRouterRound, DONE): UpdateBetsRound
     (FetchMarketsRouterRound, NONE): FetchMarketsRouterRound
     (FetchMarketsRouterRound, NO_MAJORITY): FetchMarketsRouterRound
@@ -265,7 +270,7 @@ transition_func:
     (MechRequestRound, OFFCHAIN_DONE): MechResponseRound
     (MechRequestRound, ROUND_TIMEOUT): MechRequestRound
     (MechRequestRound, SKIP_REQUEST): CallCheckpointRound
-    (MechResponseRound, DONE): MechResponseRouterRound
+    (MechResponseRound, DONE): EpochResetRound
     (MechResponseRound, NO_MAJORITY): MechResponseRound
     (MechResponseRound, ROUND_TIMEOUT): HandleFailedTxRound
     (MechResponseRouterRound, DONE): DecisionReceiveRound

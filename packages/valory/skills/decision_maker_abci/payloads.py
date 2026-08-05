@@ -122,6 +122,14 @@ class MechOnlyReceivePayload(BaseTxPayload):
 
 
 @dataclass(frozen=True)
+class EpochResetPayload(BaseTxPayload):
+    """Consensus payload resetting the trade cap at a new staking epoch."""
+
+    successful_trade_count: int
+    mech_only_queue: str
+
+
+@dataclass(frozen=True)
 class BlacklistingPayload(UpdateBetsPayload):
     """Represents a transaction payload for blacklisting."""
 

@@ -62,6 +62,9 @@ from packages.valory.skills.decision_maker_abci.states.mech_only import (
     MechOnlySelectionRound,
     MechResponseRouterRound,
 )
+from packages.valory.skills.decision_maker_abci.states.epoch_reset import (
+    EpochResetRound,
+)
 from packages.valory.skills.decision_maker_abci.states.polymarket_bet_placement import (
     PolymarketBetPlacementRound,
 )
@@ -353,12 +356,24 @@ def test_mech_only_finished_rounds_are_final(setup_app: DecisionMakerAbciApp) ->
     assert FinishedMechOnlyRound in app.final_states
 
 
-def test_mech_response_router_is_initial_state(
+def test_epoch_reset_is_initial_state(
     setup_app: DecisionMakerAbciApp,
 ) -> None:
-    """MechResponseRouterRound is a composition entry point (initial state)."""
-    assert MechResponseRouterRound in setup_app.initial_states
-    assert setup_app.db_pre_conditions[MechResponseRouterRound] == set()
+    """EpochResetRound is the composition entry point (initial state), not MechResponseRouterRound."""
+    assert EpochResetRound in setup_app.initial_states
+    assert setup_app.db_pre_conditions[EpochResetRound] == set()
+    # MechResponseRouterRound is now reached via EpochResetRound, not a direct entry point.
+    assert MechResponseRouterRound not in setup_app.initial_states
+
+
+def test_epoch_reset_transition(
+    setup_app: DecisionMakerAbciApp,
+) -> None:
+    """EpochResetRound transitions to MechResponseRouterRound on DONE."""
+    transition_function = setup_app.transition_function[EpochResetRound]
+    assert transition_function[Event.DONE] == MechResponseRouterRound
+    assert transition_function[Event.NO_MAJORITY] == EpochResetRound
+    assert transition_function[Event.ROUND_TIMEOUT] == EpochResetRound
 
 
 def test_decision_receive_no_longer_initial_state(

@@ -296,6 +296,11 @@ ROUNDS_INFO = {
         "description": "Routes a Mech delivery to the normal or the post-cap consumer based on the cap flag.",
         "transitions": {},
     },
+    "epoch_reset_round": {
+        "name": "Checking for staking epoch reset",
+        "description": "Resets the trade counter and Mech-only queue when a new staking epoch begins.",
+        "transitions": {},
+    },
     "finished_mech_only_request_round": {
         "name": "Post-cap Mech request batch ready",
         "description": "A post-cap Mech request batch is ready for the mech-interact flow.",

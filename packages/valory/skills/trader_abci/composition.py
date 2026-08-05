@@ -80,6 +80,9 @@ from packages.valory.skills.decision_maker_abci.states.handle_failed_tx import (
 from packages.valory.skills.decision_maker_abci.states.mech_only import (
     MechResponseRouterRound,
 )
+from packages.valory.skills.decision_maker_abci.states.epoch_reset import (
+    EpochResetRound,
+)
 from packages.valory.skills.decision_maker_abci.states.omen_withdraw import (
     OmenWithdrawRound,
 )
@@ -216,7 +219,7 @@ abci_app_transition_mapping: AbciAppTransitionMapping = {
     FinishedDecisionRequestRound: MechRequestRound,
     FinishedMechRequestRound: PreTxSettlementRound,
     FinishedMechRequestTxRound: MechResponseRound,
-    FinishedMechResponseRound: MechResponseRouterRound,
+    FinishedMechResponseRound: EpochResetRound,
     FinishedMechResponseTimeoutRound: HandleFailedTxRound,
     # Mech-request skip, no-decision, and the off-chain Polymarket bet exit
     # all go straight to the staking checkpoint; any winnings produced this

@@ -71,6 +71,7 @@ from packages.valory.skills.decision_maker_abci.states.final_states import (
 from packages.valory.skills.decision_maker_abci.states.handle_failed_tx import (
     HandleFailedTxRound,
 )
+from packages.valory.skills.decision_maker_abci.states.epoch_reset import EpochResetRound
 from packages.valory.skills.decision_maker_abci.states.mech_only import (
     MechOnlyReceiveRound,
     MechOnlySelectionRound,
@@ -145,227 +146,232 @@ class DecisionMakerAbciApp(AbciApp[Event]):
 
     Initial round: CheckBenchmarkingModeRound
 
-    Initial states: {CheckBenchmarkingModeRound, DecisionRequestRound, HandleFailedTxRound, MechResponseRouterRound, OmenWithdrawRound, PolymarketBetPlacementRound, PolymarketPostSetApprovalRound, PolymarketWithdrawRound, PolymarketWithdrawTopUpRound, PostBetUpdateRound, PostOmenWithdrawRound, RandomnessRound, RedeemRouterRound, TradeCapRound, TradeCountRound}
+    Initial states: {CheckBenchmarkingModeRound, DecisionRequestRound, EpochResetRound, HandleFailedTxRound, OmenWithdrawRound, PolymarketBetPlacementRound, PolymarketPostSetApprovalRound, PolymarketWithdrawRound, PolymarketWithdrawTopUpRound, PostBetUpdateRound, PostOmenWithdrawRound, RandomnessRound, RedeemRouterRound, TradeCapRound, TradeCountRound}
 
     Transition states:
         0. CheckBenchmarkingModeRound
             - benchmarking enabled: 1.
-            - benchmarking disabled: 13.
-            - set approval: 19.
+            - benchmarking disabled: 14.
+            - set approval: 20.
             - no majority: 0.
             - round timeout: 0.
-            - none: 41.
+            - none: 42.
         1. BenchmarkingRandomnessRound
             - done: 3.
             - round timeout: 1.
             - no majority: 1.
-            - none: 41.
+            - none: 42.
         2. RandomnessRound
             - done: 3.
             - round timeout: 2.
             - no majority: 2.
-            - none: 41.
+            - none: 42.
         3. TradeCapRound
-            - done: 7.
+            - done: 8.
             - mech only: 4.
             - round timeout: 3.
             - no majority: 3.
-            - none: 41.
+            - none: 42.
         4. MechOnlySelectionRound
-            - done: 43.
-            - no markets: 44.
+            - done: 44.
+            - no markets: 45.
             - no majority: 4.
             - round timeout: 4.
-            - none: 41.
+            - none: 42.
         5. MechOnlyReceiveRound
             - done: 4.
-            - no markets: 44.
+            - no markets: 45.
             - no majority: 5.
             - round timeout: 5.
-            - none: 41.
-        6. MechResponseRouterRound
-            - done: 12.
-            - mech only: 5.
+            - none: 42.
+        6. EpochResetRound
+            - done: 7.
             - no majority: 6.
             - round timeout: 6.
-            - none: 41.
-        7. SamplingRound
-            - done: 8.
-            - none: 38.
+            - none: 42.
+        7. MechResponseRouterRound
+            - done: 13.
+            - mech only: 5.
             - no majority: 7.
             - round timeout: 7.
-            - new simulated resample: 7.
-            - benchmarking enabled: 8.
-            - benchmarking finished: 42.
-        8. ToolSelectionRound
-            - done: 10.
-            - none: 8.
+            - none: 42.
+        8. SamplingRound
+            - done: 9.
+            - none: 39.
             - no majority: 8.
             - round timeout: 8.
-        9. TradeCountRound
-            - done: 25.
+            - new simulated resample: 8.
+            - benchmarking enabled: 9.
+            - benchmarking finished: 43.
+        9. ToolSelectionRound
+            - done: 11.
+            - none: 9.
             - no majority: 9.
             - round timeout: 9.
-            - none: 41.
-        10. PolymarketSwapUsdcRound
-            - done: 11.
-            - none: 11.
-            - prepare tx: 33.
+        10. TradeCountRound
+            - done: 26.
             - no majority: 10.
             - round timeout: 10.
-            - mock tx: 11.
-        11. DecisionRequestRound
-            - done: 28.
-            - mock mech request: 12.
-            - slots unsupported error: 14.
+            - none: 42.
+        11. PolymarketSwapUsdcRound
+            - done: 12.
+            - none: 12.
+            - prepare tx: 34.
             - no majority: 11.
             - round timeout: 11.
-        12. DecisionReceiveRound
-            - done: 15.
-            - polymarket done: 17.
-            - done no sell: 26.
-            - done sell: 45.
-            - mech response error: 14.
+            - mock tx: 12.
+        12. DecisionRequestRound
+            - done: 29.
+            - mock mech request: 13.
+            - slots unsupported error: 15.
             - no majority: 12.
-            - tie: 14.
-            - unprofitable: 14.
             - round timeout: 12.
-        13. PolymarketWrapCollateralRound
-            - done: 27.
-            - none: 27.
-            - prepare tx: 36.
-            - mock tx: 27.
+        13. DecisionReceiveRound
+            - done: 16.
+            - polymarket done: 18.
+            - done no sell: 27.
+            - done sell: 46.
+            - mech response error: 15.
             - no majority: 13.
+            - tie: 15.
+            - unprofitable: 15.
             - round timeout: 13.
-        14. BlacklistingRound
-            - done: 38.
-            - mock tx: 38.
-            - none: 41.
+        14. PolymarketWrapCollateralRound
+            - done: 28.
+            - none: 28.
+            - prepare tx: 37.
+            - mock tx: 28.
             - no majority: 14.
             - round timeout: 14.
-        15. BetPlacementRound
-            - done: 26.
-            - mock tx: 21.
-            - insufficient balance: 40.
-            - calc buy amount failed: 24.
+        15. BlacklistingRound
+            - done: 39.
+            - mock tx: 39.
+            - none: 42.
             - no majority: 15.
             - round timeout: 15.
-        16. PolymarketBetPlacementRound
-            - done: 18.
-            - bet placement done: 18.
-            - bet placement failed: 16.
-            - bet placement impossible: 14.
-            - insufficient balance: 40.
-            - mock tx: 31.
+        16. BetPlacementRound
+            - done: 27.
+            - mock tx: 22.
+            - insufficient balance: 41.
+            - calc buy amount failed: 25.
             - no majority: 16.
             - round timeout: 16.
-        17. PolymarketTopUpRound
-            - done: 16.
-            - prepare tx: 34.
-            - insufficient balance: 40.
-            - mock tx: 16.
+        17. PolymarketBetPlacementRound
+            - done: 19.
+            - bet placement done: 19.
+            - bet placement failed: 17.
+            - bet placement impossible: 15.
+            - insufficient balance: 41.
+            - mock tx: 32.
             - no majority: 17.
             - round timeout: 17.
-        18. PolymarketSweepRound
-            - done: 31.
-            - none: 18.
-            - mock tx: 31.
+        18. PolymarketTopUpRound
+            - done: 17.
+            - prepare tx: 35.
+            - insufficient balance: 41.
+            - mock tx: 17.
             - no majority: 18.
             - round timeout: 18.
-        19. PolymarketSetApprovalRound
-            - done: 20.
-            - prepare tx: 37.
+        19. PolymarketSweepRound
+            - done: 32.
+            - none: 19.
+            - mock tx: 32.
             - no majority: 19.
             - round timeout: 19.
-            - none: 41.
-            - mock tx: 20.
-        20. PolymarketPostSetApprovalRound
-            - done: 13.
-            - approval failed: 19.
+        20. PolymarketSetApprovalRound
+            - done: 21.
+            - prepare tx: 38.
             - no majority: 20.
             - round timeout: 20.
-            - none: 41.
-        21. RedeemRound
-            - done: 26.
-            - mock tx: 7.
-            - no redeeming: 39.
+            - none: 42.
+            - mock tx: 21.
+        21. PolymarketPostSetApprovalRound
+            - done: 14.
+            - approval failed: 20.
             - no majority: 21.
-            - redeem round timeout: 39.
-        22. RedeemRouterRound
-            - done: 21.
-            - polymarket done: 23.
+            - round timeout: 21.
+            - none: 42.
+        22. RedeemRound
+            - done: 27.
+            - mock tx: 8.
+            - no redeeming: 40.
             - no majority: 22.
-            - none: 22.
-        23. PolymarketRedeemRound
-            - done: 30.
-            - prepare tx: 29.
+            - redeem round timeout: 40.
+        23. RedeemRouterRound
+            - done: 22.
+            - polymarket done: 24.
             - no majority: 23.
-            - no redeeming: 39.
-            - redeem round timeout: 26.
-            - mock tx: 30.
-        24. HandleFailedTxRound
-            - blacklist: 14.
-            - no op: 21.
+            - none: 23.
+        24. PolymarketRedeemRound
+            - done: 31.
+            - prepare tx: 30.
             - no majority: 24.
-        25. PostBetUpdateRound
-            - done: 32.
-            - none: 25.
+            - no redeeming: 40.
+            - redeem round timeout: 27.
+            - mock tx: 31.
+        25. HandleFailedTxRound
+            - blacklist: 15.
+            - no op: 22.
             - no majority: 25.
-            - round timeout: 25.
-        26. FinishedDecisionMakerRound
-        27. BenchmarkingModeDisabledRound
-        28. FinishedDecisionRequestRound
-        29. FinishedRedeemTxPreparationRound
-        30. FinishedPolymarketRedeemRound
-        31. FinishedPolymarketBetPlacementRound
-        32. FinishedPostBetUpdateRound
-        33. FinishedPolymarketSwapTxPreparationRound
-        34. FinishedPolymarketTopUpTxPreparationRound
-        35. FinishedPolymarketWithdrawTopUpTxPreparationRound
-        36. FinishedPolymarketWrapCollateralTxPreparationRound
-        37. FinishedSetApprovalTxPreparationRound
-        38. FinishedWithoutDecisionRound
-        39. FinishedWithoutRedeemingRound
-        40. RefillRequiredRound
-        41. ImpossibleRound
-        42. BenchmarkingDoneRound
-        43. FinishedMechOnlyRequestRound
-        44. FinishedMechOnlyRound
-        45. SellOutcomeTokensRound
-            - done: 26.
-            - calc sell amount failed: 24.
-            - mock tx: 15.
-            - no majority: 45.
-            - round timeout: 45.
-            - none: 41.
-        46. PolymarketWithdrawTopUpRound
-            - prepare tx: 35.
-            - withdrawal done: 51.
-            - none: 46.
-            - done: 47.
-            - mock tx: 47.
-            - insufficient balance: 51.
+        26. PostBetUpdateRound
+            - done: 33.
+            - none: 26.
+            - no majority: 26.
+            - round timeout: 26.
+        27. FinishedDecisionMakerRound
+        28. BenchmarkingModeDisabledRound
+        29. FinishedDecisionRequestRound
+        30. FinishedRedeemTxPreparationRound
+        31. FinishedPolymarketRedeemRound
+        32. FinishedPolymarketBetPlacementRound
+        33. FinishedPostBetUpdateRound
+        34. FinishedPolymarketSwapTxPreparationRound
+        35. FinishedPolymarketTopUpTxPreparationRound
+        36. FinishedPolymarketWithdrawTopUpTxPreparationRound
+        37. FinishedPolymarketWrapCollateralTxPreparationRound
+        38. FinishedSetApprovalTxPreparationRound
+        39. FinishedWithoutDecisionRound
+        40. FinishedWithoutRedeemingRound
+        41. RefillRequiredRound
+        42. ImpossibleRound
+        43. BenchmarkingDoneRound
+        44. FinishedMechOnlyRequestRound
+        45. FinishedMechOnlyRound
+        46. SellOutcomeTokensRound
+            - done: 27.
+            - calc sell amount failed: 25.
+            - mock tx: 16.
             - no majority: 46.
             - round timeout: 46.
-        47. PolymarketWithdrawRound
-            - withdrawal done: 51.
-            - withdrawal round timeout: 51.
-            - no majority: 47.
+            - none: 42.
+        47. PolymarketWithdrawTopUpRound
+            - prepare tx: 36.
+            - withdrawal done: 52.
             - none: 47.
-        48. OmenWithdrawRound
-            - prepare tx: 50.
-            - withdrawal done: 51.
-            - withdrawal round timeout: 51.
+            - done: 48.
+            - mock tx: 48.
+            - insufficient balance: 52.
+            - no majority: 47.
+            - round timeout: 47.
+        48. PolymarketWithdrawRound
+            - withdrawal done: 52.
+            - withdrawal round timeout: 52.
             - no majority: 48.
-            - done: 51.
-            - mock tx: 51.
-        49. PostOmenWithdrawRound
-            - withdrawal done: 51.
-            - withdrawal round timeout: 51.
+            - none: 48.
+        49. OmenWithdrawRound
+            - prepare tx: 51.
+            - withdrawal done: 52.
+            - withdrawal round timeout: 52.
             - no majority: 49.
-            - none: 49.
-        50. FinishedOmenWithdrawRound
-        51. WithdrawalIdleRound
+            - done: 52.
+            - mock tx: 52.
+        50. PostOmenWithdrawRound
+            - withdrawal done: 52.
+            - withdrawal round timeout: 52.
+            - no majority: 50.
+            - none: 50.
+        51. FinishedOmenWithdrawRound
+        52. WithdrawalIdleRound
 
     Final states: {BenchmarkingDoneRound, BenchmarkingModeDisabledRound, FinishedDecisionMakerRound, FinishedDecisionRequestRound, FinishedMechOnlyRequestRound, FinishedMechOnlyRound, FinishedOmenWithdrawRound, FinishedPolymarketBetPlacementRound, FinishedPolymarketRedeemRound, FinishedPolymarketSwapTxPreparationRound, FinishedPolymarketTopUpTxPreparationRound, FinishedPolymarketWithdrawTopUpTxPreparationRound, FinishedPolymarketWrapCollateralTxPreparationRound, FinishedPostBetUpdateRound, FinishedRedeemTxPreparationRound, FinishedSetApprovalTxPreparationRound, FinishedWithoutDecisionRound, FinishedWithoutRedeemingRound, ImpossibleRound, RefillRequiredRound, WithdrawalIdleRound}
 
@@ -380,7 +386,7 @@ class DecisionMakerAbciApp(AbciApp[Event]):
         CheckBenchmarkingModeRound,
         RandomnessRound,
         HandleFailedTxRound,
-        MechResponseRouterRound,
+        EpochResetRound,
         RedeemRouterRound,
         PolymarketPostSetApprovalRound,
         DecisionRequestRound,
@@ -443,6 +449,12 @@ class DecisionMakerAbciApp(AbciApp[Event]):
             Event.NO_MARKETS: FinishedMechOnlyRound,
             Event.NO_MAJORITY: MechOnlyReceiveRound,
             Event.ROUND_TIMEOUT: MechOnlyReceiveRound,
+            Event.NONE: ImpossibleRound,
+        },
+        EpochResetRound: {
+            Event.DONE: MechResponseRouterRound,
+            Event.NO_MAJORITY: EpochResetRound,
+            Event.ROUND_TIMEOUT: EpochResetRound,
             Event.NONE: ImpossibleRound,
         },
         MechResponseRouterRound: {
@@ -773,6 +785,7 @@ class DecisionMakerAbciApp(AbciApp[Event]):
         TradeCapRound: set(),
         # problematic check in `chain` does not allow to set `final_tx_hash` as a precondition here
         MechResponseRouterRound: set(),
+        EpochResetRound: set(),
         # problematic check in `chain` does not allow to set `bets_hash` as a precondition here
         HandleFailedTxRound: set(),
         RandomnessRound: set(),
@@ -842,5 +855,9 @@ class DecisionMakerAbciApp(AbciApp[Event]):
         },
         FinishedMechOnlyRequestRound: set(),
         FinishedMechOnlyRound: set(),
+        EpochResetRound: {
+            get_name(SynchronizedData.successful_trade_count),
+            get_name(SynchronizedData.mech_only_queue),
+        },
         WithdrawalIdleRound: set(),
     }

@@ -119,6 +119,11 @@ class SynchronizedData(
         return bool(self.db.get("mech_only_mode", False))
 
     @property
+    def is_checkpoint_reached(self) -> bool:
+        """Return whether a new staking epoch checkpoint was reached."""
+        return bool(self.db.get("is_checkpoint_reached", False))
+
+    @property
     def mech_only_queue(self) -> List[str]:
         """Return the persisted queue of market ids remaining for post-cap Mech analysis."""
         serialized = self.db.get("mech_only_queue", None)

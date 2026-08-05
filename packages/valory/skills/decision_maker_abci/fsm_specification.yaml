@@ -60,8 +60,8 @@ label: DecisionMakerAbciApp
 start_states:
 - CheckBenchmarkingModeRound
 - DecisionRequestRound
+- EpochResetRound
 - HandleFailedTxRound
-- MechResponseRouterRound
 - OmenWithdrawRound
 - PolymarketBetPlacementRound
 - PolymarketPostSetApprovalRound
@@ -82,6 +82,7 @@ states:
 - CheckBenchmarkingModeRound
 - DecisionReceiveRound
 - DecisionRequestRound
+- EpochResetRound
 - FinishedDecisionMakerRound
 - FinishedDecisionRequestRound
 - FinishedMechOnlyRequestRound
@@ -162,6 +163,10 @@ transition_func:
     (DecisionRequestRound, NO_MAJORITY): DecisionRequestRound
     (DecisionRequestRound, ROUND_TIMEOUT): DecisionRequestRound
     (DecisionRequestRound, SLOTS_UNSUPPORTED_ERROR): BlacklistingRound
+    (EpochResetRound, DONE): MechResponseRouterRound
+    (EpochResetRound, NONE): ImpossibleRound
+    (EpochResetRound, NO_MAJORITY): EpochResetRound
+    (EpochResetRound, ROUND_TIMEOUT): EpochResetRound
     (HandleFailedTxRound, BLACKLIST): BlacklistingRound
     (HandleFailedTxRound, NO_MAJORITY): HandleFailedTxRound
     (HandleFailedTxRound, NO_OP): RedeemRound

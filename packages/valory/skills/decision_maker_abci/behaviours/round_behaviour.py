@@ -48,6 +48,9 @@ from packages.valory.skills.decision_maker_abci.behaviours.mech_only import (
     MechOnlySelectionBehaviour,
     MechResponseRouterBehaviour,
 )
+from packages.valory.skills.decision_maker_abci.behaviours.epoch_reset import (
+    EpochResetBehaviour,
+)
 from packages.valory.skills.decision_maker_abci.behaviours.omen_withdraw import (
     OmenWithdrawBehaviour,
 )
@@ -146,6 +149,7 @@ class AgentDecisionMakerRoundBehaviour(AbstractRoundBehaviour):
         MechOnlySelectionBehaviour,  # type: ignore
         MechOnlyReceiveBehaviour,  # type: ignore
         MechResponseRouterBehaviour,  # type: ignore
+        EpochResetBehaviour,  # type: ignore
         PolymarketWithdrawBehaviour,  # type: ignore
         PolymarketWrapCollateralBehaviour,  # type: ignore
         OmenWithdrawBehaviour,  # type: ignore
