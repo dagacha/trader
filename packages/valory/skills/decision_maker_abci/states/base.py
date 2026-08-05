@@ -129,6 +129,8 @@ class SynchronizedData(
         serialized = self.db.get("mech_only_queue", None)
         if serialized is None:
             return []
+        if isinstance(serialized, list):
+            return list(serialized)
         return list(json.loads(serialized))
 
     @property
