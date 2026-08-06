@@ -25,6 +25,7 @@ from abc import ABC
 from copy import deepcopy
 from datetime import datetime, timedelta
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Dict, Generator, List, Optional, Set, Tuple, cast
 
 from aea.configurations.data_types import PublicId
@@ -94,6 +95,11 @@ NEW_LINE = "\n"
 QUOTE = '"'
 TWO_QUOTES = '""'
 INIT_LIQUIDITY_INFO = LiquidityInfo()
+# The successful-trade counter is persisted to a file in the agent data dir
+# (like the staking checkpoint) so the MAX_TRADES cap survives agent restarts.
+# The ABCI synchronized-data DB is rebuilt from scratch on restart, so a
+# counter kept only there resets to 0 and silently re-arms the cap.
+TRADE_COUNT_FILENAME = "successful_trade_count.txt"
 
 
 class TradingOperation(str, Enum):
@@ -185,6 +191,49 @@ class DecisionMakerBaseBehaviour(BetsManagerBehaviour, ABC):
     def params(self) -> DecisionMakerParams:
         """Return the params."""
         return cast(DecisionMakerParams, self.context.params)
+
+    @property
+    def trade_count_filepath(self) -> Path:
+        """Return the path of the durable successful-trade counter file."""
+        return self.params.store_path / TRADE_COUNT_FILENAME
+
+    def read_stored_trade_count(self) -> Optional[int]:
+        """Read the durable successful-trade counter from the agent data dir.
+
+        :return: the persisted counter, or ``None`` if it is unavailable.
+        """
+        try:
+            with open(self.trade_count_filepath, "r") as trade_count_file:
+                return int(trade_count_file.readline())
+        except (FileNotFoundError, ValueError, TypeError, OSError):
+            return None
+
+    def store_trade_count(self, count: int) -> None:
+        """Persist the successful-trade counter to the agent data dir.
+
+        :param count: the counter value to persist.
+        """
+        try:
+            with open(self.trade_count_filepath, "w") as trade_count_file:
+                trade_count_file.write(str(count))
+        except OSError as exc:
+            self.context.logger.error(
+                f"Failed to persist the successful-trade counter to "
+                f"{self.trade_count_filepath!r}: {exc}"
+            )
+
+    def durable_trade_count(self) -> int:
+        """Return the counter, preferring the durable file over synchronized data.
+
+        The file survives agent restarts whereas the ABCI database does not,
+        so it is the authoritative source for the MAX_TRADES cap decision.
+
+        :return: the successful-trade counter.
+        """
+        stored = self.read_stored_trade_count()
+        if stored is not None:
+            return stored
+        return self.synchronized_data.successful_trade_count
 
     @property
     def mock_data(self) -> BenchmarkingMockData:

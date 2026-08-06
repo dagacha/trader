@@ -21,6 +21,9 @@
 
 from unittest.mock import MagicMock, PropertyMock, patch
 
+from packages.valory.skills.decision_maker_abci.behaviours.base import (
+    TRADE_COUNT_FILENAME,
+)
 from packages.valory.skills.decision_maker_abci.behaviours.trade_cap import (
     TradeCapBehaviour,
 )
@@ -32,12 +35,13 @@ from packages.valory.skills.decision_maker_abci.states.trade_cap import TradeCap
 # ---------------------------------------------------------------------------
 
 
-def _make_behaviour(max_trades):  # type: ignore[no-untyped-def]
+def _make_behaviour(max_trades, store_path):  # type: ignore[no-untyped-def]
     """Return a TradeCapBehaviour with mocked dependencies."""
     behaviour = object.__new__(TradeCapBehaviour)
     context = MagicMock()
     context.agent_address = "test_agent"
     context.params.max_trades = max_trades
+    context.params.store_path = store_path
     behaviour.__dict__["_context"] = context
     return behaviour
 
@@ -82,36 +86,48 @@ class TestTradeCapBehaviour:
         """The behaviour is bound to TradeCapRound."""
         assert TradeCapBehaviour.matching_round is TradeCapRound
 
-    def test_cap_disabled_always_normal_mode(self) -> None:
+    def test_cap_disabled_always_normal_mode(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         """When max_trades is 0 (disabled), mech_only is False even with placements."""
-        behaviour = _make_behaviour(max_trades=0)
+        behaviour = _make_behaviour(max_trades=0, store_path=tmp_path)
         payload = _run_async_act(behaviour, successful_trade_count=100)
         assert isinstance(payload, TradeCapPayload)
         assert payload.mech_only is False
 
-    def test_below_cap_normal_mode(self) -> None:
+    def test_below_cap_normal_mode(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         """When the count is below a positive cap, mech_only is False."""
-        behaviour = _make_behaviour(max_trades=5)
+        behaviour = _make_behaviour(max_trades=5, store_path=tmp_path)
         payload = _run_async_act(behaviour, successful_trade_count=2)
         assert isinstance(payload, TradeCapPayload)
         assert payload.mech_only is False
 
-    def test_at_cap_enters_mech_only(self) -> None:
+    def test_at_cap_enters_mech_only(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         """When the count equals the cap, mech_only is True."""
-        behaviour = _make_behaviour(max_trades=5)
+        behaviour = _make_behaviour(max_trades=5, store_path=tmp_path)
         payload = _run_async_act(behaviour, successful_trade_count=5)
         assert isinstance(payload, TradeCapPayload)
         assert payload.mech_only is True
 
-    def test_above_cap_enters_mech_only(self) -> None:
+    def test_above_cap_enters_mech_only(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         """When the count exceeds the cap, mech_only is True."""
-        behaviour = _make_behaviour(max_trades=5)
+        behaviour = _make_behaviour(max_trades=5, store_path=tmp_path)
         payload = _run_async_act(behaviour, successful_trade_count=7)
         assert isinstance(payload, TradeCapPayload)
         assert payload.mech_only is True
 
-    def test_payload_sender_is_agent_address(self) -> None:
+    def test_payload_sender_is_agent_address(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         """The payload is signed by the agent's address."""
-        behaviour = _make_behaviour(max_trades=1)
+        behaviour = _make_behaviour(max_trades=1, store_path=tmp_path)
         payload = _run_async_act(behaviour, successful_trade_count=1)
         assert payload.sender == "test_agent"
+
+    def test_durable_file_overrides_synchronized_data(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        """The cap uses the persisted file value, not the (restart-wiped) DB value.
+
+        This is the restart scenario: synchronized data has reset to 0 but the
+        durable file still holds the pre-restart count, so the cap must trigger.
+        """
+        (tmp_path / TRADE_COUNT_FILENAME).write_text("5")
+        behaviour = _make_behaviour(max_trades=5, store_path=tmp_path)
+        payload = _run_async_act(behaviour, successful_trade_count=0)
+        assert isinstance(payload, TradeCapPayload)
+        assert payload.mech_only is True

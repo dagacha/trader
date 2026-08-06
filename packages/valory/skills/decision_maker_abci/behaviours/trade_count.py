@@ -33,8 +33,13 @@ class TradeCountBehaviour(DecisionMakerBaseBehaviour):
 
     def async_act(self) -> Generator:
         with self.context.benchmark_tool.measure(self.behaviour_id).local():
-            payload = TradeCountPayload(
-                self.context.agent_address,
-                self.synchronized_data.successful_trade_count + 1,
+            # Increment the durable file-backed counter so the count survives
+            # agent restarts, which reset the ABCI database to its setup state.
+            new_count = self.durable_trade_count() + 1
+            self.store_trade_count(new_count)
+            self.context.logger.info(
+                f"Recorded successful Omen placement; "
+                f"successful_trade_count is now {new_count}."
             )
+            payload = TradeCountPayload(self.context.agent_address, new_count)
         yield from self.finish_behaviour(payload)

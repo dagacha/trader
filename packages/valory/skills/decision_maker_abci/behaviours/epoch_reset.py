@@ -38,16 +38,24 @@ class EpochResetBehaviour(DecisionMakerBaseBehaviour):
         with self.context.benchmark_tool.measure(self.behaviour_id).local():
             if self.synchronized_data.is_checkpoint_reached:
                 # New staking epoch: reset the cap and clear the Mech-only queue.
+                # Reset the durable file too, otherwise the pre-epoch count would
+                # be reloaded on the next restart and keep the cap armed.
+                self.store_trade_count(0)
+                self.context.logger.info(
+                    "New staking epoch detected; resetting the trade cap counter."
+                )
                 payload = EpochResetPayload(
                     self.context.agent_address,
                     successful_trade_count=0,
                     mech_only_queue=json.dumps([]),
                 )
             else:
-                # No epoch change: re-write existing values (no-op).
+                # No epoch change: re-write existing values (no-op). Use the
+                # durable counter so synchronized data is re-hydrated from the
+                # file after a restart wiped the ABCI database.
                 payload = EpochResetPayload(
                     self.context.agent_address,
-                    successful_trade_count=self.synchronized_data.successful_trade_count,
+                    successful_trade_count=self.durable_trade_count(),
                     mech_only_queue=json.dumps(self.synchronized_data.mech_only_queue),
                 )
         yield from self.finish_behaviour(payload)

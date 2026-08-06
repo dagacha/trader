@@ -36,9 +36,13 @@ class TradeCapBehaviour(DecisionMakerBaseBehaviour):
     def async_act(self) -> Generator:
         """Submit the deterministic capped-mode decision."""
         max_trades = self.params.max_trades
-        mech_only = (
-            max_trades > 0
-            and self.synchronized_data.successful_trade_count >= max_trades
+        # Read from the durable file rather than synchronized data: the counter
+        # must survive agent restarts, which wipe the ABCI database.
+        successful_trade_count = self.durable_trade_count()
+        mech_only = max_trades > 0 and successful_trade_count >= max_trades
+        self.context.logger.info(
+            f"Trade cap check: successful_trade_count={successful_trade_count}, "
+            f"max_trades={max_trades}, mech_only={mech_only}"
         )
         payload = TradeCapPayload(self.context.agent_address, mech_only)
         yield from self.finish_behaviour(payload)

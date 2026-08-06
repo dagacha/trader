@@ -22,6 +22,9 @@
 import json
 from unittest.mock import MagicMock, PropertyMock, patch
 
+from packages.valory.skills.decision_maker_abci.behaviours.base import (
+    TRADE_COUNT_FILENAME,
+)
 from packages.valory.skills.decision_maker_abci.behaviours.epoch_reset import (
     EpochResetBehaviour,
 )
@@ -29,11 +32,12 @@ from packages.valory.skills.decision_maker_abci.payloads import EpochResetPayloa
 from packages.valory.skills.decision_maker_abci.states.epoch_reset import EpochResetRound
 
 
-def _make_behaviour():
+def _make_behaviour(store_path):
     """Return an EpochResetBehaviour with mocked dependencies."""
     behaviour = object.__new__(EpochResetBehaviour)
     context = MagicMock()
     context.agent_address = "test_agent"
+    context.params.store_path = store_path
     measure_cm = MagicMock()
     measure_cm.local.return_value.__enter__.return_value = None
     measure_cm.local.return_value.__exit__.return_value = False
@@ -79,32 +83,46 @@ class TestEpochResetBehaviour:
         """The behaviour is bound to EpochResetRound."""
         assert EpochResetBehaviour.matching_round is EpochResetRound
 
-    def test_resets_on_new_epoch(self) -> None:
+    def test_resets_on_new_epoch(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         """When is_checkpoint_reached is True, counter resets to 0 and queue is cleared."""
-        behaviour = _make_behaviour()
+        (tmp_path / TRADE_COUNT_FILENAME).write_text("5")
+        behaviour = _make_behaviour(store_path=tmp_path)
         payload = _run_async_act(behaviour, is_checkpoint=True, current_count=5, current_queue=["m1", "m2"])
         assert isinstance(payload, EpochResetPayload)
         assert payload.successful_trade_count == 0
         assert json.loads(payload.mech_only_queue) == []
+        # The durable file is reset too, so the cap does not re-arm on restart.
+        assert (tmp_path / TRADE_COUNT_FILENAME).read_text() == "0"
 
-    def test_noop_when_no_epoch_change(self) -> None:
+    def test_noop_when_no_epoch_change(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         """When is_checkpoint_reached is False, existing values are preserved."""
-        behaviour = _make_behaviour()
+        (tmp_path / TRADE_COUNT_FILENAME).write_text("3")
+        behaviour = _make_behaviour(store_path=tmp_path)
         payload = _run_async_act(behaviour, is_checkpoint=False, current_count=3, current_queue=["m1"])
         assert isinstance(payload, EpochResetPayload)
+        # The durable file value wins over the (possibly restart-wiped) DB value.
         assert payload.successful_trade_count == 3
         assert json.loads(payload.mech_only_queue) == ["m1"]
+        assert (tmp_path / TRADE_COUNT_FILENAME).read_text() == "3"
 
-    def test_resets_even_when_counter_is_zero(self) -> None:
+    def test_noop_rehydrates_from_file_after_restart(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        """The no-op path re-hydrates the count from the file after a restart."""
+        (tmp_path / TRADE_COUNT_FILENAME).write_text("4")
+        behaviour = _make_behaviour(store_path=tmp_path)
+        payload = _run_async_act(behaviour, is_checkpoint=False, current_count=0, current_queue=[])
+        assert payload.successful_trade_count == 4
+
+    def test_resets_even_when_counter_is_zero(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         """Reset still fires when counter is already 0 (idempotent)."""
-        behaviour = _make_behaviour()
+        behaviour = _make_behaviour(store_path=tmp_path)
         payload = _run_async_act(behaviour, is_checkpoint=True, current_count=0, current_queue=[])
         assert isinstance(payload, EpochResetPayload)
         assert payload.successful_trade_count == 0
         assert json.loads(payload.mech_only_queue) == []
+        assert (tmp_path / TRADE_COUNT_FILENAME).read_text() == "0"
 
-    def test_payload_sender_is_agent_address(self) -> None:
+    def test_payload_sender_is_agent_address(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         """The payload is signed by the agent's address."""
-        behaviour = _make_behaviour()
+        behaviour = _make_behaviour(store_path=tmp_path)
         payload = _run_async_act(behaviour, is_checkpoint=False, current_count=0, current_queue=[])
         assert payload.sender == "test_agent"
