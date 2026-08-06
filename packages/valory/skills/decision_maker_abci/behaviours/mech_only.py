@@ -68,7 +68,10 @@ class MechOnlySelectionBehaviour(DecisionMakerBaseBehaviour):
             return False
         if bet.market != OMEN_SUBGRAPH:
             return False
-        if not bet.title or bet.yes is None or bet.no is None:
+        # ``bet.yes`` and ``bet.no`` raise ``ValueError`` when ``bet.outcomes``
+        # is ``None`` (e.g. blacklisted bets via ``blacklist_forever``).  Check
+        # ``outcomes`` directly instead of catching the property access.
+        if not bet.title or bet.outcomes is None:
             return False
         within_safe_range = (
             now
@@ -99,6 +102,9 @@ class MechOnlySelectionBehaviour(DecisionMakerBaseBehaviour):
             bet = bets_by_id.get(market_id)
             if bet is None:
                 # the market may have been resolved between periods; skip it
+                continue
+            if bet.outcomes is None:
+                # the market may have been blacklisted between periods; skip
                 continue
             prompt_params = dict(
                 question=bet.title, yes=bet.yes, no=bet.no

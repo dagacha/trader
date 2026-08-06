@@ -228,6 +228,32 @@ class TestMechOnlySelectionIsOpenForMech:
         # now is after openingTimestamp - margins -> not within safe range
         assert behaviour.is_open_for_mech(bet, now=5_000) is False
 
+    def test_outcomes_none_rejected_without_raising(self) -> None:
+        """A market with outcomes=None (e.g. blacklisted) is rejected without raising.
+
+        The real ``Bet.yes`` and ``Bet.no`` properties raise ``ValueError`` when
+        ``outcomes`` is ``None`` (set by ``blacklist_forever``).  The guard
+        checks ``bet.outcomes`` directly to avoid triggering that exception.
+        """
+        behaviour = self._make_selection_behaviour()
+        bet = MagicMock()
+        bet.id = "market_none"
+        bet.market = "omen_subgraph"
+        bet.outcomeSlotCount = BINARY_N_SLOTS
+        bet.title = "Will it rain?"
+        bet.outcomes = None
+        bet.openingTimestamp = 10_000_000_000
+        # Simulate the real Bet.yes / Bet.no: they raise ValueError when
+        # outcomes is None (via get_outcome -> raise ValueError).
+        type(bet).yes = PropertyMock(  # type: ignore[method-assign]
+            side_effect=ValueError("outcomes is None")
+        )
+        type(bet).no = PropertyMock(  # type: ignore[method-assign]
+            side_effect=ValueError("outcomes is None")
+        )
+        # Must return False, not raise ValueError
+        assert behaviour.is_open_for_mech(bet, now=0) is False
+
 
 class TestMechOnlySelectionBehaviourAsyncAct:
     """Tests for MechOnlySelectionBehaviour.async_act queue and batch logic."""
@@ -365,6 +391,55 @@ class TestMechOnlySelectionBehaviourAsyncAct:
 
         # "m_gone" was at the front of the queue but couldn't be resolved;
         # it must be dropped, leaving ["m_alive"] — not retained as ["m_gone", "m_alive"]
+        remaining = json.loads(payload.mech_only_queue)
+        assert remaining == ["m_alive"]
+        assert payload.mech_requests is None
+
+    def test_blacklisted_bet_in_queue_skipped(self) -> None:
+        """A bet that was blacklisted (outcomes=None) between periods is skipped.
+
+        The bet exists in ``self.bets`` (so it's not a dead market), but its
+        ``outcomes`` were set to ``None`` by ``blacklist_forever``.  The
+        ``_build_metadata`` method must skip it instead of crashing when
+        accessing ``bet.yes`` / ``bet.no``.
+        """
+        behaviour = _make_behaviour(MechOnlySelectionBehaviour)
+        behaviour.context.params.opening_margin = 100
+        behaviour.context.params.safe_voting_range = 3600
+        behaviour.context.params.multisend_batch_size = 1
+        behaviour.context.params.max_mech_requests_per_cycle = 10
+        behaviour.context.params.prompt_template.substitute.return_value = "prompt"
+
+        # "m_blacklisted" exists in bets but has outcomes=None
+        blacklisted = _mock_bet(bet_id="m_blacklisted")
+        blacklisted.outcomes = None
+        type(blacklisted).yes = PropertyMock(  # type: ignore[method-assign]
+            side_effect=ValueError("outcomes is None")
+        )
+        type(blacklisted).no = PropertyMock(  # type: ignore[method-assign]
+            side_effect=ValueError("outcomes is None")
+        )
+        alive = _mock_bet(bet_id="m_alive")
+        behaviour.read_bets = MagicMock()  # type: ignore[method-assign]
+        behaviour.bets = [blacklisted, alive]
+
+        with patch.object(
+            type(behaviour), "synchronized_data", new_callable=PropertyMock
+        ) as mock_sd, patch.object(
+            type(behaviour), "synced_timestamp", new_callable=PropertyMock
+        ) as mock_ts:
+            sd = MagicMock()
+            sd.mech_only_queue = ["m_blacklisted", "m_alive"]
+            sd.mech_tool = "tool1"
+            mock_sd.return_value = sd
+            mock_ts.return_value = 0
+
+            payload = _run_async_act(behaviour)
+
+        # batch_size=1 -> batch is ["m_blacklisted"], remaining is ["m_alive"]
+        # "m_blacklisted" is skipped (outcomes=None), so metadata is empty ->
+        # the dead batch is dropped (mech_requests=None), same as the
+        # resolved-market case.
         remaining = json.loads(payload.mech_only_queue)
         assert remaining == ["m_alive"]
         assert payload.mech_requests is None
