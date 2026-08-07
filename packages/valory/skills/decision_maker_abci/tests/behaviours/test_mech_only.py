@@ -531,6 +531,8 @@ class TestMechOnlySelectionToolFallback:
         requests = json.loads(payload.mech_requests)
         assert len(requests) == 1
         assert requests[0]["tool"] == "toolB"
+        # The chosen tool must be persisted so mech_interact's strict read works.
+        assert payload.mech_tool == "toolB"
 
     def test_falls_back_to_deterministic_tool_when_best_unavailable(self) -> None:
         """If the best tool is no longer offered, pick the first available one."""
@@ -548,6 +550,7 @@ class TestMechOnlySelectionToolFallback:
 
         requests = json.loads(payload.mech_requests)
         assert requests[0]["tool"] == "a_tool"
+        assert payload.mech_tool == "a_tool"
 
     def test_empty_weighted_accuracy_uses_deterministic_tool(self) -> None:
         """When the policy has no weighted accuracy yet, pick a deterministic tool."""

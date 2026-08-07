@@ -25,6 +25,7 @@ from unittest.mock import MagicMock, patch
 from packages.valory.skills.abstract_round_abci.base import (
     CollectSameUntilThresholdRound,
     VotingRound,
+    get_name,
 )
 from packages.valory.skills.decision_maker_abci.payloads import (
     MechOnlyReceivePayload,
@@ -56,6 +57,11 @@ class TestMechOnlySelectionRound:
         assert MechOnlySelectionRound.done_event == Event.DONE
         assert MechOnlySelectionRound.none_event == Event.NO_MARKETS
         assert MechOnlySelectionRound.no_majority_event == Event.NO_MAJORITY
+        # The selected tool must be persisted to the shared ``mech_tool`` key
+        # so ``mech_interact_abci``'s strict read can select a relevant mech.
+        assert (
+            get_name(SynchronizedData.mech_tool) in MechOnlySelectionRound.selection_key
+        )
 
     def test_end_block_returns_none_when_super_returns_none(self) -> None:
         """Test end_block returns None when the parent returns None."""

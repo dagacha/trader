@@ -56,6 +56,7 @@ class MechOnlySelectionRound(CollectSameUntilThresholdRound):
     selection_key: Any = (
         get_name(SynchronizedData.mech_requests),
         get_name(SynchronizedData.mech_only_queue),
+        get_name(SynchronizedData.mech_tool),
     )
     collection_key = get_name(SynchronizedData.participant_to_selection)
 

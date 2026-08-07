@@ -133,17 +133,11 @@ class MechOnlySelectionBehaviour(DecisionMakerBaseBehaviour):
         # pick a stable, deterministic tool so the request set is reproducible.
         return sorted(available)[0]
 
-    def _build_metadata(self, market_ids: List[str]) -> List[MechMetadata]:
-        """Build Mech request metadata for the given market ids."""
+    def _build_metadata(
+        self, market_ids: List[str], tool: str
+    ) -> List[MechMetadata]:
+        """Build Mech request metadata for the given market ids using ``tool``."""
         bets_by_id: Dict[str, Bet] = {bet.id: bet for bet in self.bets}
-        tool = self._select_mech_tool()
-        if tool is None:
-            self.context.logger.warning(
-                "Mech-only selection could not determine a Mech tool "
-                "(tool selection has not run and no policy/available tools "
-                "are set); skipping this batch."
-            )
-            return []
         self.context.logger.info(f"Mech-only analysis using tool {tool!r}.")
         metadata: List[MechMetadata] = []
         for market_id in market_ids:
@@ -185,7 +179,20 @@ class MechOnlySelectionBehaviour(DecisionMakerBaseBehaviour):
             batch = queue[:batch_size]
             remaining = queue[batch_size:]
 
-            metadata = self._build_metadata(batch)
+            tool = self._select_mech_tool()
+            if tool is None:
+                # No tool could be determined (tool selection has not run and
+                # no policy/available tools are set yet). Emit an empty batch
+                # so ``MechOnlySelectionRound`` routes to ``NO_MARKETS`` and
+                # the flow skips the Mech request (which requires ``mech_tool``).
+                self.context.logger.warning(
+                    "Mech-only selection could not determine a Mech tool "
+                    "(tool selection has not run and no policy/available tools "
+                    "are set); skipping this batch."
+                )
+                metadata: List[MechMetadata] = []
+            else:
+                metadata = self._build_metadata(batch, tool)
             if metadata:
                 serialized_requests = json.dumps(
                     [asdict(m) for m in metadata], sort_keys=True
@@ -202,6 +209,7 @@ class MechOnlySelectionBehaviour(DecisionMakerBaseBehaviour):
                 self.context.agent_address,
                 serialized_requests,
                 serialized_queue,
+                tool,
             )
         yield from self.finish_behaviour(payload)
 

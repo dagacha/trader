@@ -196,6 +196,7 @@ from packages.valory.skills.decision_maker_abci.payloads import (
             {
                 "mech_requests": '[{"prompt": "p"}]',
                 "mech_only_queue": '["m1", "m2"]',
+                "mech_tool": "superforcaster",
             },
         ),
         (

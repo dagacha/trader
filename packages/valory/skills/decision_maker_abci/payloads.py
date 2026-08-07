@@ -108,10 +108,18 @@ class TradeCapPayload(BaseTxPayload):
 
 @dataclass(frozen=True)
 class MechOnlySelectionPayload(BaseTxPayload):
-    """Consensus payload carrying Mech request metadata for a post-cap batch."""
+    """Consensus payload carrying Mech request metadata for a post-cap batch.
+
+    ``mech_tool`` persists the tool chosen by the post-cap flow into the shared
+    synchronized ``mech_tool`` key, so ``mech_interact_abci``'s
+    ``MechRequestBehaviour`` (which reads it strictly) can select a relevant
+    mech. In the normal flow that key is written by ``ToolSelectionRound``;
+    the mech-only path bypasses tool selection, so it must write it here.
+    """
 
     mech_requests: Optional[str]
     mech_only_queue: Optional[str]
+    mech_tool: Optional[str]
 
 
 @dataclass(frozen=True)
