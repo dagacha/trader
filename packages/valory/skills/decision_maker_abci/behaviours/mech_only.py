@@ -93,10 +93,58 @@ class MechOnlySelectionBehaviour(DecisionMakerBaseBehaviour):
             open_bets = open_bets[:max_requests]
         return [bet.id for bet in open_bets]
 
+    def _select_mech_tool(self) -> Optional[str]:
+        """Return a Mech tool to use for post-cap analysis.
+
+        ``MechOnlySelectionRound`` is only reached after the trade cap fires,
+        and the FSM gets there without passing through ``ToolSelectionRound``.
+        Consequently ``mech_tool`` is not set for the period -- and it is
+        *always* unset on a fresh agent restart, where the period counter is
+        back at 0.  Reading it via ``get_strict`` therefore raises.
+
+        Fall back to the e-greedy policy's best tool, restricted to the
+        currently available tools, mirroring how ``ToolSelectionBehaviour``
+        would pick one.  Both ``policy`` and ``available_mech_tools`` are
+        cross-period-persisted (and rehydrated from disk by the storage
+        manager), so they are populated in the capped period even right after
+        a restart.  Returns ``None`` when no tool can be determined.
+        """
+        if self.synchronized_data.has_tool_selection_run:
+            return self.synchronized_data.mech_tool
+
+        if not self.synchronized_data.is_policy_set:
+            return None
+
+        try:
+            available = self.synchronized_data.available_mech_tools
+            policy = self.synchronized_data.policy
+        except ValueError:
+            return None
+
+        if not available:
+            return None
+
+        if policy.weighted_accuracy:
+            best = policy.best_tool
+            if best is not None and best in available:
+                return best
+
+        # No usable policy signal, or the best tool is no longer offered;
+        # pick a stable, deterministic tool so the request set is reproducible.
+        return sorted(available)[0]
+
     def _build_metadata(self, market_ids: List[str]) -> List[MechMetadata]:
         """Build Mech request metadata for the given market ids."""
         bets_by_id: Dict[str, Bet] = {bet.id: bet for bet in self.bets}
-        tool = self.synchronized_data.mech_tool
+        tool = self._select_mech_tool()
+        if tool is None:
+            self.context.logger.warning(
+                "Mech-only selection could not determine a Mech tool "
+                "(tool selection has not run and no policy/available tools "
+                "are set); skipping this batch."
+            )
+            return []
+        self.context.logger.info(f"Mech-only analysis using tool {tool!r}.")
         metadata: List[MechMetadata] = []
         for market_id in market_ids:
             bet = bets_by_id.get(market_id)

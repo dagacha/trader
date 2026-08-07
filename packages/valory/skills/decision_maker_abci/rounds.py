@@ -177,13 +177,11 @@ class DecisionMakerAbciApp(AbciApp[Event]):
             - no markets: 45.
             - no majority: 4.
             - round timeout: 4.
-            - none: 42.
         5. MechOnlyReceiveRound
             - done: 45.
             - no markets: 45.
             - no majority: 5.
             - round timeout: 5.
-            - none: 42.
         6. EpochResetRound
             - done: 7.
             - no majority: 6.
@@ -442,7 +440,6 @@ class DecisionMakerAbciApp(AbciApp[Event]):
             Event.NO_MARKETS: FinishedMechOnlyRound,
             Event.NO_MAJORITY: MechOnlySelectionRound,
             Event.ROUND_TIMEOUT: MechOnlySelectionRound,
-            Event.NONE: ImpossibleRound,
         },
         MechOnlyReceiveRound: {
             # One batch per cycle: after consuming a Mech delivery, end the
@@ -452,7 +449,6 @@ class DecisionMakerAbciApp(AbciApp[Event]):
             Event.NO_MARKETS: FinishedMechOnlyRound,
             Event.NO_MAJORITY: MechOnlyReceiveRound,
             Event.ROUND_TIMEOUT: MechOnlyReceiveRound,
-            Event.NONE: ImpossibleRound,
         },
         EpochResetRound: {
             Event.DONE: MechResponseRouterRound,

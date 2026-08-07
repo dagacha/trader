@@ -287,6 +287,7 @@ class TestMechOnlySelectionBehaviourAsyncAct:
         ) as mock_ts:
             sd = MagicMock()
             sd.mech_only_queue = []
+            sd.has_tool_selection_run = True
             sd.mech_tool = "tool1"
             mock_sd.return_value = sd
             mock_ts.return_value = 10_000_000_000 - 100_000
@@ -303,6 +304,36 @@ class TestMechOnlySelectionBehaviourAsyncAct:
         assert len(requests) == 1
         assert requests[0]["prompt"] == "prompt"
         assert requests[0]["tool"] == "tool1"
+
+    def test_builds_queue_with_unbounded_requests(self) -> None:
+        """max_mech_requests_per_cycle<=0 means no per-cycle cap on the queue."""
+        behaviour = _make_behaviour(MechOnlySelectionBehaviour)
+        behaviour.context.params.opening_margin = 100
+        behaviour.context.params.safe_voting_range = 3600
+        behaviour.context.params.multisend_batch_size = 1
+        behaviour.context.params.max_mech_requests_per_cycle = 0
+        behaviour.context.params.prompt_template.substitute.return_value = "prompt"
+
+        behaviour.read_bets = MagicMock()  # type: ignore[method-assign]
+        behaviour.bets = [_mock_bet(bet_id="m_a"), _mock_bet(bet_id="m_b")]
+
+        with patch.object(
+            type(behaviour), "synchronized_data", new_callable=PropertyMock
+        ) as mock_sd, patch.object(
+            type(behaviour), "synced_timestamp", new_callable=PropertyMock
+        ) as mock_ts:
+            sd = MagicMock()
+            sd.mech_only_queue = []
+            sd.has_tool_selection_run = True
+            sd.mech_tool = "tool1"
+            mock_sd.return_value = sd
+            mock_ts.return_value = 10_000_000_000 - 100_000
+
+            payload = _run_async_act(behaviour)
+
+        # both markets survive (no per-cycle cap); batch_size=1 consumes m_a,
+        # leaving m_b queued.
+        assert json.loads(payload.mech_only_queue) == ["m_b"]
 
     def test_uses_persisted_queue_when_non_empty(self) -> None:
         """When a persisted queue exists, it is used instead of rebuilding."""
@@ -324,6 +355,7 @@ class TestMechOnlySelectionBehaviourAsyncAct:
         ) as mock_ts:
             sd = MagicMock()
             sd.mech_only_queue = ["m_x"]
+            sd.has_tool_selection_run = True
             sd.mech_tool = "tool1"
             mock_sd.return_value = sd
             mock_ts.return_value = 0
@@ -355,6 +387,7 @@ class TestMechOnlySelectionBehaviourAsyncAct:
         ) as mock_ts:
             sd = MagicMock()
             sd.mech_only_queue = []
+            sd.has_tool_selection_run = True
             sd.mech_tool = "tool1"
             mock_sd.return_value = sd
             mock_ts.return_value = 0
@@ -383,6 +416,7 @@ class TestMechOnlySelectionBehaviourAsyncAct:
         ) as mock_ts:
             sd = MagicMock()
             sd.mech_only_queue = ["m_gone", "m_alive"]
+            sd.has_tool_selection_run = True
             sd.mech_tool = "tool1"
             mock_sd.return_value = sd
             mock_ts.return_value = 0
@@ -430,6 +464,7 @@ class TestMechOnlySelectionBehaviourAsyncAct:
         ) as mock_ts:
             sd = MagicMock()
             sd.mech_only_queue = ["m_blacklisted", "m_alive"]
+            sd.has_tool_selection_run = True
             sd.mech_tool = "tool1"
             mock_sd.return_value = sd
             mock_ts.return_value = 0
@@ -442,4 +477,134 @@ class TestMechOnlySelectionBehaviourAsyncAct:
         # resolved-market case.
         remaining = json.loads(payload.mech_only_queue)
         assert remaining == ["m_alive"]
+        assert payload.mech_requests is None
+
+
+class TestMechOnlySelectionToolFallback:
+    """Tests for tool selection when ToolSelectionRound was bypassed.
+
+    In mech-only mode the FSM reaches ``MechOnlySelectionRound`` without
+    passing through ``ToolSelectionRound``, so ``mech_tool`` is unset (always
+    the case right after a restart, at period 0).  Reading it strictly used to
+    raise ``ValueError`` and crash the agent.  These tests cover the policy
+    fallback that keeps the capped flow running.
+    """
+
+    def _make_selection_behaviour(self, sd):  # type: ignore[no-untyped-def]
+        """Return a selection behaviour wired to build a single-market batch."""
+        behaviour = _make_behaviour(MechOnlySelectionBehaviour)
+        behaviour.context.params.opening_margin = 100
+        behaviour.context.params.safe_voting_range = 3600
+        behaviour.context.params.multisend_batch_size = 1
+        behaviour.context.params.max_mech_requests_per_cycle = 10
+        behaviour.context.params.prompt_template.substitute.return_value = "prompt"
+        behaviour.read_bets = MagicMock()  # type: ignore[method-assign]
+        behaviour.bets = [_mock_bet(bet_id="m_a")]
+        return behaviour
+
+    def _run(self, sd):  # type: ignore[no-untyped-def]
+        """Drive async_act with the given synchronized_data mock."""
+        behaviour = self._make_selection_behaviour(sd)
+        with patch.object(
+            type(behaviour), "synchronized_data", new_callable=PropertyMock
+        ) as mock_sd, patch.object(
+            type(behaviour), "synced_timestamp", new_callable=PropertyMock
+        ) as mock_ts:
+            mock_sd.return_value = sd
+            mock_ts.return_value = 0
+            return _run_async_act(behaviour)
+
+    def test_uses_policy_best_tool_when_selection_not_run(self) -> None:
+        """When mech_tool is unset, the policy's best available tool is used."""
+        policy = MagicMock()
+        policy.weighted_accuracy = {"toolA": 0.1, "toolB": 0.9}
+        policy.best_tool = "toolB"
+        sd = MagicMock()
+        sd.mech_only_queue = ["m_a"]
+        sd.has_tool_selection_run = False
+        sd.is_policy_set = True
+        sd.available_mech_tools = {"toolA", "toolB"}
+        sd.policy = policy
+
+        payload = self._run(sd)
+
+        requests = json.loads(payload.mech_requests)
+        assert len(requests) == 1
+        assert requests[0]["tool"] == "toolB"
+
+    def test_falls_back_to_deterministic_tool_when_best_unavailable(self) -> None:
+        """If the best tool is no longer offered, pick the first available one."""
+        policy = MagicMock()
+        policy.weighted_accuracy = {"gone": 0.9}
+        policy.best_tool = "gone"
+        sd = MagicMock()
+        sd.mech_only_queue = ["m_a"]
+        sd.has_tool_selection_run = False
+        sd.is_policy_set = True
+        sd.available_mech_tools = {"z_tool", "a_tool"}
+        sd.policy = policy
+
+        payload = self._run(sd)
+
+        requests = json.loads(payload.mech_requests)
+        assert requests[0]["tool"] == "a_tool"
+
+    def test_empty_weighted_accuracy_uses_deterministic_tool(self) -> None:
+        """When the policy has no weighted accuracy yet, pick a deterministic tool."""
+        policy = MagicMock()
+        policy.weighted_accuracy = {}
+        sd = MagicMock()
+        sd.mech_only_queue = ["m_a"]
+        sd.has_tool_selection_run = False
+        sd.is_policy_set = True
+        sd.available_mech_tools = {"z_tool", "a_tool"}
+        sd.policy = policy
+
+        payload = self._run(sd)
+
+        requests = json.loads(payload.mech_requests)
+        assert requests[0]["tool"] == "a_tool"
+
+    def test_no_policy_drops_batch(self) -> None:
+        """With no tool_selection and no policy, the batch is dropped (no crash)."""
+        sd = MagicMock()
+        sd.mech_only_queue = ["m_a"]
+        sd.has_tool_selection_run = False
+        sd.is_policy_set = False
+
+        payload = self._run(sd)
+
+        assert payload.mech_requests is None
+
+    def test_empty_available_tools_drops_batch(self) -> None:
+        """With a policy set but no available tools, the batch is dropped."""
+        sd = MagicMock()
+        sd.mech_only_queue = ["m_a"]
+        sd.has_tool_selection_run = False
+        sd.is_policy_set = True
+        sd.available_mech_tools = set()
+        sd.policy = MagicMock()
+
+        payload = self._run(sd)
+
+        assert payload.mech_requests is None
+
+    def test_available_tools_lookup_raises_drops_batch(self) -> None:
+        """If reading available_mech_tools/policy raises, the batch is dropped."""
+
+        # A dedicated MagicMock subclass so the raising PropertyMock is scoped
+        # to this instance's type and does not leak into other MagicMocks.
+        class _RaisingSD(MagicMock):
+            pass
+
+        sd = _RaisingSD()
+        sd.mech_only_queue = ["m_a"]
+        sd.has_tool_selection_run = False
+        sd.is_policy_set = True
+        type(sd).available_mech_tools = PropertyMock(  # type: ignore[assignment]
+            side_effect=ValueError("not set")
+        )
+
+        payload = self._run(sd)
+
         assert payload.mech_requests is None

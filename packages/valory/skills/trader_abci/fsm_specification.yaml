@@ -249,12 +249,10 @@ transition_func:
     (MechInformationRound, NO_MAJORITY): MechInformationRound
     (MechInformationRound, ROUND_TIMEOUT): MechInformationRound
     (MechOnlyReceiveRound, DONE): CallCheckpointRound
-    (MechOnlyReceiveRound, NONE): ImpossibleRound
     (MechOnlyReceiveRound, NO_MAJORITY): MechOnlyReceiveRound
     (MechOnlyReceiveRound, NO_MARKETS): CallCheckpointRound
     (MechOnlyReceiveRound, ROUND_TIMEOUT): MechOnlyReceiveRound
     (MechOnlySelectionRound, DONE): MechRequestRound
-    (MechOnlySelectionRound, NONE): ImpossibleRound
     (MechOnlySelectionRound, NO_MAJORITY): MechOnlySelectionRound
     (MechOnlySelectionRound, NO_MARKETS): CallCheckpointRound
     (MechOnlySelectionRound, ROUND_TIMEOUT): MechOnlySelectionRound

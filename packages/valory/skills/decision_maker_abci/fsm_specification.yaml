@@ -171,12 +171,10 @@ transition_func:
     (HandleFailedTxRound, NO_MAJORITY): HandleFailedTxRound
     (HandleFailedTxRound, NO_OP): RedeemRound
     (MechOnlyReceiveRound, DONE): FinishedMechOnlyRound
-    (MechOnlyReceiveRound, NONE): ImpossibleRound
     (MechOnlyReceiveRound, NO_MAJORITY): MechOnlyReceiveRound
     (MechOnlyReceiveRound, NO_MARKETS): FinishedMechOnlyRound
     (MechOnlyReceiveRound, ROUND_TIMEOUT): MechOnlyReceiveRound
     (MechOnlySelectionRound, DONE): FinishedMechOnlyRequestRound
-    (MechOnlySelectionRound, NONE): ImpossibleRound
     (MechOnlySelectionRound, NO_MAJORITY): MechOnlySelectionRound
     (MechOnlySelectionRound, NO_MARKETS): FinishedMechOnlyRound
     (MechOnlySelectionRound, ROUND_TIMEOUT): MechOnlySelectionRound
