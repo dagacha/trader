@@ -611,3 +611,41 @@ class TestMechOnlySelectionToolFallback:
         payload = self._run(sd)
 
         assert payload.mech_requests is None
+
+    def test_picks_served_tool_when_no_policy_set(self) -> None:
+        """Mech-only picks a served tool even when no policy is persisted.
+
+        ``policy`` is only written to synchronized data when the redeem flow
+        finds redeemable winnings; on a fresh/empty redeem cycle ("No winnings
+        to redeem") it is absent, so selection must fall back to the tools
+        actually served by the fetched mechs instead of bailing out.
+        """
+        sd = MagicMock()
+        sd.mech_only_queue = ["m_a"]
+        sd.has_tool_selection_run = False
+        sd.is_policy_set = False
+        sd.available_mech_tools = set()
+        sd.mech_tools = {"factual_research", "superforcaster"}
+
+        payload = self._run(sd)
+
+        requests = json.loads(payload.mech_requests)
+        assert len(requests) == 1
+        # deterministic pick among the served tools
+        assert requests[0]["tool"] == "factual_research"
+        assert payload.mech_tool == "factual_research"
+
+    def test_prefers_served_tool_over_unserved_curated(self) -> None:
+        """A curated tool no mech serves must not win over a served one."""
+        sd = MagicMock()
+        sd.mech_only_queue = ["m_a"]
+        sd.has_tool_selection_run = False
+        sd.is_policy_set = False
+        sd.available_mech_tools = {"only_curated_no_mech"}
+        sd.mech_tools = {"superforcaster"}
+
+        payload = self._run(sd)
+
+        requests = json.loads(payload.mech_requests)
+        assert requests[0]["tool"] == "superforcaster"
+        assert payload.mech_tool == "superforcaster"

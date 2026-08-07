@@ -102,36 +102,56 @@ class MechOnlySelectionBehaviour(DecisionMakerBaseBehaviour):
         *always* unset on a fresh agent restart, where the period counter is
         back at 0.  Reading it via ``get_strict`` therefore raises.
 
-        Fall back to the e-greedy policy's best tool, restricted to the
-        currently available tools, mirroring how ``ToolSelectionBehaviour``
-        would pick one.  Both ``policy`` and ``available_mech_tools`` are
-        cross-period-persisted (and rehydrated from disk by the storage
-        manager), so they are populated in the capped period even right after
-        a restart.  Returns ``None`` when no tool can be determined.
+        Pick a tool that is actually on offer.  Prefer the e-greedy policy's
+        best tool when a policy is available and still offers one of the
+        candidates; otherwise fall back to a stable, deterministic tool so
+        the request set is reproducible.
+
+        The tool selection is deliberately **not** gated on the policy being
+        set: ``policy`` is only written to synchronized data when the redeem
+        flow finds redeemable winnings, so on an empty redeem cycle ("No
+        winnings to redeem") there is no persisted policy to consult and a
+        tool must still be chosen.  Candidate tools come from the curated
+        set (``available_mech_tools``) and the tools actually served by the
+        fetched mechs (``mech_tools``), which ``MechInformationRound``
+        refreshes every period.  Returns ``None`` only when no tool at all is
+        on offer.
         """
         if self.synchronized_data.has_tool_selection_run:
             return self.synchronized_data.mech_tool
 
-        if not self.synchronized_data.is_policy_set:
+        def safe_tools(accessor: Any):  # pragma: no cover
+            """Resolve a tool-set accessor, tolerating an unset synced key."""
+            try:
+                return set(accessor())
+            except (TypeError, ValueError):
+                return set()
+
+        available = safe_tools(lambda: self.synchronized_data.available_mech_tools)
+        served = safe_tools(lambda: self.synchronized_data.mech_tools)
+
+        # Prefer tools both curated and served; otherwise prefer the served
+        # set (guarantees the chosen tool has at least one mech to route to),
+        # falling back to the curated set when the registry is empty.
+        candidates = (available & served) or served or available
+        if not candidates:
             return None
 
-        try:
-            available = self.synchronized_data.available_mech_tools
-            policy = self.synchronized_data.policy
-        except ValueError:
-            return None
+        policy = None
+        if self.synchronized_data.is_policy_set:
+            try:
+                policy = self.synchronized_data.policy
+            except ValueError:
+                policy = None
 
-        if not available:
-            return None
-
-        if policy.weighted_accuracy:
+        if policy is not None and policy.weighted_accuracy:
             best = policy.best_tool
-            if best is not None and best in available:
+            if best is not None and best in candidates:
                 return best
 
         # No usable policy signal, or the best tool is no longer offered;
         # pick a stable, deterministic tool so the request set is reproducible.
-        return sorted(available)[0]
+        return sorted(candidates)[0]
 
     def _build_metadata(
         self, market_ids: List[str], tool: str
