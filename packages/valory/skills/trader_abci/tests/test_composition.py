@@ -255,10 +255,17 @@ def test_mech_only_finished_routes_to_checkpoint() -> None:
     assert abci_app_transition_mapping[FinishedMechOnlyRound] is CallCheckpointRound
 
 
-def test_mech_response_routes_through_epoch_reset() -> None:
-    """Mech responses enter the decision maker through EpochResetRound, then MechResponseRouterRound."""
+def test_mech_response_routes_to_router() -> None:
+    """Mech responses enter the decision maker straight through MechResponseRouterRound.
+
+    The epoch-cap reset no longer lives on this mid-cycle path; it runs at
+    the start of each cycle (RandomnessRound -> EpochResetRound -> TradeCapRound).
+    """
     from packages.valory.skills.mech_interact_abci.states.final_states import (
         FinishedMechResponseRound,
     )
 
-    assert abci_app_transition_mapping[FinishedMechResponseRound] is EpochResetRound
+    assert (
+        abci_app_transition_mapping[FinishedMechResponseRound]
+        is MechResponseRouterRound
+    )

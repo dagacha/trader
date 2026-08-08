@@ -146,7 +146,7 @@ class DecisionMakerAbciApp(AbciApp[Event]):
 
     Initial round: CheckBenchmarkingModeRound
 
-    Initial states: {CheckBenchmarkingModeRound, DecisionRequestRound, EpochResetRound, HandleFailedTxRound, OmenWithdrawRound, PolymarketBetPlacementRound, PolymarketPostSetApprovalRound, PolymarketWithdrawRound, PolymarketWithdrawTopUpRound, PostBetUpdateRound, PostOmenWithdrawRound, RandomnessRound, RedeemRouterRound, TradeCapRound, TradeCountRound}
+    Initial states: {CheckBenchmarkingModeRound, DecisionRequestRound, HandleFailedTxRound, MechResponseRouterRound, OmenWithdrawRound, PolymarketBetPlacementRound, PolymarketPostSetApprovalRound, PolymarketWithdrawRound, PolymarketWithdrawTopUpRound, PostBetUpdateRound, PostOmenWithdrawRound, RandomnessRound, RedeemRouterRound, TradeCapRound, TradeCountRound}
 
     Transition states:
         0. CheckBenchmarkingModeRound
@@ -157,12 +157,12 @@ class DecisionMakerAbciApp(AbciApp[Event]):
             - round timeout: 0.
             - none: 42.
         1. BenchmarkingRandomnessRound
-            - done: 3.
+            - done: 6.
             - round timeout: 1.
             - no majority: 1.
             - none: 42.
         2. RandomnessRound
-            - done: 3.
+            - done: 6.
             - round timeout: 2.
             - no majority: 2.
             - none: 42.
@@ -183,7 +183,7 @@ class DecisionMakerAbciApp(AbciApp[Event]):
             - no majority: 5.
             - round timeout: 5.
         6. EpochResetRound
-            - done: 7.
+            - done: 3.
             - no majority: 6.
             - round timeout: 6.
             - none: 42.
@@ -384,13 +384,15 @@ class DecisionMakerAbciApp(AbciApp[Event]):
         CheckBenchmarkingModeRound,
         RandomnessRound,
         HandleFailedTxRound,
-        EpochResetRound,
         RedeemRouterRound,
         PolymarketPostSetApprovalRound,
         DecisionRequestRound,
         TradeCountRound,
         TradeCapRound,
         PostBetUpdateRound,
+        # Reached mid-cycle from mech_interact_abci via the composed
+        # `FinishedMechResponseRound -> MechResponseRouterRound` edge.
+        MechResponseRouterRound,
         PolymarketWithdrawRound,
         OmenWithdrawRound,
         PostOmenWithdrawRound,
@@ -417,13 +419,16 @@ class DecisionMakerAbciApp(AbciApp[Event]):
             Event.NONE: ImpossibleRound,
         },
         BenchmarkingRandomnessRound: {
-            Event.DONE: TradeCapRound,
+            # Run the epoch-cap reset at the start of every decision cycle,
+            # before the cap is evaluated, so a reset from the previous
+            # cycle's checkpoint applies within this cycle (no one-cycle lag).
+            Event.DONE: EpochResetRound,
             Event.ROUND_TIMEOUT: BenchmarkingRandomnessRound,
             Event.NO_MAJORITY: BenchmarkingRandomnessRound,
             Event.NONE: ImpossibleRound,
         },
         RandomnessRound: {
-            Event.DONE: TradeCapRound,
+            Event.DONE: EpochResetRound,
             Event.ROUND_TIMEOUT: RandomnessRound,
             Event.NO_MAJORITY: RandomnessRound,
             Event.NONE: ImpossibleRound,
@@ -451,7 +456,9 @@ class DecisionMakerAbciApp(AbciApp[Event]):
             Event.ROUND_TIMEOUT: MechOnlyReceiveRound,
         },
         EpochResetRound: {
-            Event.DONE: MechResponseRouterRound,
+            # Reset the trade cap / mech-only queue when the staking skill
+            # detected an epoch change. Runs before TradeCapRound each cycle.
+            Event.DONE: TradeCapRound,
             Event.NO_MAJORITY: EpochResetRound,
             Event.ROUND_TIMEOUT: EpochResetRound,
             Event.NONE: ImpossibleRound,

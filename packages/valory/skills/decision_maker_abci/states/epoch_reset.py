@@ -35,14 +35,16 @@ from packages.valory.skills.decision_maker_abci.states.base import (
 class EpochResetRound(CollectSameUntilThresholdRound):
     """Reset the trade counter and Mech-only queue when a new staking epoch begins.
 
-    This round runs at the start of every decision-maker cycle (it is the
-    composition entry point after each Mech response delivery).  When the
-    staking skill's ``is_checkpoint_reached`` flag is ``True`` — set at the
-    end of the previous cycle when an on-chain checkpoint was detected —
-    the round writes ``successful_trade_count = 0`` and an empty
-    ``mech_only_queue``, effectively lifting the cap for the new epoch.
-    When the flag is ``False`` the round is a no-op: it re-writes the
-    existing values unchanged.
+    This round runs at the start of every decision-maker cycle, immediately
+    after randomness and *before* ``TradeCapRound`` evaluates the cap, so a
+    reset observed in the previous cycle's checkpoint applies within this
+    cycle (no one-cycle lag).  When the staking skill's
+    ``is_checkpoint_reached`` flag is ``True`` — set at the end of the
+    previous cycle when an on-chain checkpoint was detected — the round
+    writes ``successful_trade_count = 0`` and an empty ``mech_only_queue``,
+    effectively lifting the cap for the new epoch.  When the flag is
+    ``False`` the round is a no-op: it re-writes the existing values
+    unchanged.
     """
 
     payload_class = EpochResetPayload

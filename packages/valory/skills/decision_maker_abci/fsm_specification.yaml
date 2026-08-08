@@ -60,8 +60,8 @@ label: DecisionMakerAbciApp
 start_states:
 - CheckBenchmarkingModeRound
 - DecisionRequestRound
-- EpochResetRound
 - HandleFailedTxRound
+- MechResponseRouterRound
 - OmenWithdrawRound
 - PolymarketBetPlacementRound
 - PolymarketPostSetApprovalRound
@@ -128,7 +128,7 @@ states:
 - TradeCountRound
 - WithdrawalIdleRound
 transition_func:
-    (BenchmarkingRandomnessRound, DONE): TradeCapRound
+    (BenchmarkingRandomnessRound, DONE): EpochResetRound
     (BenchmarkingRandomnessRound, NONE): ImpossibleRound
     (BenchmarkingRandomnessRound, NO_MAJORITY): BenchmarkingRandomnessRound
     (BenchmarkingRandomnessRound, ROUND_TIMEOUT): BenchmarkingRandomnessRound
@@ -163,7 +163,7 @@ transition_func:
     (DecisionRequestRound, NO_MAJORITY): DecisionRequestRound
     (DecisionRequestRound, ROUND_TIMEOUT): DecisionRequestRound
     (DecisionRequestRound, SLOTS_UNSUPPORTED_ERROR): BlacklistingRound
-    (EpochResetRound, DONE): MechResponseRouterRound
+    (EpochResetRound, DONE): TradeCapRound
     (EpochResetRound, NONE): ImpossibleRound
     (EpochResetRound, NO_MAJORITY): EpochResetRound
     (EpochResetRound, ROUND_TIMEOUT): EpochResetRound
@@ -257,7 +257,7 @@ transition_func:
     (PostOmenWithdrawRound, NO_MAJORITY): PostOmenWithdrawRound
     (PostOmenWithdrawRound, WITHDRAWAL_DONE): WithdrawalIdleRound
     (PostOmenWithdrawRound, WITHDRAWAL_ROUND_TIMEOUT): WithdrawalIdleRound
-    (RandomnessRound, DONE): TradeCapRound
+    (RandomnessRound, DONE): EpochResetRound
     (RandomnessRound, NONE): ImpossibleRound
     (RandomnessRound, NO_MAJORITY): RandomnessRound
     (RandomnessRound, ROUND_TIMEOUT): RandomnessRound
