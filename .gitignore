@@ -12,7 +12,6 @@ packages/valory/connections/x402/
 packages/valory/connections/genai/
 
 packages/valory/skills/abstract_abci/
-packages/valory/skills/abstract_round_abci/
 packages/valory/skills/mech_interact_abci/
 packages/valory/skills/registration_abci/
 packages/valory/skills/reset_pause_abci/
