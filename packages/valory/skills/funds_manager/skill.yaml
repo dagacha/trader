@@ -1,0 +1,42 @@
+name: funds_manager
+author: valory
+version: 0.1.0
+type: skill
+description: A skill to track agent funds.
+license: Apache-2.0
+aea_version: '>=2.0.0, <3.0.0'
+fingerprint:
+  __init__.py: bafybeicr4ibak7vr4f7zxg7u3jtwrmg6ttdjxwhtgs3medufq4hct7mbrm
+  behaviours.py: bafybeiaig47evp5scqsz7vm3d7pyhw4bipovhtjht6ukna2nsitlvgdfaa
+  models.py: bafybeidhhijb2b7exaknbj3lzf7cdbg3frt7m3zzodg2z7fwgqsjoq6aba
+fingerprint_ignore_patterns:
+- tests/**
+- test_tools/**
+connections: []
+contracts: []
+protocols: []
+skills:
+- valory/abstract_round_abci:0.1.0:bafybeid4gypmf5qntlswl73ajva7aspbuf4b5mqxstsnlaexbexlioc2ve
+behaviours:
+  funds_manager:
+    args: {}
+    class_name: FundsManagerBehaviour
+handlers: {}
+models:
+  params:
+    args:
+      fund_requirements: {}
+      rpc_urls: {}
+      safe_contract_addresses: {}
+      rpc_timeout_seconds: 10
+      rpc_max_retries: 2
+    class_name: Params
+dependencies:
+  web3: {}
+  w3multicall: {}
+  pydantic: {}
+  eth-abi: {}
+  eth-utils: {}
+  requests: {}
+is_abstract: false
+customs: []
