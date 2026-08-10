@@ -31,8 +31,8 @@ protocols:
 - valory/srr:0.1.0:bafybeibfs6osw7guctdpollf4iwt4vhd6yk7ai34tqk5djuxtgowjwdjb4
 contracts: []
 skills:
-- valory/abstract_round_abci:0.1.0:bafybeifkxnvvgsldkb4rgejsoon2mvrmrnl7asy2nhenwss7hpwg3myflu
-- valory/agent_performance_summary_abci:0.1.0:bafybeidi2b6srtakjylczapjnqzmgh6o5l7jrveamktlndf2xuerz5gppm
+- valory/abstract_round_abci:0.1.0:bafybeig3gt7vco6sicbsm3emjb36nyjuu6y6nl54gbyyceztzonlei3bai
+- valory/agent_performance_summary_abci:0.1.0:bafybeihvlctrc35bzvnvmihiugi53opuovlrvvt42k3fgr6g7uuyretjjm
 handlers:
   abci:
     args: {}

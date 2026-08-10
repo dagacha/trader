@@ -191,13 +191,13 @@ protocols:
 - valory/http:1.0.0:bafybeidxkp3vga7t6x2pbt2tpkgyaxa5bgpdgryao54py7w3yxyzr7neoy
 - valory/srr:0.1.0:bafybeibfs6osw7guctdpollf4iwt4vhd6yk7ai34tqk5djuxtgowjwdjb4
 skills:
-- valory/abstract_round_abci:0.1.0:bafybeifkxnvvgsldkb4rgejsoon2mvrmrnl7asy2nhenwss7hpwg3myflu
-- valory/market_manager_abci:0.1.0:bafybeig3ak2eoimxwuupybde4napyi2jlf7pxk35se2zclikete2ni5hti
-- valory/transaction_settlement_abci:0.1.0:bafybeihizaapype5sz7vlosms3nfo6jzfj4ujycuf5uthviq2otvmw6f6m
-- valory/mech_interact_abci:0.1.0:bafybeifbkpgivxjexlhrptn2iaju7vyzeusevvucsin6tbjwveniykad2q
-- valory/staking_abci:0.1.0:bafybeia6csjgex5zxdt6vymiaengu75lyzjdgfrnp65ewlghthiniquhje
-- valory/agent_performance_summary_abci:0.1.0:bafybeidi2b6srtakjylczapjnqzmgh6o5l7jrveamktlndf2xuerz5gppm
-- valory/chatui_abci:0.1.0:bafybeiazlrn2su5p5sql4u65vkuawqg54kzqpgtvmg2wc3tjalnxmdcqua
+- valory/abstract_round_abci:0.1.0:bafybeig3gt7vco6sicbsm3emjb36nyjuu6y6nl54gbyyceztzonlei3bai
+- valory/market_manager_abci:0.1.0:bafybeibazmvfxp6bg5lcx6xdmbdeuecagdsz4tsyy3aftfnxjmsttunam4
+- valory/transaction_settlement_abci:0.1.0:bafybeibdjtgophgrmbd4uvotdnmdgcswcc6rpp6i5hurfzjjzch7smonbm
+- valory/mech_interact_abci:0.1.0:bafybeibvjkznhsjtqzr37qzxril3nscrn7groyeasnfwrp2xe7suek6lp4
+- valory/staking_abci:0.1.0:bafybeiff2qf5xfjyehi3tmvo5mong6tvght6guiaxlvu6tvkx7aedvzope
+- valory/agent_performance_summary_abci:0.1.0:bafybeihvlctrc35bzvnvmihiugi53opuovlrvvt42k3fgr6g7uuyretjjm
+- valory/chatui_abci:0.1.0:bafybeie24nnpvtwqv4ded6k72inb2m3ca2xuahppsipxnlr3ajh4osy4oi
 behaviours:
   main:
     args: {}
