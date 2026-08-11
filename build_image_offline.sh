@@ -10,6 +10,8 @@
 # hits the Autonolas IPFS RPC — flaky for large cold third_party DAGs (504/hang).
 # This script fetches the agent OFFLINE from the local packages registry, then a
 # custom Dockerfile COPYs it in. Only PyPI is hit during the build (reliable).
+#   NOTE: step 1 (`packages sync`) still reaches the Autonolas registry (needs network
+#   on a fresh box); only the Docker build itself is IPFS-free — that is the real win.
 #
 # Usage:
 #   ./build_image_offline.sh                                        # default option-2 agent
@@ -26,6 +28,7 @@ DEFAULT_SERVICE_CID="bafybeiguxxx4me5wahgpjhghevihaopiak5feg634zgrus3fxwocfz2sea
 AGENT="${2:-$DEFAULT_AGENT}"
 BASE_IMAGE="valory/open-autonomy:0.21.26"
 AGENT_HASH="${AGENT##*:}"
+[[ "$AGENT_HASH" =~ ^bafy ]] || { echo "ERROR: '$AGENT' has no bafy... hash (got '$AGENT_HASH'); pass 'valory/trader:0.1.0:<hash>'" >&2; exit 1; }
 IMAGE_TAG="valory/oar-trader:${AGENT_HASH}"
 BUILD_DIR="$(mktemp -d /tmp/oar-build.XXXXXX)"
 trap 'rm -rf "$BUILD_DIR"' EXIT
@@ -65,6 +68,8 @@ echo ">> aea fetch --local (offline, no IPFS) ..."
 rm -rf "$BUILD_DIR/agent/.build"   # let the image rebuild it cleanly
 
 # 4. custom Dockerfile: COPY the pre-fetched agent in (no `aea fetch`, no IPFS).
+#    Mirrors open-autonomy 0.21.26's generated `build-image` template; only the
+#    `aea fetch` step is replaced by the pre-vendored COPY. Re-sync if upstream changes.
 cat > "$BUILD_DIR/Dockerfile" <<EOF
 FROM ${BASE_IMAGE}
 ARG AUTHOR=valory
@@ -93,11 +98,12 @@ echo "   OK: BLOCKS_STALL_TOLERANCE == 300"
 
 echo
 echo "## DONE. Image: $IMAGE_TAG"
-echo "## Next (deploy): set your quickstart config \"hash\" to the matching service CID"
+echo "## Deploy happens in the SEPARATE quickstart repo (dagacha/quickstart), not this one:"
+echo "##   set its configs/config_predict_trader.json \"hash\" to the matching service CID"
 if [ "$AGENT" = "$DEFAULT_AGENT" ]; then
   echo "##   service CID: $DEFAULT_SERVICE_CID"
 else
   echo "##   agent overridden — supply the SERVICE CID matching $AGENT yourself"
   echo "##   (it is NOT $DEFAULT_SERVICE_CID, which pairs with the default agent)"
 fi
-echo "##   then:  bash run_service_cron.sh   (or ./run_service.sh configs/config_predict_trader.json)"
+echo "##   then run that repo's run_service_cron.sh / run_service.sh (absent from THIS repo)."
