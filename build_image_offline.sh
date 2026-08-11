@@ -20,10 +20,12 @@
 set -euo pipefail
 
 REPO="${1:-$(cd "$(dirname "$0")" && pwd)}"
-AGENT="${2:-valory/trader:0.1.0:bafybeiasw73g6en52r2645el5qkxockkm736ca45mdqaulmqg3yzmjjqwa}"
+DEFAULT_AGENT="valory/trader:0.1.0:bafybeiasw73g6en52r2645el5qkxockkm736ca45mdqaulmqg3yzmjjqwa"
+# service CID corresponding to DEFAULT_AGENT (valory/trader_pearl in packages.json)
+DEFAULT_SERVICE_CID="bafybeiguxxx4me5wahgpjhghevihaopiak5feg634zgrus3fxwocfz2sea"
+AGENT="${2:-$DEFAULT_AGENT}"
 BASE_IMAGE="valory/open-autonomy:0.21.26"
 AGENT_HASH="${AGENT##*:}"
-IMAGE_TAG="valory/oar-trader:${AGENT_HASH}"
 BUILD_DIR="$(mktemp -d /tmp/oar-build.XXXXXX)"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 
@@ -81,13 +83,20 @@ EOF
 echo ">> docker build -t $IMAGE_TAG ..."
 docker build -t "$IMAGE_TAG" "$BUILD_DIR"
 
-# 6. verify the stuck-agent fix landed (300s tolerance, commit 04be2510)
-echo ">> verify BLOCKS_STALL_TOLERANCE == 300 ..."
+# 6. verify the stuck-agent fix landed (300s tolerance, commit 04be2510); FAIL-CLOSED.
+echo ">> verify BLOCKS_STALL_TOLERANCE == 300 in $IMAGE_TAG (fail-closed) ..."
 docker run --rm --entrypoint bash "$IMAGE_TAG" -c \
-  'grep -R "BLOCKS_STALL_TOLERANCE" /home/agent/vendor/valory/skills/abstract_round_abci/base.py' || true
+  'grep -qE "BLOCKS_STALL_TOLERANCE[[:space:]]*=[[:space:]]*300" /home/agent/vendor/valory/skills/abstract_round_abci/base.py' \
+  || { echo "ERROR: BLOCKS_STALL_TOLERANCE != 300 (or vendored base.py missing) in $IMAGE_TAG — refusing to succeed"; exit 1; }
+echo "   OK: BLOCKS_STALL_TOLERANCE == 300"
 
 echo
 echo "## DONE. Image: $IMAGE_TAG"
-echo "## Next (deploy): point your quickstart config \"hash\" at the matching"
-echo "##   service CID for this agent: bafybeiguxxx4me5wahgpjhghevihaopiak5feg634zgrus3fxwocfz2sea"
+echo "## Next (deploy): set your quickstart config \"hash\" to the matching service CID"
+if [ "$AGENT" = "$DEFAULT_AGENT" ]; then
+  echo "##   service CID: $DEFAULT_SERVICE_CID"
+else
+  echo "##   agent overridden — supply the SERVICE CID matching $AGENT yourself"
+  echo "##   (it is NOT $DEFAULT_SERVICE_CID, which pairs with the default agent)"
+fi
 echo "##   then:  bash run_service_cron.sh   (or ./run_service.sh configs/config_predict_trader.json)"
