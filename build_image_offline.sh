@@ -52,14 +52,30 @@ AUTONOMY="$REPO/.venv/bin/autonomy"
 
 # 1. materialize gitignored third_party packages to MATCH the pinned hashes.
 #    (idempotent + hash-preserving: downloads so local == packages.json.
-#     --update-hashes is the opposite flag and would drift the agent hash.)
-echo ">> autonomy packages sync --update-packages ..."
-"$AUTONOMY" packages sync --update-packages
+#     --update-hashes is the opposite flag and would drift the agent hash.
+#     Retry to ride out transient Autonolas IPFS/RPC read timeouts — sync is
+#     resumable, so re-running picks up where it left off.)
+echo ">> autonomy packages sync --update-packages (up to 3 attempts) ..."
+for _attempt in 1 2 3; do
+  if "$AUTONOMY" packages sync --update-packages; then break; fi
+  if [ "$_attempt" -eq 3 ]; then
+    echo "ERROR: packages sync failed after 3 attempts." >&2
+    exit 1
+  fi
+  echo "   attempt $_attempt failed (often a transient IPFS/RPC timeout); retrying..."
+  sleep $((_attempt * 5))
+done
 
 # 2. integrity gate: local fingerprints must match packages.json, else the
 #    offline build would NOT reproduce the expected agent hash.
 echo ">> autonomy packages lock --check ..."
-"$AUTONOMY" packages lock --check
+if ! "$AUTONOMY" packages lock --check; then
+  echo "ERROR: packages lock --check failed." >&2
+  echo "       Usually step 1 didn't fully materialize third-party packages" >&2
+  echo "       (a 'Skill configuration not found' error). Re-run packages sync" >&2
+  echo "       --update-packages until it completes, then retry." >&2
+  exit 1
+fi
 
 # 3. offline fetch of the agent + all transitive deps from the LOCAL packages
 #    registry. --registry-path is mandatory: aea only searches cwd + one parent.
