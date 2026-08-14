@@ -55,6 +55,12 @@ AUTONOMY="$REPO/.venv/bin/autonomy"
 #     --update-hashes is the opposite flag and would drift the agent hash.
 #     Retry to ride out transient Autonolas IPFS/RPC read timeouts — sync is
 #     resumable, so re-running picks up where it left off.)
+#     Set BIO_SKIP_SYNC=1 when the CALLER has already run packages sync +
+#     lock --check against this tree (e.g. release_service.sh does both right
+#     before invoking this script) — avoids paying the registry pass twice.
+if [ "${BIO_SKIP_SYNC:-0}" = "1" ]; then
+  echo ">> BIO_SKIP_SYNC=1: skipping packages sync + lock --check (caller verified the tree)"
+else
 echo ">> autonomy packages sync --update-packages (up to 3 attempts) ..."
 for _attempt in 1 2 3; do
   if "$AUTONOMY" packages sync --update-packages; then break; fi
@@ -75,6 +81,7 @@ if ! "$AUTONOMY" packages lock --check; then
   echo "       (a 'Skill configuration not found' error). Re-run packages sync" >&2
   echo "       --update-packages until it completes, then retry." >&2
   exit 1
+fi
 fi
 
 # 3. offline fetch of the agent + all transitive deps from the LOCAL packages
