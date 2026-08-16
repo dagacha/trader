@@ -263,6 +263,7 @@ if [ "$SKIP_PUBLISH" -eq 1 ]; then
 else
   echo ">> pushing unresolvable third-party packages ..."
   _cand="$(mktemp)"
+  trap '[ -n "${_cand:-}" ] && rm -f "$_cand"' EXIT
   python3 - "$PACKAGES_JSON" "$GATEWAY" <<'PY' > "$_cand"
 import json, sys, urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -291,9 +292,9 @@ PY
     [ -n "$_k" ] || continue
     if [ ! -d "$REPO/$_p" ]; then
       echo "   (unresolvable, no local copy of $_p; not pushable from here)"
-      skipped=1; continue
+      skipped=$((skipped + 1)); continue
     fi
-    had=1
+    had=$((had + 1))
     echo "   missing provider: $_p ($_c)"
     if [ "$DRY_RUN" -eq 1 ]; then
       echo "   (dry-run) would push: autonomy push $_k $_p --remote"
@@ -303,9 +304,11 @@ PY
     fi
   done < "$_cand"
   rm -f "$_cand"
-  if [ "$had" -eq 1 ]; then
+  if [ "$had" -gt 0 ] && [ "$skipped" -gt 0 ]; then
+    echo "   re-pushed $had missing provider(s); $skipped skipped (no local copy here)"
+  elif [ "$had" -gt 0 ]; then
     echo "   done: re-pushed all missing providers"
-  elif [ "$skipped" -eq 1 ]; then
+  elif [ "$skipped" -gt 0 ]; then
     echo "   all missing providers are unpushable here (no local copy); re-push from a machine with the packages"
   else
     echo "   all third-party CIDs resolvable; none to push"
