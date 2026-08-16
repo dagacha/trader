@@ -287,7 +287,7 @@ for (kind, path, cid), ok in zip(items, results):
     if not ok:
         print(f"{kind}\t{path}\t{cid}")
 PY
-  had=0; skipped=0
+  had=0; skipped=0; would=0
   while IFS=$'\t' read -r _k _p _c; do
     [ -n "$_k" ] || continue
     if [ ! -d "$REPO/$_p" ]; then
@@ -297,14 +297,26 @@ PY
     had=$((had + 1))
     echo "   missing provider: $_p ($_c)"
     if [ "$DRY_RUN" -eq 1 ]; then
+      would=$((would + 1))
       echo "   (dry-run) would push: autonomy push $_k $_p --remote"
     else
+      had=$((had + 1))
       (cd "$REPO" && "$AUTONOMY" push "$_k" "$_p" --remote) \
         || { echo "ERROR: could not push $_p" >&2; exit 1; }
     fi
   done < "$_cand"
   rm -f "$_cand"
-  if [ "$had" -gt 0 ] && [ "$skipped" -gt 0 ]; then
+  if [ "$DRY_RUN" -eq 1 ]; then
+    if [ "$would" -gt 0 ] && [ "$skipped" -gt 0 ]; then
+      echo "   (preview) would push $would; $skipped skipped (no local copy here)"
+    elif [ "$would" -gt 0 ]; then
+      echo "   (preview) would push $would missing provider(s)"
+    elif [ "$skipped" -gt 0 ]; then
+      echo "   (preview) missing providers are unpushable here (no local copy)"
+    else
+      echo "   all third-party CIDs resolvable; none to push"
+    fi
+  elif [ "$had" -gt 0 ] && [ "$skipped" -gt 0 ]; then
     echo "   re-pushed $had missing provider(s); $skipped skipped (no local copy here)"
   elif [ "$had" -gt 0 ]; then
     echo "   done: re-pushed all missing providers"
