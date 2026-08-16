@@ -61,6 +61,8 @@ AUTONOMY="$REPO/.venv/bin/autonomy"
 if [ "${BIO_SKIP_SYNC:-0}" = "1" ]; then
   echo ">> BIO_SKIP_SYNC=1: skipping packages sync + lock --check (caller verified the tree)"
 else
+echo ">> pruning stale ignored fixture dirs (migration for clean abstract_round_abci pin) ..."
+rm -rf "$REPO/packages/valory/skills/abstract_round_abci/tests/data"
 echo ">> autonomy packages sync --update-packages (up to 3 attempts) ..."
 for _attempt in 1 2 3; do
   if "$AUTONOMY" packages sync --update-packages; then break; fi
