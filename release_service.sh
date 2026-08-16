@@ -249,6 +249,84 @@ else
 fi
 
 # ------------------------------------------------------------------
+# 5b. `push-all` only pushes packages.json["dev"]. Third-party packages are
+#     never pushed by it; fork-modified third-party skills get CIDs upstream
+#     never serves (e.g. valory/transaction_settlement_abci:bafybeia77fs…), so a
+#     fresh clone stalls mid-`packages sync` with "The read operation timed out".
+#     After the push-all, content-address every third-party package whose CID is
+#     not yet resolvable on the gateway, by directory path (content-addressed →
+#     idempotent). `push` (unlike `push-all`) takes no --retries. Skipped with
+#     step 5 under --skip-publish; honored by --dry-run.
+# ------------------------------------------------------------------
+if [ "$SKIP_PUBLISH" -eq 1 ]; then
+  echo ">> --skip-publish: skipping third-party path-push (with step 5)"
+else
+  echo ">> pushing unresolvable third-party packages ..."
+  _cand="$(mktemp)"
+  trap '[ -n "${_cand:-}" ] && rm -f "$_cand"' EXIT
+  python3 - "$PACKAGES_JSON" "$GATEWAY" <<'PY' > "$_cand"
+import json, sys, urllib.request
+from concurrent.futures import ThreadPoolExecutor
+pkgs, gateway = sys.argv[1], sys.argv[2]
+plural = {"skill": "skills", "protocol": "protocols", "contract": "contracts",
+          "connection": "connections", "custom": "customs"}
+items = []
+for key, cid in json.load(open(pkgs))["third_party"].items():
+    t, a, n, _ = key.split("/")
+    items.append((t, f"packages/{a}/{plural[t]}/{n}", cid))
+def resolvable(cid):
+    try:
+        urllib.request.urlopen(urllib.request.Request(f"{gateway}/{cid}", method="GET"),
+                               timeout=20).close()
+        return True
+    except Exception:
+        return False
+with ThreadPoolExecutor(max_workers=8) as ex:
+    results = list(ex.map(resolvable, [c for _, _, c in items]))
+for (kind, path, cid), ok in zip(items, results):
+    if not ok:
+        print(f"{kind}\t{path}\t{cid}")
+PY
+  had=0; skipped=0; would=0
+  while IFS=$'\t' read -r _k _p _c; do
+    [ -n "$_k" ] || continue
+    if [ ! -d "$REPO/$_p" ]; then
+      echo "   (unresolvable, no local copy of $_p; not pushable from here)"
+      skipped=$((skipped + 1)); continue
+    fi
+    echo "   missing provider: $_p ($_c)"
+    if [ "$DRY_RUN" -eq 1 ]; then
+      would=$((would + 1))
+      echo "   (dry-run) would push: autonomy push $_k $_p --remote"
+    else
+      (cd "$REPO" && "$AUTONOMY" push "$_k" "$_p" --remote) \
+        || { echo "ERROR: could not push $_p" >&2; exit 1; }
+      had=$((had + 1))
+    fi
+  done < "$_cand"
+  rm -f "$_cand"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    if [ "$would" -gt 0 ] && [ "$skipped" -gt 0 ]; then
+      echo "   (preview) would push $would; $skipped skipped (no local copy here)"
+    elif [ "$would" -gt 0 ]; then
+      echo "   (preview) would push $would missing provider(s)"
+    elif [ "$skipped" -gt 0 ]; then
+      echo "   (preview) missing providers are unpushable here (no local copy)"
+    else
+      echo "   all third-party CIDs resolvable; none to push"
+    fi
+  elif [ "$had" -gt 0 ] && [ "$skipped" -gt 0 ]; then
+    echo "   re-pushed $had missing provider(s); $skipped skipped (no local copy here)"
+  elif [ "$had" -gt 0 ]; then
+    echo "   done: re-pushed all missing providers"
+  elif [ "$skipped" -gt 0 ]; then
+    echo "   all missing providers are unpushable here (no local copy); re-push from a machine with the packages"
+  else
+    echo "   all third-party CIDs resolvable; none to push"
+  fi
+fi
+
+# ------------------------------------------------------------------
 # 6. verify the service CID is resolvable BEFORE touching any config.
 #    This is the coupling guarantee: configs are only repointed at a
 #    service that is actually published and whose image is built.
