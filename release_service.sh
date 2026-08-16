@@ -169,6 +169,26 @@ fi
 AUTONOMY="$REPO/.venv/bin/autonomy"
 
 # ------------------------------------------------------------------
+# 1b. migration: prune stale gitignored fixture dirs left on disk by syncing
+#     under the old abstract_round_abci pin. Pre-fix the fork pinned a hash
+#     that only materialized with packages/…/abstract_round_abci/tests/data
+#     present (gitignored via the "data/" rule), so boxes that synced then still
+#     hold it and their locally-recomputed CID keeps diverging from the new
+#     clean pin — making `packages sync` fail (".gitclean" hash mismatch).
+#     Removing it is zero-git-impact (it is not tracked) and restores
+#     hash-consistency before step 2's sync.
+# ------------------------------------------------------------------
+PRUNE_DIR="$REPO/packages/valory/skills/abstract_round_abci/tests/data"
+if [ -d "$PRUNE_DIR" ]; then
+  echo ">> pruning stale ignored $PRUNE_DIR (migration for clean abstract_round_abci pin)"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "   (dry-run: would remove it)"
+  else
+    rm -rf "$PRUNE_DIR"
+  fi
+fi
+
+# ------------------------------------------------------------------
 # 2. integrity: local packages must match packages.json pinned hashes.
 #    Without this the agent hash we read below would NOT be the one the
 #    deployment expects. (build_image_offline.sh is invoked with BIO_SKIP_SYNC=1
