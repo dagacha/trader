@@ -294,15 +294,14 @@ PY
       echo "   (unresolvable, no local copy of $_p; not pushable from here)"
       skipped=$((skipped + 1)); continue
     fi
-    had=$((had + 1))
     echo "   missing provider: $_p ($_c)"
     if [ "$DRY_RUN" -eq 1 ]; then
       would=$((would + 1))
       echo "   (dry-run) would push: autonomy push $_k $_p --remote"
     else
-      had=$((had + 1))
       (cd "$REPO" && "$AUTONOMY" push "$_k" "$_p" --remote) \
         || { echo "ERROR: could not push $_p" >&2; exit 1; }
+      had=$((had + 1))
     fi
   done < "$_cand"
   rm -f "$_cand"
