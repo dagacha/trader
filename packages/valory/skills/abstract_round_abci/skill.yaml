@@ -21,14 +21,6 @@ fingerprint:
   io_/paths.py: bafybeiholgzt4zhsrnre35aayc3cnmbsryapix7sl6caquw2o3bez4byqu
   io_/store.py: bafybeifylhoafjgow3xfvvflg3wrxijete5bi5i3fv3x3m25asjn2rkrfm
   models.py: bafybeihx4uywpvpldobwxrun63ui4mibartqttzlwevq6zsptg2cs7oysm
-  tests/data/__init__.py: bafybeifmqjnrqgbau4tshhdtrosru7xyjky72ljlrf3ynrk76fxjcsgfpi
-  tests/data/dummy_abci/__init__.py: bafybeiaeawvpyxultmezyfknnjqzyyllt5fgcgdey4ajzdrqbwl3rqenqa
-  tests/data/dummy_abci/behaviours.py: bafybeibei4ngebbktuq6a2uvwhrulgkvn6uhaj5k3a75zihkxwnfarqh4m
-  tests/data/dummy_abci/dialogues.py: bafybeigusxlzzwcy2kf3hg5tbojljhzzuwjhywnyhu2dutr5n4d45sfz2a
-  tests/data/dummy_abci/handlers.py: bafybeig6cp3maypzckujf6lw35b7q464fg7il3kyxkymjozxut6socloie
-  tests/data/dummy_abci/models.py: bafybeifkuijomm53ystziupk7afoayliz37svrvxpenm7jzuuuzcxzhy4m
-  tests/data/dummy_abci/payloads.py: bafybeiczldqiumb7prcusb7l5vb575vschwyseyigpupvteldfyz7h6fyi
-  tests/data/dummy_abci/rounds.py: bafybeihhn67atkbvgem5ebttkjbjjauu3evxtyltaykik3epx5sbqfyb3e
   tests/test_io/__init__.py: bafybeid3sssvbbyju4snrdssxyafleuo57sqyuepl25btxcbuj3p5oonsm
   tests/test_io/test_ipfs.py: bafybeiahem7fildogmva2ykocpc6r3utsq3d4szdpyxmy6vsi5uy2k4pt4
   tests/test_io/test_load.py: bafybeiedkxdqz3sbi5omi3yydydk7lq47f43ov43h3yzal4ftepywpckvu

@@ -29,10 +29,10 @@ contracts:
 - valory/agent_mech:0.1.0:bafybeidrkuruvewbi7xmi7py26ylgpcslmr5yuyu4tw6o7uekolmsj2zqa
 protocols: []
 skills:
-- valory/abstract_round_abci:0.1.0:bafybeid4gypmf5qntlswl73ajva7aspbuf4b5mqxstsnlaexbexlioc2ve
-- valory/chatui_abci:0.1.0:bafybeifkqrpckveqebe3fg3j4ko6l5oey3tq7ifqf7jixv45brcm474de4
-- valory/mech_interact_abci:0.1.0:bafybeie657knfftw6nszsgdwmabt5e7xij3mvxvijrbupfdqdc32u5ivom
-- valory/staking_abci:0.1.0:bafybeic2kpppho2rhlabzpbi2bp2jv77p2wd23yt4jih2fzvg4fcn5pnju
+- valory/abstract_round_abci:0.1.0:bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4
+- valory/chatui_abci:0.1.0:bafybeibsx3uxjpjohdmnhn3lufmmlauagpjikjp5ix74aa7aitglyvwxae
+- valory/mech_interact_abci:0.1.0:bafybeihzxuw56or3kayepbcoke5bxfeeo4q4nbufdomsjydtmh426byapy
+- valory/staking_abci:0.1.0:bafybeicympilexxepigcmlumn22glkfskkrjuhsfco3nuhvxyyxh2z373y
 behaviours:
   main:
     args: {}
