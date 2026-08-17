@@ -40,6 +40,9 @@ from packages.valory.skills.decision_maker_abci.behaviours.decision_receive impo
 from packages.valory.skills.decision_maker_abci.behaviours.decision_request import (
     DecisionRequestBehaviour,
 )
+from packages.valory.skills.decision_maker_abci.behaviours.epoch_reset import (
+    EpochResetBehaviour,
+)
 from packages.valory.skills.decision_maker_abci.behaviours.handle_failed_tx import (
     HandleFailedTxBehaviour,
 )
@@ -47,9 +50,6 @@ from packages.valory.skills.decision_maker_abci.behaviours.mech_only import (
     MechOnlyReceiveBehaviour,
     MechOnlySelectionBehaviour,
     MechResponseRouterBehaviour,
-)
-from packages.valory.skills.decision_maker_abci.behaviours.epoch_reset import (
-    EpochResetBehaviour,
 )
 from packages.valory.skills.decision_maker_abci.behaviours.omen_withdraw import (
     OmenWithdrawBehaviour,
@@ -107,11 +107,11 @@ from packages.valory.skills.decision_maker_abci.behaviours.sell_outcome_tokens i
 from packages.valory.skills.decision_maker_abci.behaviours.tool_selection import (
     ToolSelectionBehaviour,
 )
-from packages.valory.skills.decision_maker_abci.behaviours.trade_count import (
-    TradeCountBehaviour,
-)
 from packages.valory.skills.decision_maker_abci.behaviours.trade_cap import (
     TradeCapBehaviour,
+)
+from packages.valory.skills.decision_maker_abci.behaviours.trade_count import (
+    TradeCountBehaviour,
 )
 from packages.valory.skills.decision_maker_abci.rounds import DecisionMakerAbciApp
 

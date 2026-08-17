@@ -19,8 +19,6 @@
 
 """Tests for the TradeCountRound consensus state."""
 
-from unittest.mock import MagicMock
-
 from packages.valory.skills.abstract_round_abci.base import (
     CollectSameUntilThresholdRound,
 )
@@ -29,7 +27,9 @@ from packages.valory.skills.decision_maker_abci.states.base import (
     Event,
     SynchronizedData,
 )
-from packages.valory.skills.decision_maker_abci.states.trade_count import TradeCountRound
+from packages.valory.skills.decision_maker_abci.states.trade_count import (
+    TradeCountRound,
+)
 
 
 class TestTradeCountRound:

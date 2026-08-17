@@ -73,6 +73,10 @@ def _decode_call_result(
     All call signatures dispatched by this skill return one uint, so the
     decoded value is unwrapped to a scalar `int`. Returns ``(None, exc)``
     when decoding raises, so the caller can surface the failure cause.
+
+    :param call: the multicall sub-call whose output is being decoded.
+    :param returndata: the raw bytes returned for the sub-call.
+    :return: ``(decoded_int, None)`` on success, or ``(None, exc)`` on failure.
     """
     try:
         decoded = abi_decode(call.output_types, returndata)
@@ -122,6 +126,10 @@ class FundsManagerBehaviour(SimpleBehaviour):
 
         Returns a list the same length as `calls`. Each entry is the decoded
         uint, or None if the sub-call reverted or failed to decode.
+
+        :param rpc_url: the RPC endpoint to query.
+        :param calls: the multicall sub-calls to execute.
+        :return: one decoded ``int`` (or ``None``) per input call.
         """
         if not calls:
             return []
@@ -263,6 +271,9 @@ class FundsManagerBehaviour(SimpleBehaviour):
 
         Sub-call failure leaves the token's balance/deficit/decimals at None
         (unknown, distinct from zero).
+
+        :param chain_name: the name of the chain to populate.
+        :param chain_requirements: the per-chain accounts and token requirements.
         """
         balance_calls: List = []
         decimals_calls: Dict[str, W3Multicall.Call] = {}
@@ -327,6 +338,8 @@ class FundsManagerBehaviour(SimpleBehaviour):
 
         Chains are queried independently. A failing chain's tokens keep
         balance/deficit/decimals at None.
+
+        :return: the funds requirements with balance/deficit/decimals filled per chain.
         """
         funds = self._switch_out_account_names_for_addresses(self.fund_requirements)
 

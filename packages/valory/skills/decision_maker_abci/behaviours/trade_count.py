@@ -21,9 +21,13 @@
 
 from typing import Generator
 
-from packages.valory.skills.decision_maker_abci.behaviours.base import DecisionMakerBaseBehaviour
+from packages.valory.skills.decision_maker_abci.behaviours.base import (
+    DecisionMakerBaseBehaviour,
+)
 from packages.valory.skills.decision_maker_abci.payloads import TradeCountPayload
-from packages.valory.skills.decision_maker_abci.states.trade_count import TradeCountRound
+from packages.valory.skills.decision_maker_abci.states.trade_count import (
+    TradeCountRound,
+)
 
 
 class TradeCountBehaviour(DecisionMakerBaseBehaviour):
@@ -32,6 +36,7 @@ class TradeCountBehaviour(DecisionMakerBaseBehaviour):
     matching_round = TradeCountRound
 
     def async_act(self) -> Generator:
+        """Increment and persist the durable trade counter after a settled placement."""
         with self.context.benchmark_tool.measure(self.behaviour_id).local():
             # Increment the durable file-backed counter so the count survives
             # agent restarts, which reset the ABCI database to its setup state.

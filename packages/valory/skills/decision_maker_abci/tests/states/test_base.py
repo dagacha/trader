@@ -497,9 +497,7 @@ def test_successful_trade_count_default(
     assert sync_data.successful_trade_count == 0
 
 
-def test_mech_only_mode_true(
-    sync_data: SynchronizedData, mocked_db: MagicMock
-) -> None:
+def test_mech_only_mode_true(sync_data: SynchronizedData, mocked_db: MagicMock) -> None:
     """Test the mech_only_mode property when set to True."""
     mocked_db.get.return_value = True
     assert sync_data.mech_only_mode is True

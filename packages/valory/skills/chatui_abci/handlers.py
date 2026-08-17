@@ -326,6 +326,8 @@ class HttpHandler(BaseHttpHandler):
         ``available_valid_mechs`` is fully defensive: it falls back to an
         empty set on a missing or malformed ``mechs_info`` key. Callers
         are responsible for handling the empty case.
+
+        :return: the set of mech addresses currently visible to mech-interact.
         """
         return self.synchronized_data.available_valid_mechs
 

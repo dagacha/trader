@@ -28,7 +28,9 @@ from packages.valory.skills.decision_maker_abci.behaviours.trade_count import (
     TradeCountBehaviour,
 )
 from packages.valory.skills.decision_maker_abci.payloads import TradeCountPayload
-from packages.valory.skills.decision_maker_abci.states.trade_count import TradeCountRound
+from packages.valory.skills.decision_maker_abci.states.trade_count import (
+    TradeCountRound,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -112,6 +114,8 @@ class TestTradeCountBehaviour:
 
         After a restart synchronized data resets to 0, but the file still holds
         the real count; the increment must build on the file value.
+
+        :param tmp_path: per-test durable store directory.
         """
         (tmp_path / TRADE_COUNT_FILENAME).write_text("2")
         behaviour = _make_behaviour(store_path=tmp_path)

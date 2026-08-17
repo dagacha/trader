@@ -19,10 +19,12 @@
 
 """This module contains the test for rounds of decision maker"""
 
+from typing import Set, Type
 from unittest.mock import MagicMock
 
 import pytest
 
+from packages.valory.skills.abstract_round_abci.base import AbstractRound
 from packages.valory.skills.decision_maker_abci.rounds import DecisionMakerAbciApp
 from packages.valory.skills.decision_maker_abci.states.base import (
     Event,
@@ -40,9 +42,11 @@ from packages.valory.skills.decision_maker_abci.states.check_benchmarking import
 from packages.valory.skills.decision_maker_abci.states.decision_receive import (
     DecisionReceiveRound,
 )
-from packages.valory.skills.decision_maker_abci.states.trade_cap import TradeCapRound
 from packages.valory.skills.decision_maker_abci.states.decision_request import (
     DecisionRequestRound,
+)
+from packages.valory.skills.decision_maker_abci.states.epoch_reset import (
+    EpochResetRound,
 )
 from packages.valory.skills.decision_maker_abci.states.final_states import (
     BenchmarkingModeDisabledRound,
@@ -61,9 +65,6 @@ from packages.valory.skills.decision_maker_abci.states.mech_only import (
     MechOnlyReceiveRound,
     MechOnlySelectionRound,
     MechResponseRouterRound,
-)
-from packages.valory.skills.decision_maker_abci.states.epoch_reset import (
-    EpochResetRound,
 )
 from packages.valory.skills.decision_maker_abci.states.polymarket_bet_placement import (
     PolymarketBetPlacementRound,
@@ -95,7 +96,10 @@ from packages.valory.skills.decision_maker_abci.states.sell_outcome_tokens impor
 from packages.valory.skills.decision_maker_abci.states.tool_selection import (
     ToolSelectionRound,
 )
-from packages.valory.skills.decision_maker_abci.states.trade_count import TradeCountRound
+from packages.valory.skills.decision_maker_abci.states.trade_cap import TradeCapRound
+from packages.valory.skills.decision_maker_abci.states.trade_count import (
+    TradeCountRound,
+)
 
 
 @pytest.fixture
@@ -171,7 +175,7 @@ def test_benchmarking_randomness_round_transition(
 
 
 def test_epoch_reset_round_transition(setup_app: DecisionMakerAbciApp) -> None:
-    """EpochResetRound resets before TradeCapRound on DONE."""
+    """Test that EpochResetRound resets before TradeCapRound on DONE."""
     transition_function = setup_app.transition_function[EpochResetRound]
     assert transition_function[Event.DONE] == TradeCapRound
     assert transition_function[Event.NO_MAJORITY] == EpochResetRound
@@ -227,7 +231,7 @@ def test_trade_count_round_transition(setup_app: DecisionMakerAbciApp) -> None:
 
 
 def test_trade_count_round_is_entry_point(setup_app: DecisionMakerAbciApp) -> None:
-    """TradeCountRound is an initial state with no db pre-conditions (composed entry)."""
+    """Test that TradeCountRound is an initial state with no db pre-conditions (composed entry)."""
     assert TradeCountRound in setup_app.initial_states
     assert setup_app.db_pre_conditions[TradeCountRound] == set()
 
@@ -247,7 +251,7 @@ def test_trade_count_round_persisted_across_periods(
 def test_trade_count_round_in_db_post_conditions(
     setup_app: DecisionMakerAbciApp,
 ) -> None:
-    """TradeCountRound must write successful_trade_count to the DB on completion."""
+    """Test that TradeCountRound writes successful_trade_count to the DB on completion."""
     from packages.valory.skills.abstract_round_abci.base import get_name
 
     post = setup_app.db_post_conditions
@@ -258,7 +262,7 @@ def test_trade_count_round_in_db_post_conditions(
 def test_mech_only_selection_round_in_db_post_conditions(
     setup_app: DecisionMakerAbciApp,
 ) -> None:
-    """MechOnlySelectionRound must write mech_only_queue to the DB on completion."""
+    """Test that MechOnlySelectionRound writes mech_only_queue to the DB on completion."""
     from packages.valory.skills.abstract_round_abci.base import get_name
 
     post = setup_app.db_post_conditions
@@ -269,7 +273,7 @@ def test_mech_only_selection_round_in_db_post_conditions(
 def test_mech_only_receive_round_in_db_post_conditions(
     setup_app: DecisionMakerAbciApp,
 ) -> None:
-    """MechOnlyReceiveRound must write mech_only_queue to the DB on completion."""
+    """Test that MechOnlyReceiveRound writes mech_only_queue to the DB on completion."""
     from packages.valory.skills.abstract_round_abci.base import get_name
 
     post = setup_app.db_post_conditions
@@ -410,13 +414,15 @@ def test_mech_only_finished_rounds_are_final(setup_app: DecisionMakerAbciApp) ->
 def test_epoch_reset_not_an_initial_state(
     setup_app: DecisionMakerAbciApp,
 ) -> None:
-    """EpochResetRound is no longer a standalone entry point.
+    """Test that EpochResetRound is no longer a standalone entry point.
 
     It is reached at the start of every decision cycle via
     ``RandomnessRound`` (and ``BenchmarkingRandomnessRound``), immediately
     before ``TradeCapRound``.  ``MechResponseRouterRound`` remains a
     decision-maker initial state only because it is re-entered mid-cycle
     from the composed trader app via ``FinishedMechResponseRound``.
+
+    :param setup_app: the decision-maker AbciApp fixture.
     """
     assert EpochResetRound not in setup_app.initial_states
     assert MechResponseRouterRound in setup_app.initial_states
@@ -425,7 +431,7 @@ def test_epoch_reset_not_an_initial_state(
 def test_decision_receive_no_longer_initial_state(
     setup_app: DecisionMakerAbciApp,
 ) -> None:
-    """DecisionReceiveRound is no longer a composition entry point (routed via the router)."""
+    """Test that DecisionReceiveRound is no longer a composition entry point (routed via the router)."""
     assert DecisionReceiveRound not in setup_app.initial_states
 
 
@@ -446,7 +452,7 @@ def test_mech_only_queue_persisted_across_periods(
 # ---------------------------------------------------------------------------
 
 # Rounds that must NEVER be reached on the post-cap (mech-only) path.
-FORBIDDEN_ROUNDS = {
+FORBIDDEN_ROUNDS: Set[Type[AbstractRound]] = {
     BetPlacementRound,
     PolymarketBetPlacementRound,
     SellOutcomeTokensRound,
@@ -471,16 +477,22 @@ def test_capped_path_never_reaches_bet_or_sell_rounds(
     the decision-maker through ``MechResponseRouterRound`` after each Mech
     round-trip.  ``MechResponseRouterRound`` branches on ``mech_only_mode``:
     when capped it emits ``MECH_ONLY`` (to ``MechOnlyReceiveRound``), never
+
     ``DONE`` (which would lead to ``DecisionReceiveRound`` and the normal
     trading flow).  This test follows only the capped branch.
+
+    :param setup_app: the decision-maker AbciApp fixture.
     """
     transition_function = setup_app.transition_function
 
     # Entry points on the capped path:
-    #   MechOnlySelectionRound  <- TradeCapRound[MECH_ONLY]
-    #   MechResponseRouterRound  <- composition (FinishedMechResponseRound) after a Mech round-trip
-    reachable = {MechOnlySelectionRound, MechResponseRouterRound}
-    frontier = list(reachable)
+    #   MechOnlySelectionRound  via TradeCapRound Event.MECH_ONLY
+    #   MechResponseRouterRound  via composition (FinishedMechResponseRound) after a Mech round-trip
+    reachable: Set[Type[AbstractRound]] = {
+        MechOnlySelectionRound,
+        MechResponseRouterRound,
+    }
+    frontier: list[Type[AbstractRound]] = list(reachable)
 
     while frontier:
         state = frontier.pop()
@@ -496,9 +508,9 @@ def test_capped_path_never_reaches_bet_or_sell_rounds(
                 frontier.append(target)
 
     forbidden_reached = reachable & FORBIDDEN_ROUNDS
-    assert not forbidden_reached, (
-        f"The capped path reaches forbidden trading rounds: {forbidden_reached}"
-    )
+    assert (
+        not forbidden_reached
+    ), f"The capped path reaches forbidden trading rounds: {forbidden_reached}"
 
     # Sanity: the expected capped-path states are all reachable.
     assert MechOnlySelectionRound in reachable

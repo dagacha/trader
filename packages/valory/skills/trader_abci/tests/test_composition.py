@@ -35,16 +35,15 @@ from packages.valory.skills.decision_maker_abci.states.handle_failed_tx import (
 from packages.valory.skills.decision_maker_abci.states.mech_only import (
     MechResponseRouterRound,
 )
-from packages.valory.skills.decision_maker_abci.states.epoch_reset import (
-    EpochResetRound,
-)
 from packages.valory.skills.decision_maker_abci.states.post_bet_update import (
     PostBetUpdateRound,
 )
 from packages.valory.skills.decision_maker_abci.states.redeem_router import (
     RedeemRouterRound,
 )
-from packages.valory.skills.decision_maker_abci.states.trade_count import TradeCountRound
+from packages.valory.skills.decision_maker_abci.states.trade_count import (
+    TradeCountRound,
+)
 from packages.valory.skills.market_manager_abci.rounds import (
     FetchMarketsRouterRound,
     FinishedMarketManagerRound,
@@ -228,7 +227,10 @@ def test_only_omen_placement_reaches_trade_count() -> None:
 
 def test_sell_does_not_reach_trade_count() -> None:
     """A settled sell (FinishedSellOutcomeTokensTxRound) bypasses the counter, routing to PostBetUpdateRound."""
-    assert abci_app_transition_mapping[FinishedSellOutcomeTokensTxRound] is PostBetUpdateRound
+    assert (
+        abci_app_transition_mapping[FinishedSellOutcomeTokensTxRound]
+        is PostBetUpdateRound
+    )
 
 
 def test_trade_count_is_only_entry_into_counter() -> None:
@@ -243,7 +245,9 @@ def test_trade_count_is_only_entry_into_counter() -> None:
 
 def test_mech_only_request_routes_to_mech_request() -> None:
     """The capped Mech request batch routes into the mech-interact request flow."""
-    from packages.valory.skills.mech_interact_abci.states.request import MechRequestRound
+    from packages.valory.skills.mech_interact_abci.states.request import (
+        MechRequestRound,
+    )
 
     assert abci_app_transition_mapping[FinishedMechOnlyRequestRound] is MechRequestRound
 

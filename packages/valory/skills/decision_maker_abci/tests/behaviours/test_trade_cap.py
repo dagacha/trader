@@ -125,6 +125,8 @@ class TestTradeCapBehaviour:
 
         This is the restart scenario: synchronized data has reset to 0 but the
         durable file still holds the pre-restart count, so the cap must trigger.
+
+        :param tmp_path: per-test durable store directory.
         """
         (tmp_path / TRADE_COUNT_FILENAME).write_text("5")
         behaviour = _make_behaviour(max_trades=5, store_path=tmp_path)

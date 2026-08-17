@@ -28,7 +28,7 @@ batches and the cycle routes to the checkpoint when the queue is exhausted.
 
 import json
 from dataclasses import asdict
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any, Dict, Generator, List, Optional, Set
 from uuid import uuid4
 
 from packages.valory.skills.decision_maker_abci.behaviours.base import (
@@ -63,6 +63,10 @@ class MechOnlySelectionBehaviour(DecisionMakerBaseBehaviour):
         market that is still within the safe voting window and has the fields
         needed to build a prompt.  It intentionally excludes trading-specific
         conditions (liquidity, invested amounts, queue status, multi-bet mode).
+
+        :param bet: the candidate market bet.
+        :param now: the current timestamp, in seconds.
+        :return: ``True`` if the market is eligible for post-cap Mech analysis.
         """
         if bet.outcomeSlotCount != BINARY_N_SLOTS:
             return False
@@ -84,9 +88,7 @@ class MechOnlySelectionBehaviour(DecisionMakerBaseBehaviour):
     def _build_queue(self) -> List[str]:
         """Build the deterministic post-cap queue of open market ids."""
         now = self.synced_timestamp
-        open_bets = [
-            bet for bet in self.bets if self.is_open_for_mech(bet, now)
-        ]
+        open_bets = [bet for bet in self.bets if self.is_open_for_mech(bet, now)]
         open_bets.sort(key=lambda bet: bet.id)
         max_requests = self.params.max_mech_requests_per_cycle
         if max_requests > 0:
@@ -116,11 +118,13 @@ class MechOnlySelectionBehaviour(DecisionMakerBaseBehaviour):
         fetched mechs (``mech_tools``), which ``MechInformationRound``
         refreshes every period.  Returns ``None`` only when no tool at all is
         on offer.
+
+        :return: a Mech tool id, or ``None`` when no tool is on offer.
         """
         if self.synchronized_data.has_tool_selection_run:
             return self.synchronized_data.mech_tool
 
-        def safe_tools(accessor: Any):  # pragma: no cover
+        def safe_tools(accessor: Any) -> Set[str]:  # pragma: no cover
             """Resolve a tool-set accessor, tolerating an unset synced key."""
             try:
                 return set(accessor())
@@ -153,9 +157,7 @@ class MechOnlySelectionBehaviour(DecisionMakerBaseBehaviour):
         # pick a stable, deterministic tool so the request set is reproducible.
         return sorted(candidates)[0]
 
-    def _build_metadata(
-        self, market_ids: List[str], tool: str
-    ) -> List[MechMetadata]:
+    def _build_metadata(self, market_ids: List[str], tool: str) -> List[MechMetadata]:
         """Build Mech request metadata for the given market ids using ``tool``."""
         bets_by_id: Dict[str, Bet] = {bet.id: bet for bet in self.bets}
         self.context.logger.info(f"Mech-only analysis using tool {tool!r}.")
@@ -168,9 +170,7 @@ class MechOnlySelectionBehaviour(DecisionMakerBaseBehaviour):
             if bet.outcomes is None:
                 # the market may have been blacklisted between periods; skip
                 continue
-            prompt_params = dict(
-                question=bet.title, yes=bet.yes, no=bet.no
-            )
+            prompt_params = dict(question=bet.title, yes=bet.yes, no=bet.no)
             prompt = self.params.prompt_template.substitute(prompt_params)
             nonce = str(uuid4())
             request_context = bet.to_request_context()

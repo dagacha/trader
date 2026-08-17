@@ -115,12 +115,12 @@ class TestMechOnlyPayloadNoBetFields:
     """The Mech-only payloads must never carry vote/bet/profitability fields."""
 
     def test_selection_payload_has_no_bet_fields(self) -> None:
-        """MechOnlySelectionPayload must not contain any betting field."""
+        """Test that MechOnlySelectionPayload does not contain any betting field."""
         payload_fields = {f.name for f in fields(MechOnlySelectionPayload)}
         assert not (payload_fields & NO_BET_FIELDS)
 
     def test_receive_payload_has_no_bet_fields(self) -> None:
-        """MechOnlyReceivePayload must not contain any betting field."""
+        """Test that MechOnlyReceivePayload does not contain any betting field."""
         payload_fields = {f.name for f in fields(MechOnlyReceivePayload)}
         assert not (payload_fields & NO_BET_FIELDS)
 
@@ -280,11 +280,14 @@ class TestMechOnlySelectionBehaviourAsyncAct:
         behaviour.read_bets = MagicMock()  # type: ignore[method-assign]
         behaviour.bets = bets
 
-        with patch.object(
-            type(behaviour), "synchronized_data", new_callable=PropertyMock
-        ) as mock_sd, patch.object(
-            type(behaviour), "synced_timestamp", new_callable=PropertyMock
-        ) as mock_ts:
+        with (
+            patch.object(
+                type(behaviour), "synchronized_data", new_callable=PropertyMock
+            ) as mock_sd,
+            patch.object(
+                type(behaviour), "synced_timestamp", new_callable=PropertyMock
+            ) as mock_ts,
+        ):
             sd = MagicMock()
             sd.mech_only_queue = []
             sd.has_tool_selection_run = True
@@ -317,11 +320,14 @@ class TestMechOnlySelectionBehaviourAsyncAct:
         behaviour.read_bets = MagicMock()  # type: ignore[method-assign]
         behaviour.bets = [_mock_bet(bet_id="m_a"), _mock_bet(bet_id="m_b")]
 
-        with patch.object(
-            type(behaviour), "synchronized_data", new_callable=PropertyMock
-        ) as mock_sd, patch.object(
-            type(behaviour), "synced_timestamp", new_callable=PropertyMock
-        ) as mock_ts:
+        with (
+            patch.object(
+                type(behaviour), "synchronized_data", new_callable=PropertyMock
+            ) as mock_sd,
+            patch.object(
+                type(behaviour), "synced_timestamp", new_callable=PropertyMock
+            ) as mock_ts,
+        ):
             sd = MagicMock()
             sd.mech_only_queue = []
             sd.has_tool_selection_run = True
@@ -348,11 +354,14 @@ class TestMechOnlySelectionBehaviourAsyncAct:
         behaviour.read_bets = MagicMock()  # type: ignore[method-assign]
         behaviour.bets = bets
 
-        with patch.object(
-            type(behaviour), "synchronized_data", new_callable=PropertyMock
-        ) as mock_sd, patch.object(
-            type(behaviour), "synced_timestamp", new_callable=PropertyMock
-        ) as mock_ts:
+        with (
+            patch.object(
+                type(behaviour), "synchronized_data", new_callable=PropertyMock
+            ) as mock_sd,
+            patch.object(
+                type(behaviour), "synced_timestamp", new_callable=PropertyMock
+            ) as mock_ts,
+        ):
             sd = MagicMock()
             sd.mech_only_queue = ["m_x"]
             sd.has_tool_selection_run = True
@@ -380,11 +389,14 @@ class TestMechOnlySelectionBehaviourAsyncAct:
         behaviour.read_bets = MagicMock()  # type: ignore[method-assign]
         behaviour.bets = []
 
-        with patch.object(
-            type(behaviour), "synchronized_data", new_callable=PropertyMock
-        ) as mock_sd, patch.object(
-            type(behaviour), "synced_timestamp", new_callable=PropertyMock
-        ) as mock_ts:
+        with (
+            patch.object(
+                type(behaviour), "synchronized_data", new_callable=PropertyMock
+            ) as mock_sd,
+            patch.object(
+                type(behaviour), "synced_timestamp", new_callable=PropertyMock
+            ) as mock_ts,
+        ):
             sd = MagicMock()
             sd.mech_only_queue = []
             sd.has_tool_selection_run = True
@@ -409,11 +421,14 @@ class TestMechOnlySelectionBehaviourAsyncAct:
         behaviour.read_bets = MagicMock()  # type: ignore[method-assign]
         behaviour.bets = [_mock_bet(bet_id="m_alive")]
 
-        with patch.object(
-            type(behaviour), "synchronized_data", new_callable=PropertyMock
-        ) as mock_sd, patch.object(
-            type(behaviour), "synced_timestamp", new_callable=PropertyMock
-        ) as mock_ts:
+        with (
+            patch.object(
+                type(behaviour), "synchronized_data", new_callable=PropertyMock
+            ) as mock_sd,
+            patch.object(
+                type(behaviour), "synced_timestamp", new_callable=PropertyMock
+            ) as mock_ts,
+        ):
             sd = MagicMock()
             sd.mech_only_queue = ["m_gone", "m_alive"]
             sd.has_tool_selection_run = True
@@ -457,11 +472,14 @@ class TestMechOnlySelectionBehaviourAsyncAct:
         behaviour.read_bets = MagicMock()  # type: ignore[method-assign]
         behaviour.bets = [blacklisted, alive]
 
-        with patch.object(
-            type(behaviour), "synchronized_data", new_callable=PropertyMock
-        ) as mock_sd, patch.object(
-            type(behaviour), "synced_timestamp", new_callable=PropertyMock
-        ) as mock_ts:
+        with (
+            patch.object(
+                type(behaviour), "synchronized_data", new_callable=PropertyMock
+            ) as mock_sd,
+            patch.object(
+                type(behaviour), "synced_timestamp", new_callable=PropertyMock
+            ) as mock_ts,
+        ):
             sd = MagicMock()
             sd.mech_only_queue = ["m_blacklisted", "m_alive"]
             sd.has_tool_selection_run = True
@@ -505,11 +523,14 @@ class TestMechOnlySelectionToolFallback:
     def _run(self, sd):  # type: ignore[no-untyped-def]
         """Drive async_act with the given synchronized_data mock."""
         behaviour = self._make_selection_behaviour(sd)
-        with patch.object(
-            type(behaviour), "synchronized_data", new_callable=PropertyMock
-        ) as mock_sd, patch.object(
-            type(behaviour), "synced_timestamp", new_callable=PropertyMock
-        ) as mock_ts:
+        with (
+            patch.object(
+                type(behaviour), "synchronized_data", new_callable=PropertyMock
+            ) as mock_sd,
+            patch.object(
+                type(behaviour), "synced_timestamp", new_callable=PropertyMock
+            ) as mock_ts,
+        ):
             mock_sd.return_value = sd
             mock_ts.return_value = 0
             return _run_async_act(behaviour)

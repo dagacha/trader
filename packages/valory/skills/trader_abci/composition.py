@@ -47,9 +47,6 @@ from packages.valory.skills.decision_maker_abci.rounds import DecisionMakerAbciA
 from packages.valory.skills.decision_maker_abci.states.check_benchmarking import (
     CheckBenchmarkingModeRound,
 )
-from packages.valory.skills.decision_maker_abci.states.decision_receive import (
-    DecisionReceiveRound,
-)
 from packages.valory.skills.decision_maker_abci.states.decision_request import (
     DecisionRequestRound,
 )
@@ -105,7 +102,9 @@ from packages.valory.skills.decision_maker_abci.states.randomness import Randomn
 from packages.valory.skills.decision_maker_abci.states.redeem_router import (
     RedeemRouterRound,
 )
-from packages.valory.skills.decision_maker_abci.states.trade_count import TradeCountRound
+from packages.valory.skills.decision_maker_abci.states.trade_count import (
+    TradeCountRound,
+)
 from packages.valory.skills.decision_maker_abci.states.withdrawal_idle import (
     WithdrawalIdleRound,
 )
@@ -311,8 +310,6 @@ abci_app_transition_mapping: AbciAppTransitionMapping = {
     # this has no effect, because the `BenchmarkingDoneRound` is terminal
     BenchmarkingDoneRound: ResetAndPauseRound,
     FinishedMechPurchaseSubscriptionRound: PreTxSettlementRound,
-    FinishedMechOnlyRequestRound: MechRequestRound,
-    FinishedMechOnlyRound: CallCheckpointRound,
 }
 
 termination_config = BackgroundAppConfig(

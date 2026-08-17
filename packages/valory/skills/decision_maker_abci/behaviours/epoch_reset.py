@@ -26,7 +26,9 @@ from packages.valory.skills.decision_maker_abci.behaviours.base import (
     DecisionMakerBaseBehaviour,
 )
 from packages.valory.skills.decision_maker_abci.payloads import EpochResetPayload
-from packages.valory.skills.decision_maker_abci.states.epoch_reset import EpochResetRound
+from packages.valory.skills.decision_maker_abci.states.epoch_reset import (
+    EpochResetRound,
+)
 
 
 class EpochResetBehaviour(DecisionMakerBaseBehaviour):
@@ -35,6 +37,7 @@ class EpochResetBehaviour(DecisionMakerBaseBehaviour):
     matching_round = EpochResetRound
 
     def async_act(self) -> Generator:
+        """Reset the trade counter and clear the Mech-only queue at the epoch boundary."""
         with self.context.benchmark_tool.measure(self.behaviour_id).local():
             if self.synchronized_data.is_checkpoint_reached:
                 # New staking epoch: reset the cap and clear the Mech-only queue.
