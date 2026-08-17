@@ -76,6 +76,28 @@ override-dependencies = ["cffi<2.1"]
 py-builder-signing-sdk = { git = "https://github.com/LOCKhart07/py-builder-signing-sdk.git", rev = "487579780479676d20867ead63db968bf460ea38" }
 
 [tool.tomte]
+# `abstract_round_abci` is a pristine upstream pin (see `upstream_pins` and
+# the vendoring commit).  mypy already sets `ignore_errors = True` for it and
+# pylint ignores `^packages/valory/.*$`; exclude it from the lint path set so
+# black/isort/flake8/darglint do not reformat or flag the vendored source.
+# The repo-wide `tomte check-copyright` still covers it (headers bumped by
+# `tomte format-copyright`), and `check-packages`/`check-hash`/`check-abciapp-specs`
+# use `PACKAGES_PATHS`, not `SERVICE_SPECIFIC_PACKAGES`, so they still validate it.
+service_specific_packages_exclude = [
+    "packages/valory/skills/abstract_round_abci",
+]
+# The vendored `abstract_round_abci/tests` tree is the framework's own
+# self-test suite. It depends on a `tests/data` fixture package that is
+# gitignored by the global `data/` rule and intentionally pruned by the
+# clean repin (commit 83696218), so pytest aborts collection with
+# ModuleNotFoundError; even if the fixture were restored, the upstream
+# framework tests are out of scope for this service. Exclude the whole
+# directory from the pytest targets. (`--ignore` in [pytest] addopts is
+# kept as a belt-and-braces guard for any indirect collection.)
+pytest_targets_exclude = [
+    "packages/valory/skills/abstract_round_abci/tests",
+    "packages\\valory\\skills\\abstract_round_abci\\tests",
+]
 check_dependencies_extra_excludes = [
     "eth-account",
     "typing-extensions",

@@ -60,6 +60,8 @@ class SynchronizedData(BaseSynchronizedData):
         MechInformationRound. Addresses are lowercased to match the format
         produced by the Autonolas subgraph and the `valid_mechs`
         normalization in mech-interact.
+
+        :return: lowercased mech addresses visible to mech-interact.
         """
         raw = self.db.get("mechs_info", "[]")
         if not isinstance(raw, str):

@@ -756,10 +756,11 @@ class TestDecisionMakerParams:
                 return 0
             return MagicMock()
 
-        with patch.object(
-            DecisionMakerParams, "_ensure", side_effect=mock_ensure
-        ), pytest.raises(
-            ValueError, match="max_mech_requests_per_cycle must be positive"
+        with (
+            patch.object(DecisionMakerParams, "_ensure", side_effect=mock_ensure),
+            pytest.raises(
+                ValueError, match="max_mech_requests_per_cycle must be positive"
+            ),
         ):
             DecisionMakerParams(
                 skill_context=MagicMock(),

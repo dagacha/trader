@@ -46,6 +46,9 @@ from packages.valory.skills.decision_maker_abci.states.decision_receive import (
 from packages.valory.skills.decision_maker_abci.states.decision_request import (
     DecisionRequestRound,
 )
+from packages.valory.skills.decision_maker_abci.states.epoch_reset import (
+    EpochResetRound,
+)
 from packages.valory.skills.decision_maker_abci.states.final_states import (
     BenchmarkingDoneRound,
     BenchmarkingModeDisabledRound,
@@ -71,7 +74,6 @@ from packages.valory.skills.decision_maker_abci.states.final_states import (
 from packages.valory.skills.decision_maker_abci.states.handle_failed_tx import (
     HandleFailedTxRound,
 )
-from packages.valory.skills.decision_maker_abci.states.epoch_reset import EpochResetRound
 from packages.valory.skills.decision_maker_abci.states.mech_only import (
     MechOnlyReceiveRound,
     MechOnlySelectionRound,
@@ -131,13 +133,12 @@ from packages.valory.skills.decision_maker_abci.states.sell_outcome_tokens impor
 from packages.valory.skills.decision_maker_abci.states.tool_selection import (
     ToolSelectionRound,
 )
-from packages.valory.skills.decision_maker_abci.states.trade_count import TradeCountRound
 from packages.valory.skills.decision_maker_abci.states.trade_cap import TradeCapRound
+from packages.valory.skills.decision_maker_abci.states.trade_count import (
+    TradeCountRound,
+)
 from packages.valory.skills.decision_maker_abci.states.withdrawal_idle import (
     WithdrawalIdleRound,
-)
-from packages.valory.skills.market_manager_abci.rounds import (
-    Event as MarketManagerEvent,
 )
 
 

@@ -78,7 +78,9 @@ class TestTradeCapRound:
         with patch.object(
             CollectSameUntilThresholdRound,
             "end_block",
-            return_value=cast(Tuple[SynchronizedData, Event], (mock_synced_data, Event.DONE)),
+            return_value=cast(
+                Tuple[SynchronizedData, Event], (mock_synced_data, Event.DONE)
+            ),
         ):
             result = round_instance.end_block()
         assert result is not None
@@ -96,7 +98,9 @@ class TestTradeCapRound:
         with patch.object(
             CollectSameUntilThresholdRound,
             "end_block",
-            return_value=cast(Tuple[SynchronizedData, Event], (mock_synced_data, Event.DONE)),
+            return_value=cast(
+                Tuple[SynchronizedData, Event], (mock_synced_data, Event.DONE)
+            ),
         ):
             result = round_instance.end_block()
         assert result is not None

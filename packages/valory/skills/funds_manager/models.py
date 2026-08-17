@@ -140,6 +140,8 @@ class FundRequirements(RootModel[Dict[str, ChainRequirements]]):
         Balance and deficit are stringified to preserve precision for large
         token amounts. None is preserved for tokens whose balance is unknown
         (sub-call reverted, decode failed, or the whole-chain multicall failed).
+
+        :return: the flattened, JSON-serializable response body.
         """
         raw = self.model_dump(
             exclude={

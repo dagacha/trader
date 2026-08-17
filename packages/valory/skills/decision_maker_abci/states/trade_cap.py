@@ -19,14 +19,17 @@
 
 """Consensus state selecting normal or capped trading mode."""
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, cast
 
 from packages.valory.skills.abstract_round_abci.base import (
     CollectSameUntilThresholdRound,
     get_name,
 )
 from packages.valory.skills.decision_maker_abci.payloads import TradeCapPayload
-from packages.valory.skills.decision_maker_abci.states.base import Event, SynchronizedData
+from packages.valory.skills.decision_maker_abci.states.base import (
+    Event,
+    SynchronizedData,
+)
 
 
 class TradeCapRound(CollectSameUntilThresholdRound):
@@ -46,7 +49,7 @@ class TradeCapRound(CollectSameUntilThresholdRound):
         if result is None:
             return None
 
-        synchronized_data, event = result
+        synchronized_data, event = cast(Tuple[SynchronizedData, Event], result)
         if event == Event.DONE and synchronized_data.mech_only_mode:
             return synchronized_data, Event.MECH_ONLY
         return synchronized_data, event
