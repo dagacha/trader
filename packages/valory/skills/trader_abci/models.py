@@ -186,6 +186,20 @@ class TraderParams(
         self.polygon_ledger_rpc: str = self._ensure("polygon_ledger_rpc", kwargs, str)
         self.use_x402: bool = self._ensure("use_x402", kwargs, bool)
         super().__init__(*args, **kwargs)
+        # Cross-validate the per-epoch trade band: with a cap in effect the
+        # agent enters mech-only mode at max_trades placements, so the counter
+        # can never reach a larger min_trades. max_trades=0 disables the cap,
+        # so the bound is only enforced when a cap is configured. Both fields
+        # are always present in real construction; getattr keeps the check a
+        # no-op for isolated construction that stubs the parent __init__.
+        max_trades = getattr(self, "max_trades", 0)
+        min_trades = getattr(self, "min_trades", 0)
+        if max_trades > 0 and min_trades > max_trades:
+            msg = (
+                f"min_trades ({min_trades}) must be <= max_trades "
+                f"({max_trades}) when max_trades is set!"
+            )
+            raise ValueError(msg)
 
 
 class SharedState(BaseSharedState):
