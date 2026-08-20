@@ -19,6 +19,7 @@
 
 """Tests for check_stop_trading_abci behaviours."""
 
+from pathlib import Path
 from typing import Any, Generator
 from unittest.mock import MagicMock, PropertyMock, patch
 
@@ -135,6 +136,7 @@ class TestComputeStopTrading:
         mock_context = MagicMock()
         mock_context.params.disable_trading = False
         mock_context.params.stop_trading_if_staking_kpi_met = False
+        mock_context.params.min_trades = 0
         with (
             patch.object(
                 type(behaviour),
@@ -164,6 +166,7 @@ class TestComputeStopTrading:
         mock_context = MagicMock()
         mock_context.params.disable_trading = False
         mock_context.params.stop_trading_if_staking_kpi_met = True
+        mock_context.params.min_trades = 0
         with (
             patch.object(
                 type(behaviour),
@@ -193,6 +196,7 @@ class TestComputeStopTrading:
         mock_context = MagicMock()
         mock_context.params.disable_trading = False
         mock_context.params.stop_trading_if_staking_kpi_met = True
+        mock_context.params.min_trades = 0
         with (
             patch.object(
                 type(behaviour),
@@ -211,6 +215,85 @@ class TestComputeStopTrading:
             assert result.stop is False
             assert result.staking_kpi_met is True
             assert result.activity_target_met is False
+
+
+class TestMinTradesGate:
+    """Tests for the MIN_TRADES gate in _compute_stop_trading."""
+
+    def _run(self, min_trades: int, trade_count: int) -> StopTradingResult:
+        """Run _compute_stop_trading with a fixed min_trades and trade count."""
+        behaviour = object.__new__(CheckStopTradingBehaviour)
+        behaviour._staking_kpi_request_count = 0
+        mock_context = MagicMock()
+        mock_context.params.disable_trading = False
+        mock_context.params.stop_trading_if_staking_kpi_met = True
+        mock_context.params.min_trades = min_trades
+        with (
+            patch.object(
+                type(behaviour),
+                "context",
+                new_callable=PropertyMock,
+                return_value=mock_context,
+            ),
+            # activity target met, so the only variable is the trade gate
+            patch.object(
+                behaviour, "_compute_activity_status", _return_gen((True, True, 8, 8))
+            ),
+            patch.object(behaviour, "durable_trade_count", return_value=trade_count),
+        ):
+            gen = behaviour._compute_stop_trading()
+            with pytest.raises(StopIteration) as exc_info:
+                next(gen)
+            return exc_info.value.value
+
+    def test_gate_disabled_by_default(self) -> None:
+        """min_trades=0 is a no-op: stop is True once the activity target is met."""
+        result = self._run(min_trades=0, trade_count=0)
+        assert result.stop is True
+
+    def test_gate_blocks_until_reached(self) -> None:
+        """Activity target met but trade count below min_trades: stop is False."""
+        result = self._run(min_trades=5, trade_count=3)
+        assert result.stop is False
+        assert result.activity_target_met is True
+
+    def test_gate_allows_at_reached(self) -> None:
+        """Activity target met and trade count at min_trades: stop is True."""
+        result = self._run(min_trades=5, trade_count=5)
+        assert result.stop is True
+
+    def test_gate_allows_when_exceeded(self) -> None:
+        """Trade count above min_trades: stop is True."""
+        result = self._run(min_trades=5, trade_count=7)
+        assert result.stop is True
+
+
+class TestDurableTradeCount:
+    """Tests for CheckStopTradingBehaviour.durable_trade_count."""
+
+    def _behaviour(self, store_path: Path) -> CheckStopTradingBehaviour:
+        behaviour = object.__new__(CheckStopTradingBehaviour)
+        mock_context = MagicMock()
+        mock_context.params.store_path = store_path
+        behaviour._context = mock_context
+        return behaviour
+
+    def test_reads_file(self, tmp_path: Path) -> None:
+        """Returns the integer stored in the counter file."""
+        (tmp_path / "successful_trade_count.txt").write_text("3")
+        behaviour = self._behaviour(tmp_path)
+        assert behaviour.durable_trade_count() == 3
+
+    def test_missing_file_returns_zero(self, tmp_path: Path) -> None:
+        """A missing file (fresh start / first epoch) returns 0."""
+        behaviour = self._behaviour(tmp_path)
+        assert behaviour.durable_trade_count() == 0
+
+    def test_unreadable_file_returns_zero(self, tmp_path: Path) -> None:
+        """A non-integer file returns 0 rather than raising."""
+        (tmp_path / "successful_trade_count.txt").write_text("not-a-number")
+        behaviour = self._behaviour(tmp_path)
+        assert behaviour.durable_trade_count() == 0
 
 
 class TestGetStakingKpiRequestCount:

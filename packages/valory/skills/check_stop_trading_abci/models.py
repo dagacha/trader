@@ -66,6 +66,13 @@ class CheckStopTradingParams(StakingParams):
         # (decoupled-activity) staking regime. Independent of the on-chain
         # liveness KPI, which is normalised to ~1 on the new contracts.
         self.activity_target: int = self._ensure("activity_target", kwargs, int)
+        # Per-epoch minimum successful trades before the agent may stop.
+        # 0 (default) disables the gate (backwards compatible). The count is
+        # read from the durable successful-trade counter that
+        # decision_maker_abci maintains and resets at each epoch boundary.
+        self.min_trades: int = self._ensure("min_trades", kwargs, int)
+        if self.min_trades < 0:
+            raise ValueError("min_trades must be non-negative!")
         self._read_polymarket_flag(kwargs)
 
         # Default KPI request address is the mech contract

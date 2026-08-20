@@ -47,6 +47,10 @@ LIVENESS_RATIO_SCALE_FACTOR = 10**18
 # A safety margin in case there is a delay between the moment the KPI condition is
 # satisfied, and the moment where the checkpoint is called.
 REQUIRED_MECH_REQUESTS_SAFETY_MARGIN = 1
+# The durable successful-trade counter file, written by decision_maker_abci
+# and reset at each staking epoch boundary. The MIN_TRADES gate reads it so
+# the count survives agent restarts (the ABCI database is rebuilt on restart).
+TRADE_COUNT_FILENAME = "successful_trade_count.txt"
 
 
 class StopTradingResult(NamedTuple):
@@ -113,6 +117,23 @@ class CheckStopTradingBehaviour(StakingInteractBaseBehaviour):
     def params(self) -> CheckStopTradingParams:
         """Return the params."""
         return cast(CheckStopTradingParams, self.context.params)
+
+    def durable_trade_count(self) -> int:
+        """Return the successful-trade count, preferring the durable file.
+
+        The file (``successful_trade_count.txt``) is maintained by
+        ``decision_maker_abci`` and survives agent restarts, whereas the ABCI
+        database is rebuilt on restart. It is therefore the authoritative
+        source for the MIN_TRADES gate. Returns ``0`` when the file is absent
+        or unreadable (fresh start / first epoch).
+
+        :return: the successful-trade counter for the current epoch.
+        """
+        try:
+            with open(self.params.store_path / TRADE_COUNT_FILENAME, "r") as f:
+                return int(f.readline())
+        except (FileNotFoundError, ValueError, TypeError, OSError):
+            return 0
 
     def _required_mech_requests(
         self,
@@ -225,7 +246,16 @@ class CheckStopTradingBehaviour(StakingInteractBaseBehaviour):
         # not the on-chain staking KPI. The name is retained for config
         # back-compat, but it now means "stop when the (regime-aware) activity
         # target is met". See ``StopTradingResult`` for the distinction.
-        stop = self.params.stop_trading_if_staking_kpi_met and activity_target_met
+        # The MIN_TRADES gate additionally requires the durable successful-trade
+        # count to have reached ``min_trades`` before the agent may stop. With
+        # the default ``min_trades=0`` the gate is a no-op (count >= 0 always).
+        trade_count = self.durable_trade_count()
+        self.context.logger.debug(f"{self.params.min_trades=} {trade_count=}")
+        stop = (
+            self.params.stop_trading_if_staking_kpi_met
+            and activity_target_met
+            and trade_count >= self.params.min_trades
+        )
         return StopTradingResult(
             stop, staking_kpi_met, activity_target_met, target, completed
         )
