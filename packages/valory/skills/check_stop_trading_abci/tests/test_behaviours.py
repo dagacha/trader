@@ -26,12 +26,16 @@ from unittest.mock import MagicMock, PropertyMock, patch
 import pytest
 
 from packages.valory.skills.check_stop_trading_abci.behaviours import (
+    TRADE_COUNT_FILENAME,
     CheckStopTradingBehaviour,
     StopTradingResult,
 )
 from packages.valory.skills.check_stop_trading_abci.models import CheckStopTradingParams
 from packages.valory.skills.check_stop_trading_abci.payloads import (
     CheckStopTradingPayload,
+)
+from packages.valory.skills.decision_maker_abci.behaviours.base import (
+    TRADE_COUNT_FILENAME as WRITER_TRADE_COUNT_FILENAME,
 )
 from packages.valory.skills.staking_abci.behaviours import StakingInteractBaseBehaviour
 from packages.valory.skills.staking_abci.rounds import StakingState
@@ -294,6 +298,16 @@ class TestDurableTradeCount:
         (tmp_path / "successful_trade_count.txt").write_text("not-a-number")
         behaviour = self._behaviour(tmp_path)
         assert behaviour.durable_trade_count() == 0
+
+    def test_filename_matches_writer(self) -> None:
+        """The reader filename must equal the writer filename.
+
+        check_stop_trading_abci cannot import decision_maker_abci at runtime
+        (package layering), so the counter filename is duplicated here. This
+        test guards against the two constants diverging, which would make the
+        MIN_TRADES gate silently read a file the writer never updates.
+        """
+        assert TRADE_COUNT_FILENAME == WRITER_TRADE_COUNT_FILENAME
 
 
 class TestGetStakingKpiRequestCount:

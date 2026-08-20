@@ -121,11 +121,16 @@ class CheckStopTradingBehaviour(StakingInteractBaseBehaviour):
     def durable_trade_count(self) -> int:
         """Return the successful-trade count, preferring the durable file.
 
-        The file (``successful_trade_count.txt``) is maintained by
-        ``decision_maker_abci`` and survives agent restarts, whereas the ABCI
-        database is rebuilt on restart. It is therefore the authoritative
-        source for the MIN_TRADES gate. Returns ``0`` when the file is absent
-        or unreadable (fresh start / first epoch).
+        The file (``successful_trade_count.txt``) is written by
+        ``decision_maker_abci`` — ``DecisionMakerBaseBehaviour.store_trade_count``
+        (invoked by ``TradeCountBehaviour`` for Omen and
+        ``PolymarketBetPlacementBehaviour`` for Polymarket) — and survives
+        agent restarts, whereas the ABCI database is rebuilt on restart. It is
+        therefore the authoritative source for the MIN_TRADES gate. The
+        filename is duplicated here (``TRADE_COUNT_FILENAME``) because the two
+        skills cannot import each other; a cross-skill test guards the value.
+        Returns ``0`` when the file is absent or unreadable (fresh start /
+        first epoch).
 
         :return: the successful-trade counter for the current epoch.
         """
