@@ -92,6 +92,7 @@ class TestCheckStopTradingParamsInit:
                 enable_position_review=True,
                 review_period_seconds=3600,
                 activity_target=8,
+                min_trades=0,
             )
         assert params.mech_contract_address == "0xabc"
         assert params.disable_trading is False
@@ -100,6 +101,7 @@ class TestCheckStopTradingParamsInit:
         assert params.enable_position_review is True
         assert params.review_period_seconds == 3600
         assert params.activity_target == 8
+        assert params.min_trades == 0
         assert params.staking_kpi_mech_count_request_address == "0xabc"
 
     def test_init_with_marketplace(self) -> None:
@@ -115,6 +117,7 @@ class TestCheckStopTradingParamsInit:
                 enable_position_review=True,
                 review_period_seconds=3600,
                 activity_target=8,
+                min_trades=3,
                 mech_marketplace_config={
                     "mech_marketplace_address": "0xMarketplace",
                     "response_timeout": 300,
@@ -123,3 +126,20 @@ class TestCheckStopTradingParamsInit:
         assert params.mech_contract_address == "0xabc"
         assert params.use_mech_marketplace is True
         assert params.staking_kpi_mech_count_request_address == "0xMarketplace"
+
+    def test_init_negative_min_trades_raises(self) -> None:
+        """min_trades < 0 is rejected at construction."""
+        mock_skill_context = MagicMock()
+        with patch.object(StakingParams, "__init__", return_value=None):
+            with pytest.raises(ValueError):
+                CheckStopTradingParams(
+                    skill_context=mock_skill_context,
+                    mech_contract_address="0xabc",
+                    disable_trading=False,
+                    stop_trading_if_staking_kpi_met=True,
+                    use_mech_marketplace=False,
+                    enable_position_review=True,
+                    review_period_seconds=3600,
+                    activity_target=8,
+                    min_trades=-1,
+                )

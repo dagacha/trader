@@ -96,7 +96,10 @@ class TestEpochResetBehaviour:
         assert payload.successful_trade_count == 0
         assert json.loads(payload.mech_only_queue) == []
         # The durable file is reset too, so the cap does not re-arm on restart.
-        assert (tmp_path / TRADE_COUNT_FILENAME).read_text() == "0"
+        assert json.loads((tmp_path / TRADE_COUNT_FILENAME).read_text()) == {
+            "count": 0,
+            "placement_keys": [],
+        }
 
     def test_noop_when_no_epoch_change(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         """When is_checkpoint_reached is False, existing values are preserved."""
@@ -129,7 +132,10 @@ class TestEpochResetBehaviour:
         assert isinstance(payload, EpochResetPayload)
         assert payload.successful_trade_count == 0
         assert json.loads(payload.mech_only_queue) == []
-        assert (tmp_path / TRADE_COUNT_FILENAME).read_text() == "0"
+        assert json.loads((tmp_path / TRADE_COUNT_FILENAME).read_text()) == {
+            "count": 0,
+            "placement_keys": [],
+        }
 
     def test_payload_sender_is_agent_address(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         """The payload is signed by the agent's address."""

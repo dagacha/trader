@@ -19,6 +19,7 @@
 
 """This module contains the behaviour for sampling a bet."""
 
+import hashlib
 import json
 from typing import Any, Generator
 
@@ -215,6 +216,30 @@ class PolymarketBetPlacementBehaviour(
                 self.policy.tool_used(self.synchronized_data.mech_tool)
                 policy_str = self.policy.serialize()
                 self._store_policy()
+
+            # Canonicalize the signed order before hashing: normal and duplicate
+            # responses may serialize identical JSON with different key order.
+            # Mock/legacy responses without a signed order use the placement
+            # cache key.
+            placement_identity = cache_key
+            if signed_order_json:
+                try:
+                    placement_identity = json.dumps(
+                        json.loads(signed_order_json),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                except (TypeError, ValueError):
+                    placement_identity = signed_order_json
+            placement_key = hashlib.sha256(
+                placement_identity.encode("utf-8")
+            ).hexdigest()
+            new_count = self.record_successful_placement(placement_key)
+            if new_count is not None:
+                self.context.logger.info(
+                    f"Recorded successful Polymarket placement; "
+                    f"successful_trade_count is now {new_count}."
+                )
 
         payload = PolymarketBetPlacementPayload(
             self.context.agent_address,

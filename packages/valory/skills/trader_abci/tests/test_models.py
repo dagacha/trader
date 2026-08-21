@@ -22,6 +22,8 @@
 from typing import Any, Dict
 from unittest.mock import MagicMock, PropertyMock, patch
 
+import pytest
+
 from packages.valory.skills.decision_maker_abci.models import (
     SharedState as BaseSharedState,
 )
@@ -65,6 +67,42 @@ class TestTraderParams:
         assert params.gnosis_ledger_rpc == "https://gnosis-rpc.example.com"
         assert params.polygon_ledger_rpc == "https://polygon-rpc.example.com"
         assert params.use_x402 is True
+
+    def _init_with_trade_band(self, min_trades: int, max_trades: int) -> TraderParams:
+        """Construct TraderParams with a stubbed parent init and a trade band."""
+        kwargs: Dict[str, Any] = {
+            "mech_interact_round_timeout_seconds": 300,
+            "genai_api_key": "test-key",
+            "x402_payment_requirements": {"threshold": 100},
+            "lifi_quote_to_amount_url": "https://example.com/lifi",
+            "gnosis_ledger_rpc": "https://gnosis-rpc.example.com",
+            "polygon_ledger_rpc": "https://polygon-rpc.example.com",
+            "use_x402": True,
+            "skill_context": MagicMock(),
+        }
+        with patch.object(TraderParams.__mro__[1], "__init__", return_value=None):
+            params = TraderParams.__new__(TraderParams)
+            # Simulate the parent __init__ having populated the trade fields.
+            params.min_trades = min_trades
+            params.max_trades = max_trades
+            TraderParams.__init__(params, **kwargs)
+        return params
+
+    def test_min_trades_le_max_trades_allowed(self) -> None:
+        """min_trades <= max_trades is accepted."""
+        params = self._init_with_trade_band(min_trades=3, max_trades=5)
+        assert params.min_trades == 3
+        assert params.max_trades == 5
+
+    def test_min_trades_gt_max_trades_raises(self) -> None:
+        """min_trades > max_trades (with a cap set) is rejected."""
+        with pytest.raises(ValueError):
+            self._init_with_trade_band(min_trades=5, max_trades=3)
+
+    def test_min_trades_gt_zero_no_cap_allowed(self) -> None:
+        """max_trades=0 disables the cap, so a larger min_trades is allowed."""
+        params = self._init_with_trade_band(min_trades=5, max_trades=0)
+        assert params.min_trades == 5
 
 
 class TestSharedState:

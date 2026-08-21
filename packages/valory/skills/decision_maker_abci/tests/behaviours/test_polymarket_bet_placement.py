@@ -19,6 +19,7 @@
 
 """Tests for PolymarketBetPlacementBehaviour."""
 
+import hashlib
 import json
 from unittest.mock import MagicMock, PropertyMock, patch
 
@@ -54,6 +55,7 @@ def _make_behaviour():  # type: ignore[no-untyped-def]
     behaviour._mech_hash = ""
     behaviour._utilized_tools = {}
     behaviour._mech_tools = set()
+    behaviour.record_successful_placement = MagicMock(return_value=1)  # type: ignore[method-assign]
 
     context = MagicMock()
     context.agent_address = "test_agent"
@@ -252,6 +254,91 @@ class TestPolymarketBetPlacementBehaviour:
 
         assert len(payloads_sent) == 1
         assert payloads_sent[0].event == Event.BET_PLACEMENT_DONE.value
+
+    def test_async_act_success_increments_trade_count(self) -> None:
+        """A successful Polymarket placement increments the durable trade counter."""
+        behaviour = _make_behaviour()
+        behaviour.token_balance = 1000
+
+        def mock_wait(condition) -> None:  # type: ignore[no-untyped-def, misc]
+            """Mock wait for condition."""
+            yield  # type: ignore[no-untyped-def]
+
+        behaviour.wait_for_condition_with_sleep = mock_wait  # type: ignore[method-assign]
+        behaviour.check_balance = lambda: _return_gen(True)  # type: ignore[method-assign]
+        behaviour._store_utilized_tools = MagicMock()  # type: ignore[method-assign]
+        behaviour.update_bet_transaction_information = MagicMock()  # type: ignore[method-assign]
+        recorded: list = []
+
+        def record_successful_placement(key: str) -> int:
+            """Capture the placement digest and return the incremented count."""
+            recorded.append(key)
+            return 5
+
+        behaviour.record_successful_placement = record_successful_placement  # type: ignore[method-assign]
+
+        mock_bet = MagicMock()
+        mock_bet.get_outcome.return_value = "Yes"
+        mock_bet.outcome_token_ids = {"Yes": "token123"}
+        mock_bet.condition_id = "0xcond123"
+
+        response = {
+            "success": True,
+            "orderID": "order1",
+            "transactionsHashes": ["0xhash"],
+            "signed_order_json": '{"salt": 123, "maker": "0x1"}',
+            "error": None,
+            "status": "matched",
+        }
+        behaviour.send_polymarket_connection_request = lambda payload: _return_gen(  # type: ignore[method-assign]
+            response
+        )
+
+        with patch.object(
+            type(behaviour), "sampled_bet", new_callable=PropertyMock
+        ) as mock_sb:
+            mock_sb.return_value = mock_bet
+            with patch.object(
+                type(behaviour), "outcome_index", new_callable=PropertyMock
+            ) as mock_oi:
+                mock_oi.return_value = 0
+                with patch.object(
+                    type(behaviour), "investment_amount", new_callable=PropertyMock
+                ) as mock_inv:
+                    mock_inv.return_value = 100
+                    with patch.object(
+                        type(behaviour),
+                        "synchronized_data",
+                        new_callable=PropertyMock,
+                    ) as mock_sd:
+                        mock_sd.return_value = MagicMock(
+                            period_count=1,
+                            cached_signed_orders={},
+                            mech_tool="tool1",
+                            is_policy_set=False,
+                        )
+                        with patch.object(
+                            type(behaviour),
+                            "get_active_sampled_bet",
+                        ) as mock_gasb:
+                            mock_gasb.return_value = mock_bet
+
+                            behaviour.usdc_to_native = lambda x: x / 10**6  # type: ignore[method-assign]
+
+                            def _finish(payload):  # type: ignore[no-untyped-def]
+                                """Finish behaviour that yields and returns."""
+                                yield  # type: ignore[untyped-def]
+
+                            behaviour.finish_behaviour = _finish  # type: ignore[method-assign]
+                            gen = behaviour.async_act()
+                            try:
+                                while True:
+                                    next(gen)
+                            except StopIteration:
+                                pass
+
+        expected_key = hashlib.sha256(b'{"maker":"0x1","salt":123}').hexdigest()
+        assert recorded == [expected_key]
 
     def test_async_act_with_deposit_wallet_adds_funder(self) -> None:
         """When the store resolves a DepositWallet, the bet request adds funder."""
@@ -471,7 +558,7 @@ class TestPolymarketBetPlacementBehaviour:
             "success": False,
             "orderID": None,  # type: ignore[var-annotated]
             "transactionsHashes": [],
-            "signed_order_json": None,
+            "signed_order_json": '{"maker": "0x1", "salt": 123}',
             "error": "Duplicated order",
             "status": "failed",
         }
@@ -523,6 +610,8 @@ class TestPolymarketBetPlacementBehaviour:
 
         assert len(payloads_sent) == 1
         assert payloads_sent[0].event == Event.BET_PLACEMENT_DONE.value
+        expected_key = hashlib.sha256(b'{"maker":"0x1","salt":123}').hexdigest()
+        behaviour.record_successful_placement.assert_called_once_with(expected_key)
 
     def test_async_act_no_orderbook_error(self) -> None:
         """When no orderbook exists, should send impossible payload."""

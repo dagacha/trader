@@ -19,6 +19,7 @@
 
 """Tests for TradeCountBehaviour."""
 
+import json
 from unittest.mock import MagicMock, PropertyMock, patch
 
 from packages.valory.skills.decision_maker_abci.behaviours.base import (
@@ -99,7 +100,10 @@ class TestTradeCountBehaviour:
         assert isinstance(payload, TradeCountPayload)
         assert payload.successful_trade_count == 1
         # The new count is persisted to the durable file.
-        assert (tmp_path / TRADE_COUNT_FILENAME).read_text() == "1"
+        assert json.loads((tmp_path / TRADE_COUNT_FILENAME).read_text()) == {
+            "count": 1,
+            "placement_keys": [],
+        }
 
     def test_increments_counter_from_positive(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         """The payload carries the incremented count for a positive baseline."""
@@ -107,7 +111,10 @@ class TestTradeCountBehaviour:
         payload = _run_async_act(behaviour, 4)
         assert isinstance(payload, TradeCountPayload)
         assert payload.successful_trade_count == 5
-        assert (tmp_path / TRADE_COUNT_FILENAME).read_text() == "5"
+        assert json.loads((tmp_path / TRADE_COUNT_FILENAME).read_text()) == {
+            "count": 5,
+            "placement_keys": [],
+        }
 
     def test_increments_from_durable_file_after_restart(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         """The increment is based on the persisted file, not the wiped DB value.
@@ -121,7 +128,10 @@ class TestTradeCountBehaviour:
         behaviour = _make_behaviour(store_path=tmp_path)
         payload = _run_async_act(behaviour, 0)
         assert payload.successful_trade_count == 3
-        assert (tmp_path / TRADE_COUNT_FILENAME).read_text() == "3"
+        assert json.loads((tmp_path / TRADE_COUNT_FILENAME).read_text()) == {
+            "count": 3,
+            "placement_keys": [],
+        }
 
     def test_payload_sender_is_agent_address(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         """The payload is signed by the agent's address."""
