@@ -26,9 +26,9 @@ from unittest.mock import MagicMock, PropertyMock, patch
 import pytest
 
 from packages.valory.skills.check_stop_trading_abci.behaviours import (
-    TRADE_COUNT_FILENAME,
     CheckStopTradingBehaviour,
     StopTradingResult,
+    TRADE_COUNT_FILENAME,
 )
 from packages.valory.skills.check_stop_trading_abci.models import CheckStopTradingParams
 from packages.valory.skills.check_stop_trading_abci.payloads import (
