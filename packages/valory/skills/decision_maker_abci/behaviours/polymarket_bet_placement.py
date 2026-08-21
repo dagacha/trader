@@ -217,12 +217,20 @@ class PolymarketBetPlacementBehaviour(
                 policy_str = self.policy.serialize()
                 self._store_policy()
 
-            # The signed order is stable across a normal success and a
-            # duplicate retry. Persist its digest so a restart between the
-            # placement and round finalization cannot count the same trade
-            # twice. Mock/legacy responses without the signed order fall back
-            # to the existing placement cache key.
-            placement_identity = signed_order_json or cache_key
+            # Canonicalize the signed order before hashing: normal and duplicate
+            # responses may serialize identical JSON with different key order.
+            # Mock/legacy responses without a signed order use the placement
+            # cache key.
+            placement_identity = cache_key
+            if signed_order_json:
+                try:
+                    placement_identity = json.dumps(
+                        json.loads(signed_order_json),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                except (TypeError, ValueError):
+                    placement_identity = signed_order_json
             placement_key = hashlib.sha256(
                 placement_identity.encode("utf-8")
             ).hexdigest()

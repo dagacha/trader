@@ -199,14 +199,33 @@ class TestPlacementCountIdempotency:
         behaviour = self._behaviour(tmp_path)
         assert behaviour.read_counted_placement_keys() == set()
 
-    def test_unwritable_keys_file_prevents_increment(self, tmp_path: Path) -> None:
-        """Failure to persist idempotency state prevents an unsafe increment."""
+    def test_unwritable_state_prevents_increment(self, tmp_path: Path) -> None:
+        """Failure to atomically persist state prevents an unsafe increment."""
         behaviour = self._behaviour(tmp_path)
-        behaviour.counted_placement_keys_filepath.mkdir()
-        behaviour.store_trade_count(4)
+        assert behaviour.store_trade_count(4)
+        behaviour.trade_count_temp_filepath.mkdir()
 
         assert behaviour.record_successful_placement("signed-order-digest") is None
         assert behaviour.durable_trade_count() == 4
+
+    def test_legacy_integer_file_is_migrated(self, tmp_path: Path) -> None:
+        """A legacy integer counter is preserved when placement keys are added."""
+        behaviour = self._behaviour(tmp_path)
+        behaviour.trade_count_filepath.write_text("4")
+
+        assert behaviour.record_successful_placement("signed-order-digest") == 5
+        assert behaviour.read_trade_count_state() == (
+            5,
+            {"signed-order-digest"},
+        )
+
+    def test_malformed_state_is_unavailable(self, tmp_path: Path) -> None:
+        """Malformed atomic state fails closed."""
+        behaviour = self._behaviour(tmp_path)
+        behaviour.trade_count_filepath.write_text(
+            '{"count": true, "placement_keys": []}'
+        )
+        assert behaviour.read_trade_count_state() == (None, set())
 
 
 @st.composite

@@ -286,7 +286,7 @@ class TestPolymarketBetPlacementBehaviour:
             "success": True,
             "orderID": "order1",
             "transactionsHashes": ["0xhash"],
-            "signed_order_json": '{"salt": 123}',
+            "signed_order_json": '{"salt": 123, "maker": "0x1"}',
             "error": None,
             "status": "matched",
         }
@@ -337,7 +337,7 @@ class TestPolymarketBetPlacementBehaviour:
                             except StopIteration:
                                 pass
 
-        expected_key = hashlib.sha256(b'{"salt": 123}').hexdigest()
+        expected_key = hashlib.sha256(b'{"maker":"0x1","salt":123}').hexdigest()
         assert recorded == [expected_key]
 
     def test_async_act_with_deposit_wallet_adds_funder(self) -> None:
@@ -558,7 +558,7 @@ class TestPolymarketBetPlacementBehaviour:
             "success": False,
             "orderID": None,  # type: ignore[var-annotated]
             "transactionsHashes": [],
-            "signed_order_json": '{"salt": 123}',
+            "signed_order_json": '{"maker": "0x1", "salt": 123}',
             "error": "Duplicated order",
             "status": "failed",
         }
@@ -610,7 +610,7 @@ class TestPolymarketBetPlacementBehaviour:
 
         assert len(payloads_sent) == 1
         assert payloads_sent[0].event == Event.BET_PLACEMENT_DONE.value
-        expected_key = hashlib.sha256(b'{"salt": 123}').hexdigest()
+        expected_key = hashlib.sha256(b'{"maker":"0x1","salt":123}').hexdigest()
         behaviour.record_successful_placement.assert_called_once_with(expected_key)
 
     def test_async_act_no_orderbook_error(self) -> None:

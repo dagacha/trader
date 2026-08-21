@@ -288,6 +288,14 @@ class TestDurableTradeCount:
         behaviour = self._behaviour(tmp_path)
         assert behaviour.durable_trade_count() == 3
 
+    def test_reads_atomic_state(self, tmp_path: Path) -> None:
+        """Returns the count from the combined atomic state record."""
+        (tmp_path / "successful_trade_count.txt").write_text(
+            '{"count": 4, "placement_keys": ["digest"]}'
+        )
+        behaviour = self._behaviour(tmp_path)
+        assert behaviour.durable_trade_count() == 4
+
     def test_missing_file_returns_zero(self, tmp_path: Path) -> None:
         """A missing file (fresh start / first epoch) returns 0."""
         behaviour = self._behaviour(tmp_path)

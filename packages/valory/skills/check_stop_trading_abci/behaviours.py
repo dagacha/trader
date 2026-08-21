@@ -19,6 +19,7 @@
 
 """This module contains the behaviours for the check stop trading skill."""
 
+import json
 import math
 from typing import Any, Generator, NamedTuple, Set, Tuple, Type, cast
 
@@ -135,9 +136,17 @@ class CheckStopTradingBehaviour(StakingInteractBaseBehaviour):
         :return: the successful-trade counter for the current epoch.
         """
         try:
-            with open(self.params.store_path / TRADE_COUNT_FILENAME, "r") as f:
-                return int(f.readline())
-        except (FileNotFoundError, ValueError, TypeError, OSError):
+            raw_state = (self.params.store_path / TRADE_COUNT_FILENAME).read_text()
+            try:
+                return int(raw_state)
+            except ValueError:
+                count = json.loads(raw_state)["count"]
+                return (
+                    count
+                    if isinstance(count, int) and not isinstance(count, bool)
+                    else 0
+                )
+        except (FileNotFoundError, KeyError, ValueError, TypeError, OSError):
             return 0
 
     def _required_mech_requests(

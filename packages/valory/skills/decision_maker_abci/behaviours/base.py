@@ -20,6 +20,7 @@
 """This module contains the base behaviour for the 'decision_maker_abci' skill."""
 
 import dataclasses
+import json
 import os
 from abc import ABC
 from copy import deepcopy
@@ -100,7 +101,6 @@ INIT_LIQUIDITY_INFO = LiquidityInfo()
 # The ABCI synchronized-data DB is rebuilt from scratch on restart, so a
 # counter kept only there resets to 0 and silently re-arms the cap.
 TRADE_COUNT_FILENAME = "successful_trade_count.txt"
-COUNTED_PLACEMENT_KEYS_FILENAME = "counted_placement_keys.txt"
 
 
 class TradingOperation(str, Enum):
@@ -199,93 +199,105 @@ class DecisionMakerBaseBehaviour(BetsManagerBehaviour, ABC):
         return self.params.store_path / TRADE_COUNT_FILENAME
 
     @property
-    def counted_placement_keys_filepath(self) -> Path:
-        """Return the durable counted-placement keys file path."""
-        return self.params.store_path / COUNTED_PLACEMENT_KEYS_FILENAME
+    def trade_count_temp_filepath(self) -> Path:
+        """Return the temporary path used for atomic counter-state replacement."""
+        return self.trade_count_filepath.with_name(f".{TRADE_COUNT_FILENAME}.tmp")
 
-    def read_stored_trade_count(self) -> Optional[int]:
-        """Read the durable successful-trade counter from the agent data dir.
+    def read_trade_count_state(self) -> Tuple[Optional[int], Set[str]]:
+        """Read the durable count and idempotency keys.
 
-        :return: the persisted counter, or ``None`` if it is unavailable.
+        Legacy files containing only an integer remain supported.
+
+        :return: persisted count and placement keys, or ``(None, set())``.
         """
         try:
-            with open(self.trade_count_filepath, "r") as trade_count_file:
-                return int(trade_count_file.readline())
-        except (FileNotFoundError, ValueError, TypeError, OSError):
-            return None
+            raw_state = self.trade_count_filepath.read_text()
+            try:
+                return int(raw_state), set()
+            except ValueError:
+                state = json.loads(raw_state)
 
-    def store_trade_count(self, count: int) -> None:
-        """Persist the successful-trade counter to the agent data dir.
+            count = state["count"]
+            placement_keys = state["placement_keys"]
+            if (
+                isinstance(count, bool)
+                or not isinstance(count, int)
+                or not isinstance(placement_keys, list)
+                or not all(isinstance(key, str) for key in placement_keys)
+            ):
+                return None, set()
+            return count, set(placement_keys)
+        except (FileNotFoundError, KeyError, TypeError, ValueError, OSError):
+            return None, set()
 
-        :param count: the counter value to persist.
+    def store_trade_count_state(self, count: int, placement_keys: Set[str]) -> bool:
+        """Atomically persist count and placement keys in one record.
+
+        :param count: successful-trade counter to persist.
+        :param placement_keys: placement keys included in the counter.
+        :return: whether the complete state was persisted.
         """
+        state = {
+            "count": count,
+            "placement_keys": sorted(placement_keys),
+        }
         try:
-            with open(self.trade_count_filepath, "w") as trade_count_file:
-                trade_count_file.write(str(count))
+            self.trade_count_temp_filepath.write_text(json.dumps(state, sort_keys=True))
+            os.replace(self.trade_count_temp_filepath, self.trade_count_filepath)
+            return True
         except OSError as exc:
             self.context.logger.error(
-                f"Failed to persist the successful-trade counter to "
+                f"Failed to persist successful-trade state to "
                 f"{self.trade_count_filepath!r}: {exc}"
             )
+            return False
+
+    def read_stored_trade_count(self) -> Optional[int]:
+        """Read the durable successful-trade counter.
+
+        :return: persisted counter, or ``None`` if unavailable.
+        """
+        return self.read_trade_count_state()[0]
+
+    def store_trade_count(self, count: int) -> bool:
+        """Atomically persist the counter while preserving placement keys.
+
+        :param count: counter value to persist.
+        :return: whether the complete state was persisted.
+        """
+        _, placement_keys = self.read_trade_count_state()
+        return self.store_trade_count_state(count, placement_keys)
 
     def read_counted_placement_keys(self) -> Set[str]:
         """Read placement keys already included in the durable trade counter.
 
         :return: counted placement keys, or an empty set when unavailable.
         """
-        try:
-            with open(
-                self.counted_placement_keys_filepath, "r"
-            ) as counted_placements_file:
-                return {
-                    key for line in counted_placements_file if (key := line.strip())
-                }
-        except (FileNotFoundError, TypeError, OSError):
-            return set()
-
-    def store_counted_placement_keys(self, placement_keys: Set[str]) -> bool:
-        """Persist placement keys already included in the trade counter.
-
-        :param placement_keys: placement keys to persist.
-        :return: whether the keys were persisted successfully.
-        """
-        try:
-            with open(
-                self.counted_placement_keys_filepath, "w"
-            ) as counted_placements_file:
-                counted_placements_file.write(NEW_LINE.join(sorted(placement_keys)))
-            return True
-        except OSError as exc:
-            self.context.logger.error(
-                f"Failed to persist counted placement keys to "
-                f"{self.counted_placement_keys_filepath!r}: {exc}"
-            )
-            return False
+        return self.read_trade_count_state()[1]
 
     def record_successful_placement(self, placement_key: str) -> Optional[int]:
-        """Advance the durable trade counter once for a placement.
-
-        The durable placement key makes retries idempotent. The key is stored
-        before advancing the counter, so an interruption cannot over-count a
-        placement and prematurely satisfy MIN_TRADES or MAX_TRADES.
+        """Atomically advance the durable counter once for a placement.
 
         :param placement_key: stable identifier of the successful placement.
-        :return: the new counter, or ``None`` when already counted/unpersisted.
+        :return: the new counter, or ``None`` if already counted/unpersisted.
         """
-        counted_placement_keys = self.read_counted_placement_keys()
-        if placement_key in counted_placement_keys:
+        stored_count, placement_keys = self.read_trade_count_state()
+        if placement_key in placement_keys:
             self.context.logger.info(
                 f"Placement {placement_key!r} was already counted; "
                 "skipping the successful-trade increment."
             )
             return None
 
-        counted_placement_keys.add(placement_key)
-        if not self.store_counted_placement_keys(counted_placement_keys):
+        count = (
+            stored_count
+            if stored_count is not None
+            else self.synchronized_data.successful_trade_count
+        )
+        new_count = count + 1
+        placement_keys.add(placement_key)
+        if not self.store_trade_count_state(new_count, placement_keys):
             return None
-
-        new_count = self.durable_trade_count() + 1
-        self.store_trade_count(new_count)
         return new_count
 
     def durable_trade_count(self) -> int:

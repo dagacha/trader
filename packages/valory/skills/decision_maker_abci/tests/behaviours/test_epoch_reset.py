@@ -23,7 +23,6 @@ import json
 from unittest.mock import MagicMock, PropertyMock, patch
 
 from packages.valory.skills.decision_maker_abci.behaviours.base import (
-    COUNTED_PLACEMENT_KEYS_FILENAME,
     TRADE_COUNT_FILENAME,
 )
 from packages.valory.skills.decision_maker_abci.behaviours.epoch_reset import (
@@ -89,7 +88,6 @@ class TestEpochResetBehaviour:
     def test_resets_on_new_epoch(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         """When is_checkpoint_reached is True, counter resets to 0 and queue is cleared."""
         (tmp_path / TRADE_COUNT_FILENAME).write_text("5")
-        (tmp_path / COUNTED_PLACEMENT_KEYS_FILENAME).write_text("key-1\nkey-2")
         behaviour = _make_behaviour(store_path=tmp_path)
         payload = _run_async_act(
             behaviour, is_checkpoint=True, current_count=5, current_queue=["m1", "m2"]
@@ -98,8 +96,10 @@ class TestEpochResetBehaviour:
         assert payload.successful_trade_count == 0
         assert json.loads(payload.mech_only_queue) == []
         # The durable file is reset too, so the cap does not re-arm on restart.
-        assert (tmp_path / TRADE_COUNT_FILENAME).read_text() == "0"
-        assert (tmp_path / COUNTED_PLACEMENT_KEYS_FILENAME).read_text() == ""
+        assert json.loads((tmp_path / TRADE_COUNT_FILENAME).read_text()) == {
+            "count": 0,
+            "placement_keys": [],
+        }
 
     def test_noop_when_no_epoch_change(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         """When is_checkpoint_reached is False, existing values are preserved."""
@@ -132,7 +132,10 @@ class TestEpochResetBehaviour:
         assert isinstance(payload, EpochResetPayload)
         assert payload.successful_trade_count == 0
         assert json.loads(payload.mech_only_queue) == []
-        assert (tmp_path / TRADE_COUNT_FILENAME).read_text() == "0"
+        assert json.loads((tmp_path / TRADE_COUNT_FILENAME).read_text()) == {
+            "count": 0,
+            "placement_keys": [],
+        }
 
     def test_payload_sender_is_agent_address(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         """The payload is signed by the agent's address."""
