@@ -100,6 +100,7 @@ INIT_LIQUIDITY_INFO = LiquidityInfo()
 # The ABCI synchronized-data DB is rebuilt from scratch on restart, so a
 # counter kept only there resets to 0 and silently re-arms the cap.
 TRADE_COUNT_FILENAME = "successful_trade_count.txt"
+COUNTED_PLACEMENT_KEYS_FILENAME = "counted_placement_keys.txt"
 
 
 class TradingOperation(str, Enum):
@@ -197,6 +198,11 @@ class DecisionMakerBaseBehaviour(BetsManagerBehaviour, ABC):
         """Return the path of the durable successful-trade counter file."""
         return self.params.store_path / TRADE_COUNT_FILENAME
 
+    @property
+    def counted_placement_keys_filepath(self) -> Path:
+        """Return the durable counted-placement keys file path."""
+        return self.params.store_path / COUNTED_PLACEMENT_KEYS_FILENAME
+
     def read_stored_trade_count(self) -> Optional[int]:
         """Read the durable successful-trade counter from the agent data dir.
 
@@ -221,6 +227,66 @@ class DecisionMakerBaseBehaviour(BetsManagerBehaviour, ABC):
                 f"Failed to persist the successful-trade counter to "
                 f"{self.trade_count_filepath!r}: {exc}"
             )
+
+    def read_counted_placement_keys(self) -> Set[str]:
+        """Read placement keys already included in the durable trade counter.
+
+        :return: counted placement keys, or an empty set when unavailable.
+        """
+        try:
+            with open(
+                self.counted_placement_keys_filepath, "r"
+            ) as counted_placements_file:
+                return {
+                    key for line in counted_placements_file if (key := line.strip())
+                }
+        except (FileNotFoundError, TypeError, OSError):
+            return set()
+
+    def store_counted_placement_keys(self, placement_keys: Set[str]) -> bool:
+        """Persist placement keys already included in the trade counter.
+
+        :param placement_keys: placement keys to persist.
+        :return: whether the keys were persisted successfully.
+        """
+        try:
+            with open(
+                self.counted_placement_keys_filepath, "w"
+            ) as counted_placements_file:
+                counted_placements_file.write(NEW_LINE.join(sorted(placement_keys)))
+            return True
+        except OSError as exc:
+            self.context.logger.error(
+                f"Failed to persist counted placement keys to "
+                f"{self.counted_placement_keys_filepath!r}: {exc}"
+            )
+            return False
+
+    def record_successful_placement(self, placement_key: str) -> Optional[int]:
+        """Advance the durable trade counter once for a placement.
+
+        The durable placement key makes retries idempotent. The key is stored
+        before advancing the counter, so an interruption cannot over-count a
+        placement and prematurely satisfy MIN_TRADES or MAX_TRADES.
+
+        :param placement_key: stable identifier of the successful placement.
+        :return: the new counter, or ``None`` when already counted/unpersisted.
+        """
+        counted_placement_keys = self.read_counted_placement_keys()
+        if placement_key in counted_placement_keys:
+            self.context.logger.info(
+                f"Placement {placement_key!r} was already counted; "
+                "skipping the successful-trade increment."
+            )
+            return None
+
+        counted_placement_keys.add(placement_key)
+        if not self.store_counted_placement_keys(counted_placement_keys):
+            return None
+
+        new_count = self.durable_trade_count() + 1
+        self.store_trade_count(new_count)
+        return new_count
 
     def durable_trade_count(self) -> int:
         """Return the counter, preferring the durable file over synchronized data.

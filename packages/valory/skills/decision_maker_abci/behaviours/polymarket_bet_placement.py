@@ -19,6 +19,7 @@
 
 """This module contains the behaviour for sampling a bet."""
 
+import hashlib
 import json
 from typing import Any, Generator
 
@@ -216,16 +217,21 @@ class PolymarketBetPlacementBehaviour(
                 policy_str = self.policy.serialize()
                 self._store_policy()
 
-            # Increment the durable file-backed successful-trade counter so the
-            # count survives agent restarts and is shared with the MIN_TRADES
-            # stop gate. Omen's path does this via TradeCountRound; Polymarket
-            # places off-chain, so it records the count at the success point.
-            new_count = self.durable_trade_count() + 1
-            self.store_trade_count(new_count)
-            self.context.logger.info(
-                f"Recorded successful Polymarket placement; "
-                f"successful_trade_count is now {new_count}."
-            )
+            # The signed order is stable across a normal success and a
+            # duplicate retry. Persist its digest so a restart between the
+            # placement and round finalization cannot count the same trade
+            # twice. Mock/legacy responses without the signed order fall back
+            # to the existing placement cache key.
+            placement_identity = signed_order_json or cache_key
+            placement_key = hashlib.sha256(
+                placement_identity.encode("utf-8")
+            ).hexdigest()
+            new_count = self.record_successful_placement(placement_key)
+            if new_count is not None:
+                self.context.logger.info(
+                    f"Recorded successful Polymarket placement; "
+                    f"successful_trade_count is now {new_count}."
+                )
 
         payload = PolymarketBetPlacementPayload(
             self.context.agent_address,

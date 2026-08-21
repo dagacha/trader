@@ -19,6 +19,7 @@
 
 """Tests for PolymarketBetPlacementBehaviour."""
 
+import hashlib
 import json
 from unittest.mock import MagicMock, PropertyMock, patch
 
@@ -54,6 +55,7 @@ def _make_behaviour():  # type: ignore[no-untyped-def]
     behaviour._mech_hash = ""
     behaviour._utilized_tools = {}
     behaviour._mech_tools = set()
+    behaviour.record_successful_placement = MagicMock(return_value=1)  # type: ignore[method-assign]
 
     context = MagicMock()
     context.agent_address = "test_agent"
@@ -266,10 +268,14 @@ class TestPolymarketBetPlacementBehaviour:
         behaviour.check_balance = lambda: _return_gen(True)  # type: ignore[method-assign]
         behaviour._store_utilized_tools = MagicMock()  # type: ignore[method-assign]
         behaviour.update_bet_transaction_information = MagicMock()  # type: ignore[method-assign]
-        # Stub the durable counter: start at 4, capture the stored value.
-        behaviour.durable_trade_count = lambda: 4  # type: ignore[method-assign]
-        stored: list = []
-        behaviour.store_trade_count = lambda count: stored.append(count)  # type: ignore[method-assign]
+        recorded: list = []
+
+        def record_successful_placement(key: str) -> int:
+            """Capture the placement digest and return the incremented count."""
+            recorded.append(key)
+            return 5
+
+        behaviour.record_successful_placement = record_successful_placement  # type: ignore[method-assign]
 
         mock_bet = MagicMock()
         mock_bet.get_outcome.return_value = "Yes"
@@ -280,7 +286,7 @@ class TestPolymarketBetPlacementBehaviour:
             "success": True,
             "orderID": "order1",
             "transactionsHashes": ["0xhash"],
-            "signed_order_json": None,
+            "signed_order_json": '{"salt": 123}',
             "error": None,
             "status": "matched",
         }
@@ -331,8 +337,8 @@ class TestPolymarketBetPlacementBehaviour:
                             except StopIteration:
                                 pass
 
-        # The durable counter must have been advanced from 4 to 5.
-        assert stored == [5]
+        expected_key = hashlib.sha256(b'{"salt": 123}').hexdigest()
+        assert recorded == [expected_key]
 
     def test_async_act_with_deposit_wallet_adds_funder(self) -> None:
         """When the store resolves a DepositWallet, the bet request adds funder."""
@@ -552,7 +558,7 @@ class TestPolymarketBetPlacementBehaviour:
             "success": False,
             "orderID": None,  # type: ignore[var-annotated]
             "transactionsHashes": [],
-            "signed_order_json": None,
+            "signed_order_json": '{"salt": 123}',
             "error": "Duplicated order",
             "status": "failed",
         }
@@ -604,6 +610,8 @@ class TestPolymarketBetPlacementBehaviour:
 
         assert len(payloads_sent) == 1
         assert payloads_sent[0].event == Event.BET_PLACEMENT_DONE.value
+        expected_key = hashlib.sha256(b'{"salt": 123}').hexdigest()
+        behaviour.record_successful_placement.assert_called_once_with(expected_key)
 
     def test_async_act_no_orderbook_error(self) -> None:
         """When no orderbook exists, should send impossible payload."""

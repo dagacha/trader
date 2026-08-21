@@ -172,6 +172,43 @@ def test_remove_fraction_wei_incorrect_fraction(amount: int, fraction: float) ->
         remove_fraction_wei(amount, fraction)
 
 
+class TestPlacementCountIdempotency:
+    """Test durable placement-key idempotency."""
+
+    @staticmethod
+    def _behaviour(store_path: Path) -> DecisionMakerBaseBehaviour:
+        """Build a base behaviour with a durable store path."""
+        behaviour = object.__new__(BlacklistingBehaviour)
+        context = MagicMock()
+        context.params.store_path = store_path
+        behaviour._context = context
+        return behaviour
+
+    def test_duplicate_retry_is_counted_once(self, tmp_path: Path) -> None:
+        """An already-persisted placement does not advance the counter twice."""
+        behaviour = self._behaviour(tmp_path)
+        behaviour.store_trade_count(4)
+
+        assert behaviour.record_successful_placement("signed-order-digest") == 5
+        assert behaviour.record_successful_placement("signed-order-digest") is None
+        assert behaviour.durable_trade_count() == 5
+        assert behaviour.read_counted_placement_keys() == {"signed-order-digest"}
+
+    def test_missing_keys_file_returns_empty_set(self, tmp_path: Path) -> None:
+        """A fresh store has no counted placements."""
+        behaviour = self._behaviour(tmp_path)
+        assert behaviour.read_counted_placement_keys() == set()
+
+    def test_unwritable_keys_file_prevents_increment(self, tmp_path: Path) -> None:
+        """Failure to persist idempotency state prevents an unsafe increment."""
+        behaviour = self._behaviour(tmp_path)
+        behaviour.counted_placement_keys_filepath.mkdir()
+        behaviour.store_trade_count(4)
+
+        assert behaviour.record_successful_placement("signed-order-digest") is None
+        assert behaviour.durable_trade_count() == 4
+
+
 @st.composite
 def strategy_executables(
     draw: st.DrawFn,

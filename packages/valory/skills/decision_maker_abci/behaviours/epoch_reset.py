@@ -43,6 +43,7 @@ class EpochResetBehaviour(DecisionMakerBaseBehaviour):
                 # New staking epoch: reset the cap and clear the Mech-only queue.
                 # Reset the durable file too, otherwise the pre-epoch count would
                 # be reloaded on the next restart and keep the cap armed.
+                self.store_counted_placement_keys(set())
                 self.store_trade_count(0)
                 self.context.logger.info(
                     "New staking epoch detected; resetting the trade cap counter."
