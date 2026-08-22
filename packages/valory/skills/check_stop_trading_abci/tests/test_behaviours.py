@@ -19,6 +19,7 @@
 
 """Tests for check_stop_trading_abci behaviours."""
 
+import ast
 from pathlib import Path
 from typing import Any, Generator
 from unittest.mock import MagicMock, PropertyMock, patch
@@ -34,11 +35,38 @@ from packages.valory.skills.check_stop_trading_abci.models import CheckStopTradi
 from packages.valory.skills.check_stop_trading_abci.payloads import (
     CheckStopTradingPayload,
 )
-from packages.valory.skills.decision_maker_abci.behaviours.base import (
-    TRADE_COUNT_FILENAME as WRITER_TRADE_COUNT_FILENAME,
-)
 from packages.valory.skills.staking_abci.behaviours import StakingInteractBaseBehaviour
 from packages.valory.skills.staking_abci.rounds import StakingState
+
+
+def _writer_trade_count_filename() -> str:
+    """Extract TRADE_COUNT_FILENAME from decision_maker_abci without importing it.
+
+    check_stop_trading_abci must not depend on decision_maker_abci (package
+    layering), so the counter filename is duplicated in the reader skill.
+    Parsing the writer's source keeps the drift guard without introducing an
+    undeclared cross-skill import, which the deployed agent's dependency
+    checker rejects at startup.
+    """
+    base = (
+        Path(__file__).resolve().parents[2]
+        / "decision_maker_abci"
+        / "behaviours"
+        / "base.py"
+    )
+    assert base.is_file(), f"writer source not found at {base}"
+    tree = ast.parse(base.read_text(encoding="utf-8"), filename=str(base))
+    for node in tree.body:
+        targets = node.targets if isinstance(node, ast.Assign) else ()
+        if any(isinstance(t, ast.Name) and t.id == "TRADE_COUNT_FILENAME" for t in targets):
+            value = node.value
+            assert isinstance(value, ast.Constant) and isinstance(value.value, str), (
+                "TRADE_COUNT_FILENAME is not a string literal in the writer source"
+            )
+            return value.value
+    raise AssertionError(
+        "TRADE_COUNT_FILENAME not found in decision_maker_abci.behaviours.base"
+    )
 
 
 def _noop_gen(*args: Any, **kwargs: Any) -> Generator:
@@ -313,9 +341,12 @@ class TestDurableTradeCount:
         check_stop_trading_abci cannot import decision_maker_abci at runtime
         (package layering), so the counter filename is duplicated here. This
         test guards against the two constants diverging, which would make the
-        MIN_TRADES gate silently read a file the writer never updates.
+        MIN_TRADES gate silently read a file the writer never updates. The
+        writer constant is parsed from its source rather than imported so no
+        undeclared cross-skill import reaches the deployed agent's dependency
+        checker.
         """
-        assert TRADE_COUNT_FILENAME == WRITER_TRADE_COUNT_FILENAME
+        assert TRADE_COUNT_FILENAME == _writer_trade_count_filename()
 
 
 class TestGetStakingKpiRequestCount:
