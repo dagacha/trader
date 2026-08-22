@@ -264,6 +264,40 @@ if [ "$SKIP_PUBLISH" -eq 1 ]; then
 elif [ "$DRY_RUN" -eq 1 ]; then
   echo ">> (dry-run) would run: autonomy push-all --remote"
 else
+  # open-aea >= some version defaults the remote registry to HTTP, which
+  # rejects `push-all`. Pin it to IPFS in ~/.aea/cli_config.yaml (created if
+  # missing) so publishing targets the Autonolas IPFS registry. The venv
+  # interpreter is used because it guarantees PyYAML (an open-aea dependency);
+  # system python3 may not have it. Normalization is idempotent (setdefault)
+  # and always runs — a substring grep guard could match unrelated keys and
+  # silently skip pinning. Note this only selects the registry *type*; the
+  # actual node is registry_config.settings.remote.ipfs.ipfs_node.
+  _cli_cfg="$HOME/.aea/cli_config.yaml"
+  _py="$REPO/.venv/bin/python"
+  echo ">> pinning remote registry to IPFS in $_cli_cfg"
+  mkdir -p "$(dirname "$_cli_cfg")"
+  if [ -f "$_cli_cfg" ]; then
+    "$_py" - "$_cli_cfg" <<'PY'
+import sys, yaml
+p = sys.argv[1]
+with open(p) as f:
+    cfg = yaml.safe_load(f) or {}
+rc = cfg.setdefault("registry_config", {})
+rc.setdefault("default", "remote")
+rc.setdefault("settings", {}).setdefault("remote", {})["default"] = "ipfs"
+rc["settings"].setdefault("local", {})
+with open(p, "w") as f:
+    yaml.safe_dump(cfg, f, default_flow_style=False)
+PY
+  else
+  # NB: `author` is required by the AEA CLI-config schema (validated on
+  # every invocation), so a fresh config must include it.
+    printf 'author: %s\nregistry_config:\n  default: remote\n  settings:\n    remote:\n      default: ipfs\n    local: {}\n' \
+      "$(id -un)" > "$_cli_cfg"
+  fi
+  # __pycache__ dirs (recreated by any local pytest/import run) make
+  # `autonomy push` abort with "Please remove all cache files".
+  find "$REPO/packages" -name "__pycache__" -type d -prune -exec rm -rf {} +
   echo ">> autonomy push-all --remote ..."
   (cd "$REPO" && "$AUTONOMY" push-all --remote --retries 3)
 fi
