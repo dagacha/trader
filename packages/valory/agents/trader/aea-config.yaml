@@ -73,9 +73,9 @@ skills:
 - valory/tx_settlement_multiplexer_abci:0.1.0:bafybeidmxse2pwvo5hvu7rwcgmipco6azumz2fno3gidteq7vytp3idyxy
 - valory/market_manager_abci:0.1.0:bafybeicupz5bmpj3izpvlu4buvqhojlwgvbzn6f66bgkqtkkjlru462ipu
 - valory/decision_maker_abci:0.1.0:bafybeidpfnyoyhtowhd5jxgjzbldcexyfr2ik3kiyrxb5yar3zqxe4isfm
-- valory/trader_abci:0.1.0:bafybeicia7j5zdiarp6ixhkw5tgkujnkmhkwzipsaryahvhx3v7jzyzgfu
+- valory/trader_abci:0.1.0:bafybeigjcqs4jrcfj2vybwa7zin3i7ucqr3moxk3fzrikewsftw5owpbji
 - valory/staking_abci:0.1.0:bafybeicympilexxepigcmlumn22glkfskkrjuhsfco3nuhvxyyxh2z373y
-- valory/check_stop_trading_abci:0.1.0:bafybeifxqn4jzln52nw2z25tnmhmfjy3s3ytufevw227rbqlz2aeaudwta
+- valory/check_stop_trading_abci:0.1.0:bafybeigo3yeo3vyd5c5pm4d4k6malcedhmp3c6xy7tzi4i3eun7he2hmhi
 - valory/mech_interact_abci:0.1.0:bafybeihzxuw56or3kayepbcoke5bxfeeo4q4nbufdomsjydtmh426byapy
 - valory/chatui_abci:0.1.0:bafybeifqlcbch5viezl3mlgenxc4hwaa2zbaqks4e4j2vfks6sxto7t6oa
 - valory/agent_performance_summary_abci:0.1.0:bafybeih53kifodcwttwzs4es6ykz7mscpt6moanr5k7lfhzn5zfqgl7vdi
