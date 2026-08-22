@@ -264,6 +264,32 @@ if [ "$SKIP_PUBLISH" -eq 1 ]; then
 elif [ "$DRY_RUN" -eq 1 ]; then
   echo ">> (dry-run) would run: autonomy push-all --remote"
 else
+  # open-aea >= some version defaults the remote registry to HTTP, which
+  # rejects `push-all`. Pin it to IPFS in ~/.aea/cli_config.yaml (created if
+  # missing) so publishing targets the Autonolas IPFS registry.
+  _cli_cfg="$HOME/.aea/cli_config.yaml"
+  if ! grep -q "default: ipfs" "$_cli_cfg" 2>/dev/null; then
+    echo ">> pinning remote registry to IPFS in $_cli_cfg"
+    mkdir -p "$(dirname "$_cli_cfg")"
+    if [ -f "$_cli_cfg" ]; then
+      python3 - "$_cli_cfg" <<'PY'
+import sys, yaml
+p = sys.argv[1]
+cfg = yaml.safe_load(open(p)) or {}
+rc = cfg.setdefault("registry_config", {})
+rc.setdefault("default", "remote")
+rc.setdefault("settings", {}).setdefault("remote", {})["default"] = "ipfs"
+rc["settings"].setdefault("local", {})
+yaml.safe_dump(cfg, open(p, "w"), default_flow_style=False)
+PY
+    else
+      printf 'author: %s\nregistry_config:\n  default: remote\n  settings:\n    remote:\n      default: ipfs\n    local: {}\n' \
+        "$(id -un)" > "$_cli_cfg"
+    fi
+  fi
+  # __pycache__ dirs (recreated by any local pytest/import run) make
+  # `autonomy push` abort with "Please remove all cache files".
+  find "$REPO/packages" -name "__pycache__" -type d -prune -exec rm -rf {} +
   echo ">> autonomy push-all --remote ..."
   (cd "$REPO" && "$AUTONOMY" push-all --remote --retries 3)
 fi
