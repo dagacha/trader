@@ -290,8 +290,10 @@ with open(p, "w") as f:
     yaml.safe_dump(cfg, f, default_flow_style=False)
 PY
   else
-    printf 'registry_config:\n  default: remote\n  settings:\n    remote:\n      default: ipfs\n    local: {}\n' \
-      > "$_cli_cfg"
+  # NB: `author` is required by the AEA CLI-config schema (validated on
+  # every invocation), so a fresh config must include it.
+    printf 'author: %s\nregistry_config:\n  default: remote\n  settings:\n    remote:\n      default: ipfs\n    local: {}\n' \
+      "$(id -un)" > "$_cli_cfg"
   fi
   # __pycache__ dirs (recreated by any local pytest/import run) make
   # `autonomy push` abort with "Please remove all cache files".
