@@ -47,6 +47,9 @@ def _writer_trade_count_filename() -> str:
     Parsing the writer's source keeps the drift guard without introducing an
     undeclared cross-skill import, which the deployed agent's dependency
     checker rejects at startup.
+
+    :return: the TRADE_COUNT_FILENAME string literal parsed from the writer
+        source.
     """
     base = (
         Path(__file__).resolve().parents[2]
@@ -57,13 +60,16 @@ def _writer_trade_count_filename() -> str:
     assert base.is_file(), f"writer source not found at {base}"
     tree = ast.parse(base.read_text(encoding="utf-8"), filename=str(base))
     for node in tree.body:
-        targets = node.targets if isinstance(node, ast.Assign) else ()
-        if any(isinstance(t, ast.Name) and t.id == "TRADE_COUNT_FILENAME" for t in targets):
-            value = node.value
-            assert isinstance(value, ast.Constant) and isinstance(value.value, str), (
-                "TRADE_COUNT_FILENAME is not a string literal in the writer source"
-            )
-            return value.value
+        if not isinstance(node, ast.Assign):
+            continue
+        names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+        if "TRADE_COUNT_FILENAME" not in names:
+            continue
+        value = node.value
+        assert isinstance(value, ast.Constant) and isinstance(
+            value.value, str
+        ), "TRADE_COUNT_FILENAME is not a string literal in the writer source"
+        return value.value
     raise AssertionError(
         "TRADE_COUNT_FILENAME not found in decision_maker_abci.behaviours.base"
     )
