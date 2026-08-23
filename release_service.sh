@@ -16,22 +16,24 @@
 #   artifact 3: quickstart    configs/config_predict_trader.json "hash"
 #
 # Usage:
-#   ./release_service.sh                                    # release to ALL fork-based traders (see below)
+#   ./release_service.sh                                    # release to ALL traders on this machine (see below)
 #   ./release_service.sh --quickstart 28                    # ~/28-trader/quickstart
 #   ./release_service.sh --quickstart 21,38,34              # comma-separated trader IDs
 #   ./release_service.sh --quickstart ~/28-trader/quickstart
 #   ./release_service.sh --quickstart 28,~/31-trader/quickstart   # IDs and paths mix
 #
-# Default (no --quickstart): auto-discover every ~/N-trader/quickstart whose
-# config tracks THIS fork (agent_release.repository.owner == dagacha) and
-# update those. Traders on the official valory-xyz release are skipped with a
-# notice — repointing them also requires flipping their agent_release, which
-# this script deliberately does not do.
+# Default (no --quickstart): auto-discover every ~/N-trader/quickstart and
+# align each config with THIS fork — top-level "hash" <- released service CID
+# and agent_release.repository.owner <- dagacha. Traders still tracking the
+# official valory-xyz release are flipped to the fork in the same atomic
+# pass instead of being skipped.
 # Options:
-#   --quickstart SPEC  quickstart clone(s) whose config "hash" gets updated.
-#                      SPEC is a comma-separated list where each item is either
-#                      a trader ID N (expands to ~/N-trader/quickstart) or a
-#                      path. Repeatable. Each clone's runtime cron script has a
+#   --quickstart SPEC  quickstart clone(s) whose config gets aligned with this
+#                      fork: top-level "hash" -> released service CID and
+#                      agent_release.repository.owner -> dagacha. SPEC is a
+#                      comma-separated list where each item is either a trader
+#                      ID N (expands to ~/N-trader/quickstart) or a path.
+#                      Repeatable. Each clone's runtime cron script has a
 #                      preflight image gate that relies on this alignment.
 #   --force-build      rebuild the image even if it exists locally
 #   --skip-publish     skip `autonomy push-all --remote` (service assumed published)
@@ -99,27 +101,21 @@ while [ $# -gt 0 ]; do
 done
 
 # ------------------------------------------------------------------
-# Default target: every trader on this machine that tracks THIS fork.
-# A trader dir is ~/N-trader/quickstart with a config whose
-# agent_release.repository.owner matches FORK_OWNER. Traders on the
-# official release are listed and skipped (repointing them to the fork
-# also requires flipping agent_release — a deliberate manual change).
+# Default target: EVERY ~/N-trader/quickstart on this machine. Step 7
+# aligns each selected config with THIS fork: top-level "hash" <- released
+# service CID and agent_release.repository.owner <- FORK_OWNER, so traders
+# still on the official valory-xyz release are migrated to the fork in the
+# same pass rather than silently left behind.
 # ------------------------------------------------------------------
 FORK_OWNER="dagacha"
 if [ "${#QUICKSTARTS[@]}" -eq 0 ]; then
-  echo ">> no --quickstart given; discovering traders tracking owner '$FORK_OWNER' in $HOME ..."
+  echo ">> no --quickstart given; discovering every trader in $HOME ..."
   for _d in "$HOME"/*-trader/quickstart; do
-    _cfg="$_d/configs/config_predict_trader.json"
-    [ -f "$_cfg" ] || continue
-    _owner="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("agent_release",{}).get("repository",{}).get("owner",""))' "$_cfg" 2>/dev/null || true)"
-    if [ "$_owner" = "$FORK_OWNER" ]; then
-      QUICKSTARTS+=("$_d")
-    else
-      echo "   skip ${_d#"$HOME"/} (agent_release.owner='${_owner:-none}' != '$FORK_OWNER')"
-    fi
+    [ -f "$_d/configs/config_predict_trader.json" ] || continue
+    QUICKSTARTS+=("$_d")
   done
   if [ "${#QUICKSTARTS[@]}" -eq 0 ]; then
-    echo ">> no fork-based traders found; building + publishing only (configs untouched)"
+    echo ">> no traders found; building + publishing only (configs untouched)"
   else
     echo ">> will update: ${QUICKSTARTS[*]}"
   fi
@@ -422,12 +418,18 @@ for qs in "${QUICKSTARTS[@]+"${QUICKSTARTS[@]}"}"; do
     fi
   done
   old_hash="$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(d["hash"])' "$cfg")"
-  if [ "$old_hash" = "$SVC_CID" ]; then
-    echo ">> $cfg already at $SVC_CID (no change)"
+  old_owner="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("agent_release",{}).get("repository",{}).get("owner",""))' "$cfg")"
+  if [ "$old_hash" = "$SVC_CID" ] && [ "$old_owner" = "$FORK_OWNER" ]; then
+    echo ">> $cfg already at $SVC_CID on '$FORK_OWNER' (no change)"
     continue
   fi
   if [ "$DRY_RUN" -eq 1 ]; then
-    echo ">> (dry-run) would update $cfg: $old_hash -> $SVC_CID"
+    if [ "$old_hash" != "$SVC_CID" ]; then
+      echo ">> (dry-run) would update $cfg: hash $old_hash -> $SVC_CID"
+    fi
+    if [ "$old_owner" != "$FORK_OWNER" ]; then
+      echo ">> (dry-run) would flip $cfg: agent_release.owner '${old_owner:-none}' -> '$FORK_OWNER'"
+    fi
     continue
   fi
   python3 - "$cfg" "$SVC_CID" <<'PY'
@@ -448,7 +450,28 @@ for m in re.finditer(r'("hash"\s*:\s*")[^"]*(")', text):
 else:
     raise SystemExit("ERROR: could not update the top-level \"hash\" in " + path)
 PY
-  echo ">> updated $cfg: $old_hash -> $SVC_CID"
+  echo ">> updated $cfg: hash $old_hash -> $SVC_CID"
+  if [ "$old_owner" != "$FORK_OWNER" ]; then
+    python3 - "$cfg" "$FORK_OWNER" <<'PY'
+import json, re, sys
+path, new_owner = sys.argv[1], sys.argv[2]
+text = open(path).read()
+# Replace each "owner" occurrence in turn; accept only the edit that makes the
+# parsed agent_release.repository.owner equal new_owner, so unrelated nested
+# "owner" keys elsewhere in the file are never touched.
+for m in re.finditer(r'("owner"\s*:\s*")[^"]*(")', text):
+    cand = text[:m.start()] + m.group(1) + new_owner + m.group(2) + text[m.end():]
+    try:
+        if json.loads(cand)["agent_release"]["repository"]["owner"] == new_owner:
+            open(path, "w").write(cand)
+            break
+    except (json.JSONDecodeError, KeyError):
+        continue
+else:
+    raise SystemExit('ERROR: could not update agent_release.repository.owner in ' + path)
+PY
+    echo ">> flipped $cfg: agent_release.owner '${old_owner:-none}' -> '$FORK_OWNER'"
+  fi
 done
 
 # ------------------------------------------------------------------
