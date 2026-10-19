@@ -162,10 +162,10 @@ def test_creation_time_and_age_limit(
 
 
 @pytest.mark.parametrize("status", [QueueStatus.PROCESSED, QueueStatus.REPROCESSED])
-def test_fresh_priority_crosses_queue_statuses(
+def test_fresh_processed_market_uses_normal_priority(
     sampling: SamplingBehaviour, status: QueueStatus
 ) -> None:
-    """Allow a fresh market to be retried after a failed placement."""
+    """Use normal priority when the only fresh market was already processed."""
     sampling.bets = [
         _make_bet(
             "retry",
@@ -176,7 +176,29 @@ def test_fresh_priority_crosses_queue_statuses(
         ),
         _make_bet("old", creationTimestamp=NOW - 5000),
     ]
-    assert sampling._sample() == 0
+    assert sampling._sample() == 1
+    sampling.context.logger.info.assert_any_call(
+        "[FRESH_FIRST] fresh_candidates=0 fallback=priority"
+    )
+
+
+def test_fresh_to_process_beats_newer_processed_market(
+    sampling: SamplingBehaviour,
+) -> None:
+    """Pick a fresh TO_PROCESS market before a newer processed market."""
+    sampling.bets = [
+        _make_bet(
+            "processed",
+            creationTimestamp=NOW - 50,
+            queue_status=QueueStatus.PROCESSED,
+            processed_timestamp=NOW - 25,
+        ),
+        _make_bet("fresh", creationTimestamp=NOW - 100),
+    ]
+    assert sampling._sample() == 1
+    sampling.context.logger.info.assert_any_call(
+        "[FRESH_FIRST] fresh_candidates=1 picked=fresh age_s=100"
+    )
 
 
 @pytest.mark.parametrize("disabled_by", ["flag", "benchmarking"])

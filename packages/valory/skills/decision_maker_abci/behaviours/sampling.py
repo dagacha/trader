@@ -212,7 +212,8 @@ class SamplingBehaviour(DecisionMakerBaseBehaviour, QueryingBehaviour):
         """
         Sample a bet and return its index.
 
-        When enabled, pick the newest fresh market with no bets before queue sorting.
+        When enabled, pick the newest fresh TO_PROCESS market with no bets
+        before queue sorting.
 
         The sampling logic follows the specified priority logic:
         1. Filter out all the bets that have a processed_timestamp != 0 to get a list of new bets.
@@ -229,10 +230,7 @@ class SamplingBehaviour(DecisionMakerBaseBehaviour, QueryingBehaviour):
         :return: the index of the sampled bet, out of all the available bets, not only the given ones.
         """
 
-        if (
-            self.params.prioritize_fresh_markets is True
-            and not self.benchmarking_mode.enabled
-        ):
+        if self.params.prioritize_fresh_markets and not self.benchmarking_mode.enabled:
             fresh = [
                 bet
                 for bet in bets
@@ -240,6 +238,7 @@ class SamplingBehaviour(DecisionMakerBaseBehaviour, QueryingBehaviour):
                 and self._now - bet.creationTimestamp
                 <= self.params.fresh_market_max_age
                 and not bet.n_bets
+                and bet.queue_status == QueueStatus.TO_PROCESS
             ]
             if fresh:
                 pick = max(

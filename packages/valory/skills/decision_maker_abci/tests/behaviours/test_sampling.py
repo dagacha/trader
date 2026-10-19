@@ -49,6 +49,7 @@ def _make_behaviour():  # type: ignore[no-untyped-def]
 
     context = MagicMock()
     context.agent_address = "test_agent"
+    context.params.prioritize_fresh_markets = False
     behaviour.__dict__["_context"] = context
 
     return behaviour
@@ -671,6 +672,7 @@ class TestSample:
         behaviour.bets = bets
 
         params = MagicMock()
+        params.prioritize_fresh_markets = False
         params.use_multi_bets_mode = use_multi_bets_mode
         params.enable_multi_bets_fallback = enable_multi_bets_fallback
         params.sample_bets_closing_days = 60
