@@ -75,6 +75,7 @@
         "skill/valory/registration_abci/0.1.0": "bafybeicwfwrzdu5kjcjh4ntzgo7dghy5rs4o6ddbwgo2vz7bomi67gn5wa",
         "skill/valory/reset_pause_abci/0.1.0": "bafybeibhpzbwspwbe6xiltrvmdhgks5cn6ybxl4rgs7tvgljurfs742i6u",
         "skill/valory/termination_abci/0.1.0": "bafybeig5lk6agmjpctxh4smrqvtbylynda7a5kwgtdlss2sjnnabedzuem",
-        "skill/valory/mech_interact_abci/0.1.0": "bafybeihzxuw56or3kayepbcoke5bxfeeo4q4nbufdomsjydtmh426byapy"
+        "skill/valory/mech_interact_abci/0.1.0": "bafybeihzxuw56or3kayepbcoke5bxfeeo4q4nbufdomsjydtmh426byapy",
+        "skill/valory/abstract_round_abci/0.1.0": "bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4"
     }
 }
