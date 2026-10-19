@@ -428,26 +428,11 @@ class OmenWithdrawBehaviour(DecisionMakerBaseBehaviour, QueryingBehaviour):
         self, position: WithdrawablePosition
     ) -> Generator[None, None, Optional[List[int]]]:
         """Read the FPMM's per-outcome ERC1155 reserves via CT."""
-        response_msg = yield from self.get_contract_api_response(
-            performative=ContractApiMessage.Performative.GET_STATE,  # type: ignore
-            contract_address=position.fpmm_address,
-            contract_id=str(FixedProductMarketMakerContract.contract_id),
-            contract_callable="get_pool_balances_via_ct",
-            conditional_tokens_address=self.params.conditional_tokens_address,
-            collateral_token=WXDAI,
-            condition_id=position.condition_id,
-            chain_id=self.params.mech_chain_id,
-        )
-        if response_msg.performative != ContractApiMessage.Performative.STATE:
-            self.context.logger.warning(
-                f"omen withdrawal: pool balances unavailable for "
-                f"{position.fpmm_address}: {response_msg}"
+        return (
+            yield from self._get_pool_balances(
+                position.fpmm_address, WXDAI, position.condition_id
             )
-            return None
-        balances = response_msg.state.body.get("balances")
-        if not balances:
-            return None
-        return [int(b) for b in balances]
+        )
 
     def _calc_sell_amount_static(
         self, fpmm_address: str, return_amount: int, outcome_index: int

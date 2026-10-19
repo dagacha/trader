@@ -600,6 +600,9 @@ def _build_decision_maker_params_kwargs() -> dict:
         "redeem_round_timeout": 30.0,
         "withdrawal_round_timeout": 1800.0,
         "slippage": 0.1,
+        "enable_live_requote": True,
+        "skip_bet_if_live_quote_unavailable": True,
+        "placement_min_edge": 0.0,
         "policy_epsilon": 0.2,
         "tool_punishment_multiplier": 2,
         "contract_timeout": 10.0,
@@ -854,3 +857,35 @@ class TestAccuracyInfoFields:
         assert fields.sep == ","
         assert fields.max == "max_field"
         assert fields.datetime_format == "%Y-%m-%d"
+
+
+@pytest.mark.parametrize("edge", [-1.0, 0.0, 1.0])
+def test_live_requote_params(edge: float) -> None:
+    """Load the live quote controls and the edge limits."""
+    kwargs = _build_decision_maker_params_kwargs()
+    kwargs["placement_min_edge"] = edge
+    with patch.object(DecisionMakerParams.__mro__[1], "__init__", return_value=None):
+        params = DecisionMakerParams(**kwargs)
+    assert params.enable_live_requote is True
+    assert params.skip_bet_if_live_quote_unavailable is True
+    assert params.placement_min_edge == edge
+
+
+@pytest.mark.parametrize("edge", [-1.01, 1.01, float("nan")])
+def test_placement_min_edge_invalid(edge: float) -> None:
+    """Reject edge limits outside the closed interval."""
+    kwargs = _build_decision_maker_params_kwargs()
+    kwargs["placement_min_edge"] = edge
+    with (
+        patch.object(DecisionMakerParams.__mro__[1], "__init__", return_value=None),
+        pytest.raises(ValueError, match="placement_min_edge"),
+    ):
+        DecisionMakerParams(**kwargs)
+
+
+def test_negative_max_trades_rejected() -> None:
+    """Reject a negative trade limit before loading the quote controls."""
+    kwargs = _build_decision_maker_params_kwargs()
+    kwargs["max_trades"] = -1
+    with pytest.raises(ValueError, match="max_trades"):
+        DecisionMakerParams(**kwargs)

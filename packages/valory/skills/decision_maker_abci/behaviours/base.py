@@ -134,6 +134,7 @@ class DecisionMakerBaseBehaviour(BetsManagerBehaviour, ABC):
 
         self.sell_amount: int = 0
         self.buy_amount: int = 0
+        self.quoted_tokens: int = 0
         self._last_strategy_result: Dict[str, Any] = {}
 
     @property
@@ -1005,6 +1006,58 @@ class DecisionMakerBaseBehaviour(BetsManagerBehaviour, ABC):
             row = ",".join(results_text) + NEW_LINE
             results_file.write(row)
 
+    def _get_pool_balances(
+        self, fpmm_address: str, collateral_token: str, condition_id: Optional[str]
+    ) -> Generator[None, None, Optional[List[int]]]:
+        """Read binary FPMM reserves from ConditionalTokens.
+
+        :param fpmm_address: the market maker address.
+        :param collateral_token: the market's collateral token address.
+        :param condition_id: the market's condition id.
+        :yield: None
+        :return: the reserves, or None if the read fails.
+        """
+        if not condition_id:
+            return None
+        response_msg = yield from self.get_contract_api_response(
+            performative=ContractApiMessage.Performative.GET_STATE,  # type: ignore
+            contract_address=fpmm_address,
+            contract_id=str(FixedProductMarketMakerContract.contract_id),
+            contract_callable="get_pool_balances_via_ct",
+            conditional_tokens_address=self.params.conditional_tokens_address,
+            collateral_token=collateral_token,
+            condition_id=condition_id,
+            chain_id=self.params.mech_chain_id,
+        )
+        if response_msg.performative != ContractApiMessage.Performative.STATE:
+            self.context.logger.warning(
+                f"Pool balances unavailable for {fpmm_address}: {response_msg}"
+            )
+            return None
+        balances = response_msg.state.body.get("balances")
+        if not balances or len(balances) != 2:
+            return None
+        try:
+            reserves = [int(balance) for balance in balances]
+        except (ValueError, TypeError):
+            return None
+        if min(reserves) < 0 or sum(reserves) <= 0:
+            return None
+        return reserves
+
+    def _get_decision_prediction(self) -> Optional[PredictionResponse]:
+        """Read the prediction retained from the decision round.
+
+        :return: the prediction, or None if it is unavailable.
+        """
+        responses = self.synchronized_data.mech_responses
+        if not responses or responses[0].result is None:
+            return None
+        try:
+            return PredictionResponse(**json.loads(responses[0].result))
+        except (ValueError, TypeError, KeyError):
+            return None
+
     def _calc_token_amount(
         self,
         operation: TradingOperation,
@@ -1038,6 +1091,7 @@ class DecisionMakerBaseBehaviour(BetsManagerBehaviour, ABC):
             return False
 
         if operation == TradingOperation.BUY:
+            self.quoted_tokens = token_amount
             self.buy_amount = remove_fraction_wei(token_amount, self.params.slippage)
         else:
             # LATENT BUG (kept as-is — dead code path, see decision_receive.py

@@ -386,6 +386,9 @@ class Bet:
             self.blacklist_forever()  # copy over the changes from new bet object to the local store
             return
 
+        if self.market == "omen_subgraph" and not self.condition_id:
+            self.condition_id = bet.condition_id
+
         self.outcomeTokenAmounts = bet.outcomeTokenAmounts.copy()
         self.outcomeTokenMarginalPrices = bet.outcomeTokenMarginalPrices.copy()
         self.scaledLiquidityMeasure = bet.scaledLiquidityMeasure

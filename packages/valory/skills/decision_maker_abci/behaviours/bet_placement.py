@@ -100,6 +100,28 @@ class BetPlacementBehaviour(DecisionMakerBaseBehaviour):
         if not calculation_succeeded:
             return None
 
+        if (
+            not self.params.is_running_on_polymarket
+            and not self.benchmarking_mode.enabled
+        ):
+            prediction = self._get_decision_prediction()
+            if prediction is None or self.quoted_tokens <= 0:
+                self.context.logger.info(
+                    "[EDGE_RECHECK] abort: prediction or buy quote unavailable"
+                )
+                return None
+            p_side = prediction.p_yes if self.outcome_index == 0 else prediction.p_no
+            effective_price = self.investment_amount / self.quoted_tokens
+            edge = p_side - effective_price
+            if edge < self.params.placement_min_edge:
+                side = "YES" if self.outcome_index == 0 else "NO"
+                self.context.logger.info(
+                    f"[EDGE_RECHECK] abort bet={self.sampled_bet.id} side={side} "
+                    f"p={p_side} decided_amount={self.investment_amount} "
+                    f"eff_price={effective_price} edge={edge}"
+                )
+                return None
+
         for step in (
             self._build_buy_tx,
             self._build_multisend_data,

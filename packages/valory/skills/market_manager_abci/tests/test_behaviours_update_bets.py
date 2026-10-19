@@ -752,9 +752,11 @@ class TestProcessChunk:
                 scaledLiquidityMeasure=10.0,
             )
         ]
+        raw[0]["condition"] = {"id": "0xcondition"}
         behaviour._process_chunk(raw)
         assert len(behaviour.bets) == 1
         assert behaviour.bets[0].id == "new1"
+        assert behaviour.bets[0].condition_id == "0xcondition"
 
     def test_existing_bet_updated(self) -> None:
         """Test that existing bets are updated, not duplicated."""

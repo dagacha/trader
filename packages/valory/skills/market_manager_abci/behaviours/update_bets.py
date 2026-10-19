@@ -173,6 +173,10 @@ class UpdateBetsBehaviour(BetsManagerBehaviour, QueryingBehaviour):
             return
 
         for raw_bet in chunk:
+            raw_bet = raw_bet.copy()
+            condition = raw_bet.pop("condition", None)
+            if condition is not None:
+                raw_bet["condition_id"] = condition["id"]
             bet = Bet(**raw_bet, market=self._current_market)
             index = self.get_bet_idx(bet.id)
             if index is None:
@@ -184,6 +188,9 @@ class UpdateBetsBehaviour(BetsManagerBehaviour, QueryingBehaviour):
         self,
     ) -> Generator:
         """Fetch the questions from all the prediction markets and update the local copy of the bets."""
+
+        # Local time for the live quote age log.
+        self.context.state.bets_updated_at = time.time()
 
         # Fetching bets from the prediction markets
         while True:
