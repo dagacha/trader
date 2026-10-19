@@ -15,7 +15,7 @@ fingerprint:
   handlers.py: bafybeidefu2bxiadnxbnlaiz2e4ntrcrraxhrvmvyd7uce3e274lfdodti
   models.py: bafybeigufs3joyc5frviyopl6keziynoceqx2anqx2z72qvkysakvfkegq
   tests/__init__.py: bafybeiadatapyjh3e7ucg2ehz77oms3ihrbutwb2cs2tkjehy54utwvuyi
-  tests/test_agent_config_resolution.py: bafybeiflcotz6gq2dgtnzptlyyhu5fryg3c6z7gosoqmln2tlci3v4odqa
+  tests/test_agent_config_resolution.py: bafybeicawzamokihmgqxrd7rzn35rul7aim6lg7enfxfrqy7txcuuhncyq
   tests/test_behaviours.py: bafybeicovtjruufnh2yd5lhfvc6pgcletuyj2s3jaz5sz55wsdo2w22xle
   tests/test_composition.py: bafybeifcamlkymoezzds63r5difknyc5te6ifxqv3xhgglbbtcgenlv45e
   tests/test_dialogues.py: bafybeibatogwoj6ieapcbiwonij6vskhogc65vfv53tyauqzeyiwmnd2im
@@ -277,6 +277,11 @@ models:
       mech_activity_checker_contract: '0x0000000000000000000000000000000000000000'
       redeem_round_timeout: 3600.0
       withdrawal_round_timeout: 1800.0
+      enable_live_requote: true
+      skip_bet_if_live_quote_unavailable: true
+      placement_min_edge: 0.0
+      prioritize_fresh_markets: false
+      fresh_market_max_age: 1800
       tool_punishment_multiplier: 1
       contract_timeout: 300.0
       file_hash_to_strategies: {}

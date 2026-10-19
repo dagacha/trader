@@ -153,3 +153,32 @@ def test_agent_config_resolves_consistently_per_chain(
         "url"
     ]
     assert mechs_url == marketplace_url
+
+
+def test_agent_skill_overrides_exist_in_skill_configs() -> None:
+    """Every skill model arg the agent overrides is declared by that skill.
+
+    ``aea build`` rejects an override of an arg that the skill's own
+    ``skill.yaml`` does not declare ("Attribute ... is not allowed to be
+    updated!"). The runtime does not, because ``TraderParams`` inherits the
+    composed skills' params, so only the image build fails.
+    """
+    docs = list(yaml_load_all(io.StringIO(AEA_CONFIG_PATH.read_text(encoding="utf-8"))))
+    missing = []
+    for doc in docs[1:]:
+        if doc.get("type") != "skill":
+            continue
+        author_name = doc["public_id"].split(":")[0]
+        author, name = author_name.split("/")
+        skill_yaml = _VALORY_DIR.parent / author / "skills" / name / "skill.yaml"
+        if not skill_yaml.is_file():
+            continue
+        skill_models = yaml_load_all(
+            io.StringIO(skill_yaml.read_text(encoding="utf-8"))
+        )[0]["models"]
+        for model, cfg in (doc.get("models") or {}).items():
+            declared = skill_models.get(model, {}).get("args") or {}
+            for arg in cfg.get("args") or {}:
+                if arg not in declared:
+                    missing.append(f"{author_name}.models.{model}.args.{arg}")
+    assert not missing, f"agent overrides not declared in skill.yaml: {missing}"
