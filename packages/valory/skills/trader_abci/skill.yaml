@@ -57,8 +57,8 @@ skills:
 - valory/transaction_settlement_abci:0.1.0:bafybeidmmhjcgp7chozxovensq3zplkufvaityd2w3zladtssu4ijvqbzm
 - valory/termination_abci:0.1.0:bafybeig5lk6agmjpctxh4smrqvtbylynda7a5kwgtdlss2sjnnabedzuem
 - valory/market_manager_abci:0.1.0:bafybeie556ry4x26yh23sp2paj3ktle4kpw2ahx67pycqkek5s3aed22sa
-- valory/decision_maker_abci:0.1.0:bafybeidjjznuqtmqsjg3mgec6seo2j5fruoakn5i3zyank4vcng3lz5sqa
-- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeihlafit4fjtuckf7wkovfwgqhoxgbkgs5j6bch6xzdsp6xdceqhyq
+- valory/decision_maker_abci:0.1.0:bafybeig46bxuof7hhoiko2azuewrsae2sa5abdib4xthbjgpfesndpcxfe
+- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeif7tb6dwz3lkichxokkwtzxvq2yxli4vdqa4frxjibn7bgwgmvtxe
 - valory/staking_abci:0.1.0:bafybeicympilexxepigcmlumn22glkfskkrjuhsfco3nuhvxyyxh2z373y
 - valory/check_stop_trading_abci:0.1.0:bafybeie7rvoec36hqo2ounamsykqnjhcbjxaajsdvvnmhkeeacnhgcmkvu
 - valory/mech_interact_abci:0.1.0:bafybeihzxuw56or3kayepbcoke5bxfeeo4q4nbufdomsjydtmh426byapy
