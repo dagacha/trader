@@ -22,7 +22,7 @@
 
 import builtins
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Tuple, Type
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Type
 
 from aea.skills.base import Model
 
@@ -53,6 +53,7 @@ class SharedState(BaseSharedState):
     """Keep the current shared state of the skill."""
 
     abci_app_cls: Type[AbciApp[Any]] = MarketManagerAbciApp
+    bets_updated_at: Optional[float] = None
 
 
 class Subgraph(ApiSpecs):

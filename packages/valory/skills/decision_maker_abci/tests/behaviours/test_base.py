@@ -1816,6 +1816,7 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
                 assert e.value is True
 
         assert behaviour.buy_amount == int(900 * 0.99)
+        assert behaviour.quoted_tokens == 900
 
     def test_calc_token_amount_sell_success(self) -> None:
         """Test `_calc_token_amount` for a sell operation (success)."""

@@ -66,6 +66,11 @@ from packages.valory.skills.decision_maker_abci.rounds import DecisionMakerAbciA
 from packages.valory.skills.market_manager_abci.bets import Bet
 from packages.valory.skills.market_manager_abci.models import (
     MarketManagerParams,
+)
+from packages.valory.skills.market_manager_abci.models import (
+    SharedState as MarketManagerSharedState,
+)
+from packages.valory.skills.market_manager_abci.models import (
     Subgraph,
 )
 from packages.valory.skills.mech_interact_abci.models import (
@@ -204,7 +209,7 @@ class RedeemingProgress:
         return history_hashes, addresses, bonds, answers
 
 
-class SharedState(ChatUISharedState, MechInteractSharedState):
+class SharedState(ChatUISharedState, MechInteractSharedState, MarketManagerSharedState):
     """Keep the current shared state of the skill."""
 
     abci_app_cls: Type[AbciApp] = DecisionMakerAbciApp  # type: ignore
@@ -493,6 +498,18 @@ class DecisionMakerParams(
         self.withdrawal_round_timeout: float = self._ensure(
             "withdrawal_round_timeout", kwargs, float
         )
+        self.enable_live_requote: bool = self._ensure(
+            "enable_live_requote", kwargs, bool
+        )
+        self.skip_bet_if_live_quote_unavailable: bool = self._ensure(
+            "skip_bet_if_live_quote_unavailable", kwargs, bool
+        )
+        self.placement_min_edge: float = self._ensure(
+            "placement_min_edge", kwargs, float
+        )
+        if not -1 <= self.placement_min_edge <= 1:
+            raise ValueError("placement_min_edge must be in the range [-1, 1].")
+
         # a slippage in the range of [0, 1] to apply to the `minOutcomeTokensToBuy` when buying shares on a fpmm
         self._slippage: float = 0.0
         self.slippage: float = self._ensure("slippage", kwargs, float)

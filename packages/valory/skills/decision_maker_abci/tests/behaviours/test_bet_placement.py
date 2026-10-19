@@ -19,8 +19,13 @@
 
 """Tests for BetPlacementBehaviour."""
 
+import json
+from contextlib import ExitStack
 from pathlib import Path
+from typing import Any, Generator, cast
 from unittest.mock import MagicMock, PropertyMock, mock_open, patch
+
+import pytest
 
 from packages.valory.skills.decision_maker_abci.behaviours.base import WXDAI
 from packages.valory.skills.decision_maker_abci.behaviours.bet_placement import (
@@ -48,9 +53,13 @@ def _make_behaviour():  # type: ignore[no-untyped-def]
     """Return a BetPlacementBehaviour with mocked dependencies."""
     behaviour = object.__new__(BetPlacementBehaviour)  # type: ignore[no-untyped-def]
     behaviour.buy_amount = 0
+    behaviour.quoted_tokens = 1000
 
     context = MagicMock()
     context.agent_address = "test_agent"
+    context.params.is_running_on_polymarket = False
+    context.params.placement_min_edge = 0.0
+    context.benchmarking_mode.enabled = False
     behaviour.__dict__["_context"] = context
 
     benchmarking_mode = MagicMock()
@@ -285,7 +294,21 @@ class TestBetPlacementBehaviour:
                     with patch.object(
                         type(behaviour), "synchronized_data", new_callable=PropertyMock
                     ) as mock_sd:
-                        mock_sd.return_value = MagicMock(confidence=0.8)
+                        mock_sd.return_value = MagicMock(
+                            confidence=0.8,
+                            mech_responses=[
+                                MagicMock(
+                                    result=json.dumps(
+                                        dict(
+                                            p_yes=0.8,
+                                            p_no=0.2,
+                                            confidence=0.8,
+                                            info_utility=1.0,
+                                        )
+                                    )
+                                )
+                            ],
+                        )
                         with patch.object(
                             type(behaviour), "tx_hex", new_callable=PropertyMock
                         ) as mock_tx:
@@ -588,3 +611,290 @@ class TestBetPlacementBehaviour:
         payload = payloads_sent[-1]
         assert payload.tx_submitter is None
         assert payload.tx_hash is None
+
+
+def _drain(gen: Generator[None, None, Any]) -> Any:
+    """Run a behavior generator and return its result."""
+    try:
+        while True:
+            next(gen)
+    except StopIteration as exc:
+        return exc.value
+
+
+@pytest.mark.parametrize(
+    "p_yes, vote, investment, quoted, floor, proceeds",
+    [
+        (0.60, 0, 86, 100, 0.0, False),
+        (0.90, 0, 86, 100, 0.0, True),
+        (0.10, 1, 86, 100, 0.0, True),
+        (0.90, 1, 86, 100, 0.0, False),
+        (0.75, 0, 50, 100, 0.25, True),
+        (0.60, 0, 86, 100, -0.3, True),
+        (0.90, 0, 86, 0, 0.0, False),
+    ],
+)
+def test_edge_recheck(
+    p_yes: float, vote: int, investment: int, quoted: int, floor: float, proceeds: bool
+) -> None:
+    """Compare the bought side's probability with the raw quote's price."""
+    behaviour, _ = _make_behaviour()
+    behaviour.quoted_tokens = quoted
+    behaviour.buy_amount = int(quoted * 0.99)
+    behaviour.context.params.placement_min_edge = floor
+    prediction = dict(p_yes=p_yes, p_no=1 - p_yes, confidence=0.8, info_utility=1.0)
+    sd = MagicMock(
+        vote=vote,
+        bet_amount=investment,
+        mech_responses=[MagicMock(result=json.dumps(prediction))],
+    )
+    bet = MagicMock(id="0xmarket", outcomeTokenMarginalPrices=[0.534, 0.466])
+    with ExitStack() as stack:
+        for name, value in {
+            "sampled_bet": bet,
+            "synchronized_data": sd,
+            "tx_hex": "0xtx",
+        }.items():
+            stack.enter_context(
+                patch.object(
+                    type(behaviour), name, new_callable=PropertyMock, return_value=value
+                )
+            )
+        wait = stack.enter_context(
+            patch.object(
+                behaviour,
+                "wait_for_condition_with_sleep",
+                side_effect=lambda step: _noop_gen(),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                behaviour, "_calc_buy_amount", side_effect=lambda: _return_gen(True)
+            )
+        )
+        result = _drain(behaviour._prepare_safe_tx())
+    assert result == ("0xtx" if proceeds else None)
+    assert behaviour.buy_amount == int(quoted * 0.99)
+    assert wait.call_count == (4 if proceeds else 1)
+    if not proceeds:
+        assert any(
+            "[EDGE_RECHECK]" in str(c)
+            for c in behaviour.context.logger.info.call_args_list
+        )
+
+
+@pytest.mark.parametrize(
+    "responses",
+    [[], [MagicMock(result=None)], [MagicMock(result="bad")], [MagicMock(result="{}")]],
+)
+def test_edge_recheck_missing_prediction(responses: list) -> None:
+    """Do not place an Omen bet without the decision probability."""
+    behaviour, _ = _make_behaviour()
+    with (
+        patch.object(
+            type(behaviour),
+            "synchronized_data",
+            new_callable=PropertyMock,
+            return_value=MagicMock(mech_responses=responses),
+        ),
+        patch.object(
+            behaviour,
+            "wait_for_condition_with_sleep",
+            side_effect=lambda step: _noop_gen(),
+        ),
+        patch.object(
+            behaviour, "_calc_buy_amount", side_effect=lambda: _return_gen(True)
+        ),
+    ):
+        assert _drain(behaviour._prepare_safe_tx()) is None
+
+
+def test_edge_abort_uses_failed_tx_route() -> None:
+    """An edge abort leaves the policy unchanged and reaches blacklisting."""
+    from packages.valory.skills.abstract_round_abci.base import AbciAppDB
+    from packages.valory.skills.decision_maker_abci.payloads import (
+        DecisionReceivePayload,
+        HandleFailedTxPayload,
+    )
+    from packages.valory.skills.decision_maker_abci.rounds import DecisionMakerAbciApp
+    from packages.valory.skills.decision_maker_abci.states.base import (
+        Event,
+        SynchronizedData,
+    )
+    from packages.valory.skills.decision_maker_abci.states.bet_placement import (
+        BetPlacementRound,
+    )
+    from packages.valory.skills.decision_maker_abci.states.blacklisting import (
+        BlacklistingRound,
+    )
+    from packages.valory.skills.decision_maker_abci.states.decision_receive import (
+        DecisionReceiveRound,
+    )
+    from packages.valory.skills.decision_maker_abci.states.handle_failed_tx import (
+        HandleFailedTxRound,
+    )
+
+    behaviour, _ = _make_behaviour()
+    behaviour.token_balance = 100
+    behaviour.wallet_balance = 100
+    behaviour.quoted_tokens = 100
+    policy = MagicMock()
+    sd = SynchronizedData(
+        AbciAppDB(
+            setup_data=AbciAppDB.data_to_lists(
+                {
+                    "participants": ("test_agent",),
+                    "all_participants": ("test_agent",),
+                    "consensus_threshold": 1,
+                    "bet_amount": 86,
+                    "vote": 0,
+                    "confidence": 0.8,
+                    "review_bets_for_selling": False,
+                    "mech_responses": json.dumps(
+                        [
+                            {
+                                "result": json.dumps(
+                                    dict(
+                                        p_yes=0.60,
+                                        p_no=0.40,
+                                        confidence=0.8,
+                                        info_utility=1.0,
+                                    )
+                                )
+                            }
+                        ]
+                    ),
+                }
+            )
+        )
+    )
+    decision_context = MagicMock()
+    decision_context.params.is_running_on_polymarket = False
+    decision = DecisionReceiveRound(sd, decision_context)
+    decision.process_payload(
+        DecisionReceivePayload(
+            sender="test_agent",
+            bets_hash="bets",
+            is_profitable=True,
+            vote=0,
+            confidence=0.8,
+            bet_amount=86,
+            next_mock_data_row=None,
+            policy=None,
+            decision_received_timestamp=100,
+            should_be_sold=False,
+        )
+    )
+    decision_result = decision.end_block()
+    assert decision_result is not None
+    sd, event = decision_result
+    assert event == Event.DONE
+    assert (
+        DecisionMakerAbciApp.transition_function[DecisionReceiveRound][event]
+        is BetPlacementRound
+    )
+    sent = []
+
+    def finish(payload: BetPlacementPayload) -> Generator[None, None, Any]:
+        """Capture the payload sent by the behavior."""
+        sent.append(payload)
+        yield
+
+    with (
+        patch.object(
+            type(behaviour),
+            "synchronized_data",
+            new_callable=PropertyMock,
+            return_value=sd,
+        ),
+        patch.object(
+            SynchronizedData,
+            "is_policy_set",
+            new_callable=PropertyMock,
+            return_value=True,
+        ),
+        patch.object(
+            SynchronizedData, "policy", new_callable=PropertyMock, return_value=policy
+        ),
+        patch.object(
+            type(behaviour),
+            "sampled_bet",
+            new_callable=PropertyMock,
+            return_value=MagicMock(id="0xmarket"),
+        ),
+        patch.object(
+            behaviour,
+            "wait_for_condition_with_sleep",
+            side_effect=lambda step: _noop_gen(),
+        ),
+        patch.object(
+            behaviour, "_calc_buy_amount", side_effect=lambda: _return_gen(True)
+        ),
+        patch.object(
+            behaviour,
+            "finish_behaviour",
+            side_effect=finish,
+        ),
+        patch.object(
+            type(behaviour), "is_wxdai", new_callable=PropertyMock, return_value=False
+        ),
+    ):
+        _drain(behaviour.async_act())
+    policy.tool_used.assert_not_called()
+    assert sent[0].tx_submitter == BetPlacementRound.auto_round_id()
+    assert sent[0].tx_hash is None
+    placement = BetPlacementRound(sd, MagicMock())
+    placement.process_payload(sent[0])
+    placement_result = placement.end_block()
+    assert placement_result is not None
+    updated, event = placement_result
+    updated = cast(SynchronizedData, updated)
+    assert event == Event.CALC_BUY_AMOUNT_FAILED
+    assert (
+        DecisionMakerAbciApp.transition_function[BetPlacementRound][event]
+        is HandleFailedTxRound
+    )
+    assert updated.mech_responses[0].result == sd.mech_responses[0].result
+    failed = HandleFailedTxRound(updated, MagicMock())
+    failed.process_payload(
+        HandleFailedTxPayload("test_agent", True, sent[0].tx_submitter)
+    )
+    failed_result = failed.end_block()
+    assert failed_result is not None
+    _, event = failed_result
+    assert event == Event.BLACKLIST
+    assert (
+        DecisionMakerAbciApp.transition_function[HandleFailedTxRound][event]
+        is BlacklistingRound
+    )
+
+
+@pytest.mark.parametrize("polymarket, benchmarking", [(True, False), (False, True)])
+def test_placement_guard_bypassed(polymarket: bool, benchmarking: bool) -> None:
+    """Keep the placement guard off for Polymarket and benchmarking."""
+    behaviour, _ = _make_behaviour()
+    behaviour.context.params.is_running_on_polymarket = polymarket
+    behaviour.context.benchmarking_mode.enabled = benchmarking
+    with (
+        patch.object(behaviour, "_get_decision_prediction") as prediction,
+        patch.object(
+            behaviour,
+            "wait_for_condition_with_sleep",
+            side_effect=lambda step: _noop_gen(),
+        ),
+        patch.object(
+            behaviour, "_calc_buy_amount", side_effect=lambda: _return_gen(True)
+        ),
+        patch.object(type(behaviour), "sampled_bet", new_callable=PropertyMock),
+        patch.object(
+            type(behaviour),
+            "synchronized_data",
+            new_callable=PropertyMock,
+            return_value=MagicMock(bet_amount=100, vote=0),
+        ),
+        patch.object(
+            type(behaviour), "tx_hex", new_callable=PropertyMock, return_value="0xtx"
+        ),
+    ):
+        assert _drain(behaviour._prepare_safe_tx()) == "0xtx"
+        prediction.assert_not_called()

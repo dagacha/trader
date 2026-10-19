@@ -21,6 +21,7 @@
 
 import csv
 import json
+import time
 from copy import deepcopy
 from datetime import datetime
 from math import prod
@@ -496,6 +497,34 @@ class DecisionReceiveBehaviour(StorageManagerBehaviour):
             if self.benchmarking_mode.enabled
             else self.collateral_token
         )
+        if (
+            not self.params.is_running_on_polymarket
+            and not self.benchmarking_mode.enabled
+            and self.params.enable_live_requote
+        ):
+            balances = yield from self._get_pool_balances(
+                bet.id, collateral_for_sizing, bet.condition_id
+            )
+            stale_price_yes = price_yes
+            updated_at = self.context.state.bets_updated_at
+            age = "unknown" if updated_at is None else f"{time.time() - updated_at:.0f}"
+            if balances is None:
+                self.context.logger.warning(
+                    f"[LIVE_REQUOTE] bet={bet.id} price_yes stale={stale_price_yes} "
+                    f"live=unavailable age_s={age} "
+                    f"skip={self.params.skip_bet_if_live_quote_unavailable}"
+                )
+                if self.params.skip_bet_if_live_quote_unavailable:
+                    return False, 0, None
+            else:
+                bet.outcomeTokenAmounts = balances
+                price_yes = balances[1] / sum(balances)
+                price_no = balances[0] / sum(balances)
+                bet.outcomeTokenMarginalPrices = [price_yes, price_no]
+                self.context.logger.info(
+                    f"[LIVE_REQUOTE] bet={bet.id} price_yes stale={stale_price_yes} "
+                    f"live={price_yes} age_s={age}"
+                )
         bet_amount = yield from self.get_bet_amount(
             prediction_response.p_yes,
             prediction_response.confidence,

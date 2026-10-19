@@ -8,7 +8,7 @@ license: Apache-2.0
 fingerprint:
   README.md: bafybeichoh5tnk4qctaazcjcrxvpwc5yasodleqoeapnfapwrrdh3tm5gu
 fingerprint_ignore_patterns: []
-agent: valory/trader:0.1.0:bafybeifrtjtd3sfobuhspq3amqv2nxh3nme3oxi2wwp52ex4kiyvia7p7u
+agent: valory/trader:0.1.0:bafybeibtxrtysqt4izwtimamm5nl7d7bor7z2uem57g2jgmy5hzuhxam2y
 number_of_agents: 1
 deployment:
   agent:
@@ -112,6 +112,9 @@ models:
       max_filtering_retries: ${MAX_FILTERING_RETRIES:int:6}
       minimum_batch_size: ${MINIMUM_BATCH_SIZE:int:500}
       redeeming_batch_size: ${REDEEMING_BATCH_SIZE:int:1}
+      enable_live_requote: ${ENABLE_LIVE_REQUOTE:bool:true}
+      skip_bet_if_live_quote_unavailable: ${SKIP_BET_IF_LIVE_QUOTE_UNAVAILABLE:bool:true}
+      placement_min_edge: ${PLACEMENT_MIN_EDGE:float:0.0}
       slippage: ${SLIPPAGE:float:0.01}
       withdrawal_slippage: ${WITHDRAWAL_SLIPPAGE:float:0.01}
       withdrawal_return_buffer: ${WITHDRAWAL_RETURN_BUFFER:float:0.05}

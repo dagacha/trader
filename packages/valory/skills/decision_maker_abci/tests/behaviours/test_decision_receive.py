@@ -22,9 +22,12 @@
 import json
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Generator, Optional, Tuple
+from typing import Any, Dict, Generator, Optional, Tuple, cast
 from unittest.mock import MagicMock, PropertyMock, patch
 
+import pytest
+
+from packages.valory.protocols.contract_api import ContractApiMessage
 from packages.valory.skills.decision_maker_abci.behaviours.decision_receive import (
     DecisionReceiveBehaviour,
 )
@@ -843,6 +846,7 @@ class TestIsProfitable:
             type(behaviour), "params", new_callable=PropertyMock
         ).start().return_value = MagicMock(
             is_running_on_polymarket=is_polymarket,
+            enable_live_requote=False,
             polymarket_spread_min=0.0,
             polymarket_spread_max=1.0,
         )
@@ -1384,6 +1388,7 @@ class TestIsProfitable:
             yield
             return 500  # type: ignore[return-value]
 
+        behaviour.get_contract_api_response = MagicMock()  # type: ignore[method-assign]
         shared_state = MagicMock()
         shared_state.current_liquidity_amounts = [10000, 10000]
         shared_state.current_liquidity_prices = [0.5, 0.5]
@@ -1450,6 +1455,112 @@ class TestIsProfitable:
         assert is_profitable is True
         assert bet_amount == 500
         assert shared_state.benchmarking_mech_calls == 1
+        behaviour.get_contract_api_response.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "updated_at, expected_age", [(1000.0, "120"), (None, "unknown")]
+    )
+    @pytest.mark.parametrize(
+        "balances, skip, expected_amounts",
+        [
+            ([2000, 8000], True, [2000, 8000]),
+            (None, True, None),
+            (None, False, [10000, 10000]),
+            ([0, 0], True, None),
+            ([100], True, None),
+            (["bad", 100], True, None),
+            ([-1, 100], True, None),
+        ],
+    )
+    def test_live_balances(
+        self,
+        balances: Any,
+        skip: bool,
+        expected_amounts: Any,
+        updated_at: Optional[float],
+        expected_age: str,
+    ) -> None:
+        """Pass live reserves to sizing, or apply the configured failure rule."""
+        behaviour, pred, bet = self._setup_behaviour()
+        bet.condition_id = "0xcondition"
+        behaviour.params.enable_live_requote = True
+        behaviour.params.skip_bet_if_live_quote_unavailable = skip
+        behaviour.context.state.bets_updated_at = updated_at
+        response = MagicMock(performative=ContractApiMessage.Performative.STATE)
+        response.state.body = {"balances": balances}
+        with (
+            patch.object(
+                behaviour,
+                "get_contract_api_response",
+                side_effect=lambda **kw: _return_gen(response),
+            ) as read,
+            patch("time.time", return_value=1120.0),
+        ):
+            result = self._run_is_profitable(behaviour, pred)
+        if expected_amounts is None:
+            assert result == (False, 0, None)
+            cast(MagicMock, behaviour.get_bet_amount).assert_not_called()
+        else:
+            call = cast(MagicMock, behaviour.get_bet_amount).call_args
+            assert call.args[2] == expected_amounts
+            assert call.kwargs["price_yes"] == expected_amounts[1] / sum(
+                expected_amounts
+            )
+            assert call.kwargs["price_no"] == expected_amounts[0] / sum(
+                expected_amounts
+            )
+            if balances is not None:
+                assert bet.outcomeTokenAmounts == expected_amounts
+        logger = behaviour.context.logger
+        log = (
+            logger.warning
+            if expected_amounts is None or balances is None
+            else logger.info
+        )
+        assert any(
+            "[LIVE_REQUOTE]" in str(c) and f"age_s={expected_age}" in str(c)
+            for c in log.call_args_list
+        )
+        assert read.call_args.kwargs["condition_id"] == "0xcondition"
+        assert read.call_args.kwargs["collateral_token"] == bet.collateralToken
+        assert read.call_args.kwargs["contract_callable"] == "get_pool_balances_via_ct"
+        patch.stopall()
+
+    @pytest.mark.parametrize("is_polymarket, enabled", [(True, True), (False, False)])
+    def test_no_live_read(self, is_polymarket: bool, enabled: bool) -> None:
+        """Keep Polymarket and disabled Omen sizing unchanged."""
+        behaviour, pred, _ = self._setup_behaviour(is_polymarket=is_polymarket)
+        behaviour.params.enable_live_requote = enabled
+        with patch.object(behaviour, "get_contract_api_response") as read:
+            self._run_is_profitable(behaviour, pred)
+            read.assert_not_called()
+        patch.stopall()
+
+    @pytest.mark.parametrize(
+        "condition_id, performative",
+        [
+            (None, ContractApiMessage.Performative.STATE),
+            ("0xcondition", ContractApiMessage.Performative.ERROR),
+        ],
+    )
+    def test_unavailable_live_quote(
+        self, condition_id: Optional[str], performative: Any
+    ) -> None:
+        """Reject a missing condition or a failed contract response."""
+        behaviour, pred, bet = self._setup_behaviour()
+        bet.condition_id = condition_id
+        behaviour.params.enable_live_requote = True
+        behaviour.params.skip_bet_if_live_quote_unavailable = True
+        behaviour.context.state.bets_updated_at = 1000.0
+        response = MagicMock(performative=performative)
+        with patch.object(
+            behaviour,
+            "get_contract_api_response",
+            side_effect=lambda **kw: _return_gen(response),
+        ) as read:
+            assert self._run_is_profitable(behaviour, pred) == (False, 0, None)
+            assert read.call_count == (0 if condition_id is None else 1)
+        patch.stopall()
 
 
 # ---------------------------------------------------------------------------

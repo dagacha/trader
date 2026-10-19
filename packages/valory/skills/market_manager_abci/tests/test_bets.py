@@ -21,7 +21,7 @@
 
 import json
 import sys
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import pytest
 
@@ -1409,3 +1409,18 @@ class TestBetToRequestContext:
         serialized = json.dumps(ctx)
         deserialized = json.loads(serialized)
         assert deserialized == ctx
+
+
+@pytest.mark.parametrize("stored", [None, "0xstored"])
+def test_update_market_info_backfills_omen_condition(stored: Optional[str]) -> None:
+    """Backfill the Omen condition without replacing an existing value."""
+    bet = _make_bet(condition_id=stored)
+    bet.update_market_info(_make_bet(condition_id="0xincoming"))
+    assert bet.condition_id == (stored or "0xincoming")
+
+
+def test_update_market_info_keeps_polymarket_condition() -> None:
+    """Keep the existing Polymarket condition behavior."""
+    bet = _make_bet(market="polymarket", condition_id=None)
+    bet.update_market_info(_make_bet(market="polymarket", condition_id="0xincoming"))
+    assert bet.condition_id is None
