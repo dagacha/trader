@@ -518,6 +518,7 @@ class DecisionReceiveBehaviour(StorageManagerBehaviour):
                     return False, 0, None
             else:
                 bet.outcomeTokenAmounts = balances
+                # CPMM: [outcome_0, outcome_1]; price = other/total, as in withdrawals.
                 price_yes = balances[1] / sum(balances)
                 price_no = balances[0] / sum(balances)
                 bet.outcomeTokenMarginalPrices = [price_yes, price_no]
