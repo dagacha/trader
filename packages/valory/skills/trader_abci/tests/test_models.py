@@ -19,7 +19,7 @@
 
 """Tests for trader_abci models."""
 
-from typing import Any, Dict
+from typing import Any, Dict, Type
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
@@ -30,6 +30,9 @@ from packages.valory.skills.decision_maker_abci.models import (
 from packages.valory.skills.decision_maker_abci.rounds import (
     Event as DecisionMakerEvent,
 )
+from packages.valory.skills.market_manager_abci.models import (
+    SharedState as MarketManagerSharedState,
+)
 from packages.valory.skills.market_manager_abci.rounds import (
     Event as MarketManagerEvent,
 )
@@ -38,6 +41,19 @@ from packages.valory.skills.reset_pause_abci.rounds import Event as ResetPauseEv
 from packages.valory.skills.trader_abci.composition import TraderAbciApp
 from packages.valory.skills.trader_abci.models import MARGIN, SharedState, TraderParams
 from packages.valory.skills.transaction_settlement_abci.rounds import Event as TSEvent
+
+
+@pytest.mark.parametrize("state_cls", [BaseSharedState, SharedState])
+def test_derived_shared_state_timestamp_default(
+    state_cls: Type[MarketManagerSharedState],
+) -> None:
+    """Derived shared states inherit the market timestamp with a None default.
+
+    :param state_cls: the decision maker or trader shared state class.
+    """
+    assert issubclass(state_cls, MarketManagerSharedState)
+    state = state_cls(name="state", skill_context=MagicMock())
+    assert state.bets_updated_at is None
 
 
 class TestTraderParams:

@@ -20,7 +20,7 @@
 """Tests for market_manager_abci models."""
 
 from pathlib import Path
-from typing import Any, Dict, List, Type
+from typing import Any, Dict, List
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -28,25 +28,17 @@ from aea.exceptions import AEAEnforceError
 from aea.skills.base import Model
 
 from packages.valory.skills.abstract_round_abci.models import ApiSpecs, BaseParams
-from packages.valory.skills.decision_maker_abci.models import (
-    SharedState as DecisionMakerSharedState,
-)
 from packages.valory.skills.market_manager_abci.models import (
     BenchmarkingMode,
     MarketManagerParams,
     SharedState,
     Subgraph,
 )
-from packages.valory.skills.trader_abci.models import SharedState as TraderSharedState
 
 
-@pytest.mark.parametrize(
-    "state_cls", [SharedState, DecisionMakerSharedState, TraderSharedState]
-)
-def test_shared_state_timestamp_default(state_cls: Type[SharedState]) -> None:
-    """Default the market timestamp to None in each skill's shared state."""
-    assert issubclass(state_cls, SharedState)
-    state = state_cls(name="state", skill_context=MagicMock())
+def test_shared_state_timestamp_default() -> None:
+    """Default the market timestamp to None in the shared state."""
+    state = SharedState(name="state", skill_context=MagicMock())
     assert state.bets_updated_at is None
 
 
