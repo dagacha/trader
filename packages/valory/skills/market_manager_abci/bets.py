@@ -187,6 +187,7 @@ class Bet:
     # Polymarket-only long-form market description (resolution rules). Omen bets
     # leave this None. Sent to the mech via `to_request_context`.
     description: Optional[str] = None
+    creationTimestamp: int = 0
 
     def __post_init__(self) -> None:
         """Post initialization to adjust the values."""
@@ -388,6 +389,9 @@ class Bet:
 
         if self.market == "omen_subgraph" and not self.condition_id:
             self.condition_id = bet.condition_id
+
+        if self.creationTimestamp == 0:
+            self.creationTimestamp = bet.creationTimestamp
 
         self.outcomeTokenAmounts = bet.outcomeTokenAmounts.copy()
         self.outcomeTokenMarginalPrices = bet.outcomeTokenMarginalPrices.copy()

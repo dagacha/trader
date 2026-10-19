@@ -1424,3 +1424,33 @@ def test_update_market_info_keeps_polymarket_condition() -> None:
     bet = _make_bet(market="polymarket", condition_id=None)
     bet.update_market_info(_make_bet(market="polymarket", condition_id="0xincoming"))
     assert bet.condition_id is None
+
+
+@pytest.mark.parametrize("market", ["omen_subgraph", "polymarket_client"])
+def test_old_stored_bet_without_creation_timestamp(market: str) -> None:
+    """Load stored bets that predate the creation timestamp field."""
+    stored = json.loads(json.dumps(_make_bet(market=market), cls=BetsEncoder))
+    stored.pop("creationTimestamp", None)
+    restored = json.loads(json.dumps(stored), cls=BetsDecoder)
+    assert isinstance(restored, Bet)
+    assert restored.creationTimestamp == 0
+
+
+def test_creation_timestamp_cast_and_round_trip() -> None:
+    """Cast the subgraph timestamp and keep it in stored bets."""
+    bet = _make_bet(creationTimestamp="1700000000")
+    assert bet.creationTimestamp == 1700000000
+    restored = json.loads(json.dumps(bet, cls=BetsEncoder), cls=BetsDecoder)
+    assert restored.creationTimestamp == 1700000000
+
+
+@pytest.mark.parametrize(
+    "stored, expected", [(0, 1700000000), (1600000000, 1600000000)]
+)
+def test_update_market_info_backfills_creation_timestamp(
+    stored: int, expected: int
+) -> None:
+    """Fill a missing creation time without replacing an existing time."""
+    bet = _make_bet(creationTimestamp=stored)
+    bet.update_market_info(_make_bet(creationTimestamp="1700000000"))
+    assert bet.creationTimestamp == expected

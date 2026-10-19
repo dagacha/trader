@@ -106,6 +106,10 @@ class TestNetworkQueries:
 class TestOmenQueries:
     """Tests for the omen query templates."""
 
+    def test_questions_requests_creation_timestamp(self) -> None:
+        """Request creation time as a result field, not only as a sort key."""
+        assert "\n        creationTimestamp\n" in questions.template
+
     def test_questions_is_template(self) -> None:
         """Test that questions is a Template instance."""
         assert isinstance(questions, Template)

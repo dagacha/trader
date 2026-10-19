@@ -510,6 +510,15 @@ class DecisionMakerParams(
         if not -1 <= self.placement_min_edge <= 1:
             raise ValueError("placement_min_edge must be in the range [-1, 1].")
 
+        self.prioritize_fresh_markets: bool = self._ensure(
+            "prioritize_fresh_markets", kwargs, bool
+        )
+        self.fresh_market_max_age: int = self._ensure(
+            "fresh_market_max_age", kwargs, int
+        )
+        if self.fresh_market_max_age <= 0:
+            raise ValueError("fresh_market_max_age must be greater than 0.")
+
         # a slippage in the range of [0, 1] to apply to the `minOutcomeTokensToBuy` when buying shares on a fpmm
         self._slippage: float = 0.0
         self.slippage: float = self._ensure("slippage", kwargs, float)

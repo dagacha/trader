@@ -41,6 +41,7 @@ questions = Template("""
         condition { id }
         creator
         fee
+        creationTimestamp
         openingTimestamp
         outcomeSlotCount
         outcomeTokenAmounts
