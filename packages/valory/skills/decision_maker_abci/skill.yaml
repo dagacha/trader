@@ -40,7 +40,7 @@ fingerprint:
   behaviours/redeem_router.py: bafybeibgo4kmgqgbyc6twx6toxammpgvkjhhddg2e3ezogwvvgazib27nu
   behaviours/reedem.py: bafybeiemosn4pfky7fovsykb7xkra4blw6ztxu4itturpylfzlspltf3lu
   behaviours/round_behaviour.py: bafybeiaqtvgzxsxs557cpjbdfio4eeykjlgcfjyvfz3lkzgw3k4bmrcveq
-  behaviours/sampling.py: bafybeiauymqd5kpxch473x5opxqkjilsptfj6i66eu47ejn5vytbcvmqmy
+  behaviours/sampling.py: bafybeicp7lg6iyzet3zrqxl4clnzotdg25deowx7xm42xwzfnde3xvdt7a
   behaviours/sell_outcome_tokens.py: bafybeih6xtmqtuasnm63b5u3qau6ssj7dvvgvmwmepll6ydwo3aqc7tzv4
   behaviours/storage_manager.py: bafybeidnsffc3m76zt77inywi5733bvknhlxkq6hyl4eqh44mq7eyq7sy4
   behaviours/tool_selection.py: bafybeieogfwehxkac4mfqxtichutbfr3h7b5zrrfccvn2rvm5yvvzlhifm
@@ -51,7 +51,7 @@ fingerprint:
   handlers.py: bafybeiehbneuvyvuwgxeh2sm3gr6lgckixjiblbf4ep5rdb3bkdvh5wcg4
   io_/__init__.py: bafybeifxgmmwjqzezzn3e6keh2bfo4cyo7y5dq2ept3stfmgglbrzfl5rq
   io_/loader.py: bafybeidxedelj7gmprur3oriwdinxjnutroxttt5ltnhi6uglhxfawzgmq
-  models.py: bafybeiamcumowigiihyfaunfonc2ou4ru3t7e4iylqlsnii6vp4ew6tia4
+  models.py: bafybeib7j2qb5yt7utpjgwcraqjcdfdexoff4aionyegqnbs6ajnlctg4m
   payloads.py: bafybeigbewilt4takskwjtijov7eczuu6qt2mlqutx52rw62dfs4zrgly4
   policy.py: bafybeici2ywdlwzpftbibv2uyzymdlraj6wovjana37ujkdwn5wna6bbvq
   redeem_info.py: bafybeibkeer54i2td5bibpu2mvf6iblnxqaaevuaa7t575y2ygkwopiofe
@@ -123,6 +123,7 @@ fingerprint:
   tests/behaviours/test_redeem_router.py: bafybeifttfb4ik5hpyc6rivp6gcseih3dtcnw2437u4j2teshfr6tejlvm
   tests/behaviours/test_reedem.py: bafybeicqt4r37nb2nxz5oa22scya2mgmlaunpvafnowvjkaadoznbv4yuq
   tests/behaviours/test_sampling.py: bafybeidfaohyulo3psw6ltauyxwdckdo45jv3fzi4ght6me5flarzri32e
+  tests/behaviours/test_sampling_fresh.py: bafybeieylcytcuhnfjfbs55fxifob5tu36f6jmv47bcln5ibbhq6uh3y54
   tests/behaviours/test_sell_outcome_tokens.py: bafybeiej3ci4irissz45kk5ooy4notxcjl2dtbxioljqlzqtwex3elrqqq
   tests/behaviours/test_storage_manager.py: bafybeiekl3vgvsdo4ao37hcdjadgfocj7nqgyyuggvdljtnuzpan3uprhq
   tests/behaviours/test_tool_selection.py: bafybeicxapjpvwdajg6lfp2e2bud3kerdmjus45zt255ayd7cxkepc3v7y
@@ -153,7 +154,7 @@ fingerprint:
   tests/states/test_trade_count.py: bafybeieug4wb6a53nlm5lbdydr2ky3fnicvcjlfnw73lcqxqnxe6ylgdwm
   tests/test_dialogues.py: bafybeibulo64tgfrq4e5qbcqnmifrlehkqciwuavublints353zaj2mlpa
   tests/test_handlers.py: bafybeibbgirs4uio3iprbs5daorjogkr6ra5gkkgvrvi2plb6c55v5me3u
-  tests/test_models.py: bafybeib6cbmgn64weizfkw4xcdsqh4h7gaiqmyqgnytmtrr2yjhrx3z4ve
+  tests/test_models.py: bafybeihuczwdqdblmn46bgdx5pvoh4m55o6rhn6djjxqdwpmswo453wwgy
   tests/test_payloads.py: bafybeihjkh4coqdg4m4xhac4kbi7fhbj2vhzukoi5ctyfcgyute3u4hita
   tests/test_policy.py: bafybeih5w6samohizmoi5wkl77nofowhjjz5m2rgjzqdrh75zmrdtpeuvm
   tests/test_polymarket_dw_payloads.py: bafybeibiwz3rv2g46nbp4r2uofvhb4mvaus6tpejdbgnre2ry3e24dij2m
@@ -193,7 +194,7 @@ protocols:
 - valory/srr:0.1.0:bafybeibfs6osw7guctdpollf4iwt4vhd6yk7ai34tqk5djuxtgowjwdjb4
 skills:
 - valory/abstract_round_abci:0.1.0:bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4
-- valory/market_manager_abci:0.1.0:bafybeigda7qr5pxtifxgwwm7cmpdky6bwurs5lsezgljso4v5iqhr4w45u
+- valory/market_manager_abci:0.1.0:bafybeie556ry4x26yh23sp2paj3ktle4kpw2ahx67pycqkek5s3aed22sa
 - valory/transaction_settlement_abci:0.1.0:bafybeidmmhjcgp7chozxovensq3zplkufvaityd2w3zladtssu4ijvqbzm
 - valory/mech_interact_abci:0.1.0:bafybeihzxuw56or3kayepbcoke5bxfeeo4q4nbufdomsjydtmh426byapy
 - valory/staking_abci:0.1.0:bafybeicympilexxepigcmlumn22glkfskkrjuhsfco3nuhvxyyxh2z373y
@@ -381,6 +382,8 @@ models:
       enable_live_requote: true
       skip_bet_if_live_quote_unavailable: true
       placement_min_edge: 0.0
+      prioritize_fresh_markets: false
+      fresh_market_max_age: 1800
       slippage: 0.01
       withdrawal_slippage: 0.01
       withdrawal_return_buffer: 0.05

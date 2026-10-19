@@ -603,6 +603,8 @@ def _build_decision_maker_params_kwargs() -> dict:
         "enable_live_requote": True,
         "skip_bet_if_live_quote_unavailable": True,
         "placement_min_edge": 0.0,
+        "prioritize_fresh_markets": False,
+        "fresh_market_max_age": 1800,
         "policy_epsilon": 0.2,
         "tool_punishment_multiplier": 2,
         "contract_timeout": 10.0,
@@ -888,4 +890,27 @@ def test_negative_max_trades_rejected() -> None:
     kwargs = _build_decision_maker_params_kwargs()
     kwargs["max_trades"] = -1
     with pytest.raises(ValueError, match="max_trades"):
+        DecisionMakerParams(**kwargs)
+
+
+@pytest.mark.parametrize("enabled, age", [(False, 1800), (True, 1)])
+def test_fresh_market_params(enabled: bool, age: int) -> None:
+    """Load the sampler controls and accept a positive age limit."""
+    kwargs = _build_decision_maker_params_kwargs()
+    kwargs.update(prioritize_fresh_markets=enabled, fresh_market_max_age=age)
+    with patch.object(DecisionMakerParams.__mro__[1], "__init__", return_value=None):
+        params = DecisionMakerParams(**kwargs)
+    assert params.prioritize_fresh_markets is enabled
+    assert params.fresh_market_max_age == age
+
+
+@pytest.mark.parametrize("age", [0, -1])
+def test_fresh_market_max_age_invalid(age: int) -> None:
+    """Reject an age limit that is not positive."""
+    kwargs = _build_decision_maker_params_kwargs()
+    kwargs["fresh_market_max_age"] = age
+    with (
+        patch.object(DecisionMakerParams.__mro__[1], "__init__", return_value=None),
+        pytest.raises(ValueError, match="fresh_market_max_age"),
+    ):
         DecisionMakerParams(**kwargs)

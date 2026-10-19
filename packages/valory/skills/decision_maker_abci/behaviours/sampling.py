@@ -47,6 +47,7 @@ class SamplingBehaviour(DecisionMakerBaseBehaviour, QueryingBehaviour):
         """Initialize Behaviour."""
         super().__init__(**kwargs)
         self.should_rebet: bool = False
+        self._now: int = 0
 
     def setup(self) -> None:
         """Setup the behaviour."""
@@ -211,6 +212,8 @@ class SamplingBehaviour(DecisionMakerBaseBehaviour, QueryingBehaviour):
         """
         Sample a bet and return its index.
 
+        When enabled, pick the newest fresh market with no bets before queue sorting.
+
         The sampling logic follows the specified priority logic:
         1. Filter out all the bets that have a processed_timestamp != 0 to get a list of new bets.
         2. If the list of new bets is not empty:
@@ -225,6 +228,32 @@ class SamplingBehaviour(DecisionMakerBaseBehaviour, QueryingBehaviour):
         :param bets: the bets' values to compare for the sampling.
         :return: the index of the sampled bet, out of all the available bets, not only the given ones.
         """
+
+        if (
+            self.params.prioritize_fresh_markets is True
+            and not self.benchmarking_mode.enabled
+        ):
+            fresh = [
+                bet
+                for bet in bets
+                if bet.creationTimestamp > 0
+                and self._now - bet.creationTimestamp
+                <= self.params.fresh_market_max_age
+                and not bet.n_bets
+            ]
+            if fresh:
+                pick = max(
+                    fresh,
+                    key=lambda bet: (bet.creationTimestamp, bet.scaledLiquidityMeasure),
+                )
+                self.context.logger.info(
+                    f"[FRESH_FIRST] fresh_candidates={len(fresh)} "
+                    f"picked={pick.id} age_s={self._now - pick.creationTimestamp}"
+                )
+                return self.bets.index(pick)
+            self.context.logger.info(
+                "[FRESH_FIRST] fresh_candidates=0 fallback=priority"
+            )
 
         to_process_bets, processed_bets, reprocessed_bets = self._get_bets_queue_wise(
             bets
@@ -275,6 +304,7 @@ class SamplingBehaviour(DecisionMakerBaseBehaviour, QueryingBehaviour):
             self.context.logger.info(f"Simulating date: {datetime.fromtimestamp(now)}")
         else:
             now = self.synced_timestamp
+        self._now = now
 
         # Strict-mode breakdown (observability only — pure read pass).
         # Captured BEFORE the side-effecting processable_bet call so
