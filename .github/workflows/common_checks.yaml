@@ -139,7 +139,7 @@ jobs:
           pip install marshmallow==3.26.2
 
       - name: Security checks
-        run: tomte tox -p -e safety -e bandit
+        run: tomte tox -p -e safety-policy -e bandit
       - name: Check packages
         run: tomte tox -e check-packages
       - name: Check hash
