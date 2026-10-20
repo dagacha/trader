@@ -302,20 +302,20 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
     @pytest.mark.parametrize(
         "args, kwargs, method_name, expected_result",
         (
-            ((), {}, "", {BET_AMOUNT_FIELD: 0}),
-            ((), {"unexpected_field": "test"}, "", {BET_AMOUNT_FIELD: 0}),
-            ((), {"trading_strategy": None}, "", {BET_AMOUNT_FIELD: 0}),
+            ((), {}, "", {}),
+            ((), {"unexpected_field": "test"}, "", {}),
+            ((), {"trading_strategy": None}, "", {}),
             (
                 (),
                 {"trading_strategy": "non_existing_strategy"},
                 "",
-                {BET_AMOUNT_FIELD: 0},
+                {},
             ),
             (
                 (),
                 {"trading_strategy": "test"},
                 "non_existing_method",
-                {BET_AMOUNT_FIELD: 0},
+                {},
             ),
             ((), {"trading_strategy": "test"}, "dummy", "dummy"),
         ),
@@ -558,7 +558,7 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
         behaviour = self.behaviour
         behaviour.shared_state.strategies_executables = {}
         result = behaviour.execute_strategy(trading_strategy="nonexistent_strategy")
-        assert result == {BET_AMOUNT_FIELD: 0}
+        assert result == {}
 
     def test_mock_data_property(self) -> None:
         """Test the `mock_data` property."""
@@ -2374,44 +2374,115 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
             result = behaviour._collateral_amount_info(10**6)
         assert "pUSD" in result
 
-    def test_get_bet_amount_with_fallback_strategy(self) -> None:
-        """Test `get_bet_amount` using a fallback strategy."""
+    @pytest.mark.parametrize("is_running_on_polymarket", [False, True])
+    @pytest.mark.parametrize("use_fallback_strategy", [False, True])
+    @pytest.mark.parametrize(
+        "scenario, strategy_body, amount",
+        [
+            ("kelly_no_edge", None, 0),
+            ("zero_float", "return {'bet_amount': 0.0}", 0.0),
+            ("positive", "return {'bet_amount': 100}", 100),
+            ("positive_float", "return {'bet_amount': 1.5}", 1.5),
+            ("negative", "return {'bet_amount': -10}", -10),
+            ("missing_amount", "return {}", None),
+            ("none_amount", "return {'bet_amount': None}", None),
+            ("raises", "raise ValueError('strategy failed')", None),
+            ("load_raises", None, None),
+            ("no_executable", None, None),
+            ("no_callable", None, None),
+            ("all_fail", "return {}", None),
+        ],
+    )
+    def test_get_bet_amount_with_fallback_strategy(
+        self,
+        is_running_on_polymarket: bool,
+        use_fallback_strategy: bool,
+        scenario: str,
+        strategy_body: Optional[str],
+        amount: Optional[float],
+    ) -> None:
+        """Only strategy failures permit fallback, on either venue.
+
+        :param is_running_on_polymarket: whether to use Polymarket.
+        :param use_fallback_strategy: whether fallback is enabled.
+        :param scenario: strategy result or failure to test.
+        :param strategy_body: replacement strategy code, if needed.
+        :param amount: expected amount, or None for a failure.
+        """
         behaviour = self.behaviour
         behaviour.download_strategies = lambda: (yield)  # type: ignore[assignment, method-assign]
         behaviour.wait_for_condition_with_sleep = lambda _: (yield)  # type: ignore[assignment, method-assign, misc]
         behaviour.params.strategies_kwargs = deepcopy(STRATEGIES_KWARGS)
-        behaviour.params.use_fallback_strategy = True
-        behaviour.params.is_running_on_polymarket = False
-        behaviour.shared_state.chatui_config.trading_strategy = "first_strategy"
+        behaviour.params.use_fallback_strategy = use_fallback_strategy
+        behaviour.params.is_running_on_polymarket = is_running_on_polymarket
+        behaviour.shared_state.chatui_config.trading_strategy = "kelly_criterion"
         behaviour.shared_state.chatui_config.max_bet_size = None
         behaviour.shared_state.chatui_config.fixed_bet_size = None
         behaviour.token_balance = 10**18
         behaviour.wallet_balance = 10**18
 
-        call_count = 0
+        executables = get_strategy_executables()
+        if strategy_body is not None:
+            executables["kelly_criterion"] = (
+                f"def run(**kwargs):\n    {strategy_body}",
+                "run",
+            )
+        if scenario == "load_raises":
+            executables["kelly_criterion"] = (
+                "raise RuntimeError('load failed')",
+                "run",
+            )
+        elif scenario == "no_executable":
+            del executables["kelly_criterion"]
+        elif scenario == "no_callable":
+            executables["kelly_criterion"] = ("", "run")
+        elif scenario == "all_fail":
+            executables["fixed_bet"] = ("def run(**kwargs): return {}", "run")
+        behaviour.shared_state.strategies_executables = executables
 
-        def mock_execute_strategy(*args: Any, **kwargs: Any) -> dict:
-            """Mock execute strategy that returns 0 first time, then a value."""
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return {BET_AMOUNT_FIELD: 0}
-            return {BET_AMOUNT_FIELD: 100}
+        fallback_expected = amount is None and use_fallback_strategy
+        expected_amount = amount if amount is not None else 0
+        if fallback_expected and scenario != "all_fail":
+            expected_amount = STRATEGIES_KWARGS["absolute_min_bet_size"]
 
-        behaviour.execute_strategy = mock_execute_strategy  # type: ignore[method-assign]
-        behaviour.shared_state.strategies_executables = {
-            "first_strategy": ("code1", "method1"),
-            "second_strategy": ("code2", "method2"),
-        }
-
-        gen = behaviour.get_bet_amount(0.5, 0.5, [100, 100], 10, WXDAI)
-        for _ in range(2):  # type: ignore[no-untyped-def]
+        with mock.patch.object(
+            behaviour, "execute_strategy", wraps=behaviour.execute_strategy
+        ) as execute:
+            gen = behaviour.get_bet_amount(
+                0.6,
+                0.5,
+                [10**20, 10**20],
+                0,
+                PUSD_POLYGON if is_running_on_polymarket else WXDAI,
+                market_type="clob" if is_running_on_polymarket else "fpmm",
+                price_yes=0.6,
+                price_no=0.4,
+                orderbook_asks_yes=[{"price": "0.6", "size": "100"}],
+                orderbook_asks_no=[{"price": "0.4", "size": "100"}],
+            )
             next(gen)
-        try:
             next(gen)
-        except StopIteration as e:
-            assert e.value == 100
-        assert call_count == 2
+            with pytest.raises(StopIteration) as stopped:
+                next(gen)
+
+        assert stopped.value.value == expected_amount
+        assert [call.kwargs["trading_strategy"] for call in execute.call_args_list] == (
+            ["kelly_criterion", "fixed_bet"]
+            if fallback_expected
+            else ["kelly_criterion"]
+        )
+        if amount == 0:
+            behaviour.context.logger.info.assert_any_call(
+                "[NO_TRADE] kelly_criterion returned 0; not falling back"
+            )
+        if amount is None:
+            behaviour.context.logger.error.assert_called()
+        if fallback_expected:
+            behaviour.context.logger.warning.assert_called_once_with(
+                "Using fallback strategy fixed_bet as the previous one returned 0."
+            )
+        else:
+            behaviour.context.logger.warning.assert_not_called()
 
     def test_get_bet_amount_with_logging(self) -> None:
         """Test `get_bet_amount` processes strategy log levels."""

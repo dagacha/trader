@@ -12,7 +12,7 @@ fingerprint:
   README.md: bafybeia367zzdwndvlhw27rvnwodytjo3ms7gbc3q7mhrrjqjgfasnk47i
   __init__.py: bafybeih4hqutxbtqml3dqbs3qivms5atletbpsqsiigzgzmoashwx6c3g4
   behaviours/__init__.py: bafybeih6ddz2ocvm6x6ytvlbcz6oi4snb5ee5xh5h65nq4w2qf7fd7zfky
-  behaviours/base.py: bafybeib72baa4k2mdqf24ocf4jqasbyzfdd7lf4tzz6fybqy4onqmtaed4
+  behaviours/base.py: bafybeibufwj5kxbjlc4kvlmk3o2q2wko56gwlbiqj4sz7tph7idbo6jdwi
   behaviours/bet_placement.py: bafybeigdt7ab6w74qngzh2tzq6l6wg4xsz7h5qt2qmkn53brujltdom2ue
   behaviours/blacklisting.py: bafybeicn2rq5uwibqnsaw7cpu74es7fcxlhzkqvhercwwofuelpo4rmcyu
   behaviours/check_benchmarking.py: bafybeiao2lyj7apezkqrpgsyzb3dwvrdgsrgtprf6iuhsmlsufvxfl5bci
@@ -95,7 +95,7 @@ fingerprint:
   tests/behaviours/data/.gitkeep: bafybeiekl43sjsyqfgl6y27ve5ydo4svcngrptgtffblokmspfezroxvvi
   tests/behaviours/dummy_strategy/__init__.py: bafybeiep5w5yckjzy724v63qd5cmzfn3uxytmnizynomxggfobbysfcttq
   tests/behaviours/dummy_strategy/dummy_strategy.py: bafybeih6fpzt2674zd43dpmncnxkm4wnzqe5zpty5a2upqsf5qcooasiwm
-  tests/behaviours/test_base.py: bafybeie6avwfonrbzni5xnj3wmowgbhdwq6hnwpbuwpxmgg5bclsxeo4se
+  tests/behaviours/test_base.py: bafybeifd6i7kwocqylw4qfwiemtqieldsmopup7yhcwettlex24ua3qyha
   tests/behaviours/test_bet_placement.py: bafybeigkkbs4wko3rpsvorrwirffzpd5oibooms7atjynkog5t2vlkowli
   tests/behaviours/test_blacklisting.py: bafybeic2jcfxujhto6khwrobnfxx43wh42hx2fmn4xo2hxzlynmavqvbqa
   tests/behaviours/test_check_benchmarking.py: bafybeihfdlrjliykbuwfqsv3snkgzge3jfug3dezp7uan5qooufoevtbnq
