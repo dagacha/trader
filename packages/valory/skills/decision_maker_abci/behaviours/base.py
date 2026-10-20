@@ -166,28 +166,34 @@ class DecisionMakerBaseBehaviour(BetsManagerBehaviour, ABC):
         trading_strategy = kwargs.pop("trading_strategy", None)
         if trading_strategy is None:
             self.context.logger.error(f"No trading strategy was given in {kwargs=}!")
-            return {BET_AMOUNT_FIELD: 0}
+            return {}
 
         strategy = self.strategy_exec(trading_strategy)
         if strategy is None:
             self.context.logger.error(
                 f"No executable was found for {trading_strategy=}!"
             )
-            return {BET_AMOUNT_FIELD: 0}
+            return {}
 
         strategy_exec, callable_method = strategy
         if callable_method in globals():
             del globals()[callable_method]
 
-        exec(strategy_exec, globals())  # pylint: disable=W0122  # nosec
-        method = globals().get(callable_method, None)
-        if method is None:
-            self.context.logger.error(
-                f"No {callable_method!r} method was found in {trading_strategy} strategy's executable."
-            )
-            return {BET_AMOUNT_FIELD: 0}
+        try:
+            exec(strategy_exec, globals())  # pylint: disable=W0122  # nosec
+            method = globals().get(callable_method, None)
+            if method is None:
+                self.context.logger.error(
+                    f"No {callable_method!r} method was found in {trading_strategy} strategy's executable."
+                )
+                return {}
 
-        return method(*args, **kwargs)
+            return method(*args, **kwargs)
+        except Exception as e:
+            self.context.logger.error(
+                f"Could not execute {trading_strategy} strategy: {e}"
+            )
+            return {}
 
     @property
     def params(self) -> DecisionMakerParams:
@@ -750,21 +756,23 @@ class DecisionMakerBaseBehaviour(BetsManagerBehaviour, ABC):
                     for log in results.get(level, []):
                         logger(log)
             bet_amount = results.get(BET_AMOUNT_FIELD, None)
-            if bet_amount is None:
-                self.context.logger.error(
-                    f"Required field {BET_AMOUNT_FIELD!r} was not returned by {next_strategy} strategy."
-                    "Setting bet amount to 0."
-                )
-                bet_amount = 0
+            if bet_amount is not None:
+                if bet_amount == 0:
+                    self.context.logger.info(
+                        f"[NO_TRADE] {next_strategy} returned 0; not falling back"
+                    )
+                return bet_amount
+
+            self.context.logger.error(
+                f"Required field {BET_AMOUNT_FIELD!r} was not returned by {next_strategy} strategy."
+                "Setting bet amount to 0."
+            )
+            bet_amount = 0
 
             tried_strategies.update({next_strategy})
             strategies_names = set(self.shared_state.strategies_executables)
             remaining_strategies = strategies_names - tried_strategies
-            if (
-                bet_amount > 0
-                or len(remaining_strategies) == 0
-                or not self.params.use_fallback_strategy
-            ):
+            if len(remaining_strategies) == 0 or not self.params.use_fallback_strategy:
                 break
 
             next_strategy = remaining_strategies.pop()
