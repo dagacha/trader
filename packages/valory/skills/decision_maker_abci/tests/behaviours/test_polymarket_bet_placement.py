@@ -232,6 +232,7 @@ class TestPolymarketBetPlacementBehaviour:
                             period_count=1,
                             cached_signed_orders={},
                             mech_tool="tool1",
+                            mech_tool_key="tool1",
                             is_policy_set=False,
                         )
                         with patch.object(
@@ -254,6 +255,7 @@ class TestPolymarketBetPlacementBehaviour:
 
         assert len(payloads_sent) == 1
         assert payloads_sent[0].event == Event.BET_PLACEMENT_DONE.value
+        behaviour.update_bet_transaction_information.assert_called_once_with()
 
     def test_async_act_success_increments_trade_count(self) -> None:
         """A successful Polymarket placement increments the durable trade counter."""
@@ -315,6 +317,7 @@ class TestPolymarketBetPlacementBehaviour:
                             period_count=1,
                             cached_signed_orders={},
                             mech_tool="tool1",
+                            mech_tool_key="tool1",
                             is_policy_set=False,
                         )
                         with patch.object(
@@ -390,6 +393,7 @@ class TestPolymarketBetPlacementBehaviour:
                             period_count=1,
                             cached_signed_orders={},
                             mech_tool="tool1",
+                            mech_tool_key="tool1",
                             is_policy_set=False,
                         )
                         with patch.object(
@@ -457,6 +461,7 @@ class TestPolymarketBetPlacementBehaviour:
                             period_count=1,
                             cached_signed_orders={},
                             mech_tool="tool1",
+                            mech_tool_key="tool1",
                             is_policy_set=False,
                             deposit_wallet_address=None,
                         )
@@ -588,6 +593,7 @@ class TestPolymarketBetPlacementBehaviour:
                             period_count=1,
                             cached_signed_orders={},
                             mech_tool="tool1",
+                            mech_tool_key="tool1",
                             is_policy_set=False,
                         )
                         with patch.object(
@@ -612,6 +618,7 @@ class TestPolymarketBetPlacementBehaviour:
         assert payloads_sent[0].event == Event.BET_PLACEMENT_DONE.value
         expected_key = hashlib.sha256(b'{"maker":"0x1","salt":123}').hexdigest()
         behaviour.record_successful_placement.assert_called_once_with(expected_key)
+        behaviour.update_bet_transaction_information.assert_called_once_with()
 
     def test_async_act_no_orderbook_error(self) -> None:
         """When no orderbook exists, should send impossible payload."""
@@ -682,6 +689,156 @@ class TestPolymarketBetPlacementBehaviour:
         assert len(payloads_sent) == 1
         assert payloads_sent[0].event == Event.BET_PLACEMENT_IMPOSSIBLE.value
 
+    def test_async_act_below_minimum_leaves_the_round(self) -> None:
+        """An under-minimum order blacklists instead of looping on itself.
+
+        ``BET_PLACEMENT_FAILED`` transitions back into this same round, so an
+        order the venue can never accept would be retried forever. It must
+        leave via ``BET_PLACEMENT_IMPOSSIBLE``, and the doomed order must not
+        stay in the cache to be replayed.
+        """
+        behaviour = _make_behaviour()
+        behaviour.token_balance = 2_000_000
+
+        payloads_sent = []
+
+        def mock_wait(condition) -> None:  # type: ignore[no-untyped-def, misc]
+            """Mock wait for condition."""
+            yield  # type: ignore[no-untyped-def]
+
+        behaviour.wait_for_condition_with_sleep = mock_wait  # type: ignore[method-assign]
+        behaviour.check_balance = lambda: _return_gen(True)  # type: ignore[method-assign]
+        behaviour._store_utilized_tools = MagicMock()  # type: ignore[method-assign]
+        behaviour.update_bet_transaction_information = MagicMock()  # type: ignore[method-assign]
+
+        mock_bet = MagicMock()
+        mock_bet.get_outcome.return_value = "Yes"
+        mock_bet.outcome_token_ids = {"Yes": "token123"}
+        mock_bet.id = "bet1"
+
+        response = {
+            "error": "Order below the CLOB minimum: the taker fee leaves only "
+            "$0.9800 of this $1.0000 buy on the book",
+            "below_minimum": True,
+        }
+
+        behaviour.send_polymarket_connection_request = lambda payload: _return_gen(  # type: ignore[method-assign]
+            response
+        )
+
+        cache_key = "v2_1_bet1_token123"
+        with patch.object(
+            type(behaviour), "sampled_bet", new_callable=PropertyMock
+        ) as mock_sb:
+            mock_sb.return_value = mock_bet
+            with patch.object(
+                type(behaviour), "outcome_index", new_callable=PropertyMock
+            ) as mock_oi:
+                mock_oi.return_value = 0
+                with patch.object(
+                    type(behaviour), "investment_amount", new_callable=PropertyMock
+                ) as mock_inv:
+                    mock_inv.return_value = 1000000
+                    with patch.object(
+                        type(behaviour),
+                        "synchronized_data",
+                        new_callable=PropertyMock,
+                    ) as mock_sd:
+                        mock_sd.return_value = MagicMock(
+                            period_count=1,
+                            cached_signed_orders={cache_key: '{"stale": true}'},
+                        )
+
+                        behaviour.usdc_to_native = lambda x: x / 10**6  # type: ignore[method-assign]
+                        behaviour.finish_behaviour = lambda payload: (  # type: ignore[method-assign]
+                            payloads_sent.append(payload) or (yield)  # type: ignore[func-returns-value]
+                        )
+                        gen = behaviour.async_act()
+                        try:
+                            while True:
+                                next(gen)
+                        except StopIteration:
+                            pass
+
+        assert len(payloads_sent) == 1
+        assert payloads_sent[0].event == Event.BET_PLACEMENT_IMPOSSIBLE.value
+        assert json.loads(payloads_sent[0].cached_signed_orders) == {}
+        behaviour.update_bet_transaction_information.assert_not_called()
+
+    def test_async_act_non_terminal_failure_is_not_blacklisted(self) -> None:
+        """Without the flag, a failure still retries and keeps its cached order.
+
+        Named for the gate so that widening it — defaulting the flag to true, or
+        testing a truthy error string — fails here instead of silently turning
+        every placement failure into a blacklisting.
+        """
+        behaviour = _make_behaviour()
+        behaviour.token_balance = 2_000_000
+
+        payloads_sent = []
+
+        def mock_wait(condition) -> None:  # type: ignore[no-untyped-def, misc]
+            """Mock wait for condition."""
+            yield  # type: ignore[no-untyped-def]
+
+        behaviour.wait_for_condition_with_sleep = mock_wait  # type: ignore[method-assign]
+        behaviour.check_balance = lambda: _return_gen(True)  # type: ignore[method-assign]
+        behaviour._store_utilized_tools = MagicMock()  # type: ignore[method-assign]
+
+        mock_bet = MagicMock()
+        mock_bet.get_outcome.return_value = "Yes"
+        mock_bet.outcome_token_ids = {"Yes": "token123"}
+        mock_bet.id = "bet1"
+
+        response = {
+            "success": False,
+            "error": "not enough balance / allowance",
+            "signed_order_json": '{"clob_version": "v2"}',
+        }
+
+        behaviour.send_polymarket_connection_request = lambda payload: _return_gen(  # type: ignore[method-assign]
+            response
+        )
+
+        with patch.object(
+            type(behaviour), "sampled_bet", new_callable=PropertyMock
+        ) as mock_sb:
+            mock_sb.return_value = mock_bet
+            with patch.object(
+                type(behaviour), "outcome_index", new_callable=PropertyMock
+            ) as mock_oi:
+                mock_oi.return_value = 0
+                with patch.object(
+                    type(behaviour), "investment_amount", new_callable=PropertyMock
+                ) as mock_inv:
+                    mock_inv.return_value = 1000000
+                    with patch.object(
+                        type(behaviour),
+                        "synchronized_data",
+                        new_callable=PropertyMock,
+                    ) as mock_sd:
+                        mock_sd.return_value = MagicMock(
+                            period_count=1,
+                            cached_signed_orders={},
+                        )
+
+                        behaviour.usdc_to_native = lambda x: x / 10**6  # type: ignore[method-assign]
+                        behaviour.finish_behaviour = lambda payload: (  # type: ignore[method-assign]
+                            payloads_sent.append(payload) or (yield)  # type: ignore[func-returns-value]
+                        )
+                        gen = behaviour.async_act()
+                        try:
+                            while True:
+                                next(gen)
+                        except StopIteration:
+                            pass
+
+        assert len(payloads_sent) == 1
+        assert payloads_sent[0].event == Event.BET_PLACEMENT_FAILED.value
+        assert json.loads(payloads_sent[0].cached_signed_orders) == {
+            "v2_1_bet1_token123": '{"clob_version": "v2"}'
+        }
+
     def test_async_act_failure_with_signed_order_caches(self) -> None:
         """When placement fails with signed order, should cache it."""
         behaviour = _make_behaviour()
@@ -696,6 +853,7 @@ class TestPolymarketBetPlacementBehaviour:
         behaviour.wait_for_condition_with_sleep = mock_wait  # type: ignore[method-assign]
         behaviour.check_balance = lambda: _return_gen(True)  # type: ignore[method-assign]
         behaviour._store_utilized_tools = MagicMock()  # type: ignore[method-assign]
+        behaviour.update_bet_transaction_information = MagicMock()  # type: ignore[method-assign]
 
         mock_bet = MagicMock()
         mock_bet.get_outcome.return_value = "Yes"
@@ -753,6 +911,7 @@ class TestPolymarketBetPlacementBehaviour:
         assert payloads_sent[0].event == Event.BET_PLACEMENT_FAILED.value
         cached = json.loads(payloads_sent[0].cached_signed_orders)
         assert len(cached) > 0
+        behaviour.update_bet_transaction_information.assert_not_called()
 
     def test_async_act_failure_no_signed_order(self) -> None:
         """When placement fails without signed_order_json, should not cache."""
@@ -886,6 +1045,7 @@ class TestPolymarketBetPlacementBehaviour:
                             period_count=1,
                             cached_signed_orders={},
                             mech_tool="tool1",
+                            mech_tool_key="tool1",
                             is_policy_set=True,
                             policy=mock_policy,
                         )
@@ -970,6 +1130,7 @@ class TestPolymarketBetPlacementBehaviour:
                             period_count=1,
                             cached_signed_orders={},
                             mech_tool="tool1",
+                            mech_tool_key="tool1",
                             is_policy_set=False,
                         )
                         with patch.object(
@@ -1060,6 +1221,7 @@ class TestPolymarketBetPlacementBehaviour:
                             period_count=1,
                             cached_signed_orders=cached_orders,
                             mech_tool="tool1",
+                            mech_tool_key="tool1",
                             is_policy_set=False,
                         )
                         with patch.object(

@@ -19,11 +19,17 @@
 
 """Tests for trader_abci models."""
 
+import inspect
+import re
+from pathlib import Path
 from typing import Any, Dict, Type
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
+import yaml
 
+from packages.valory.connections.x402.clients.mech import slot_registry
+from packages.valory.skills.chatui_abci.models import ChatuiParams
 from packages.valory.skills.decision_maker_abci.models import (
     SharedState as BaseSharedState,
 )
@@ -35,6 +41,10 @@ from packages.valory.skills.market_manager_abci.models import (
 )
 from packages.valory.skills.market_manager_abci.rounds import (
     Event as MarketManagerEvent,
+)
+from packages.valory.skills.mech_interact_abci.models import MechParams
+from packages.valory.skills.mech_interact_abci.nonce_allocator import (
+    MECH_SLOT_REGISTRY,
 )
 from packages.valory.skills.mech_interact_abci.rounds import Event as MechInteractEvent
 from packages.valory.skills.reset_pause_abci.rounds import Event as ResetPauseEvent
@@ -60,7 +70,7 @@ class TestTraderParams:
     """Tests for the TraderParams model."""
 
     def test_init_sets_attributes(self) -> None:
-        """TraderParams.__init__ sets all 7 custom attributes from kwargs."""
+        """TraderParams.__init__ sets its own attributes from kwargs."""
         kwargs: Dict[str, Any] = {
             "mech_interact_round_timeout_seconds": 300,
             "genai_api_key": "test-key",
@@ -84,41 +94,45 @@ class TestTraderParams:
         assert params.polygon_ledger_rpc == "https://polygon-rpc.example.com"
         assert params.use_x402 is True
 
-    def _init_with_trade_band(self, min_trades: int, max_trades: int) -> TraderParams:
-        """Construct TraderParams with a stubbed parent init and a trade band."""
-        kwargs: Dict[str, Any] = {
-            "mech_interact_round_timeout_seconds": 300,
-            "genai_api_key": "test-key",
-            "x402_payment_requirements": {"threshold": 100},
-            "lifi_quote_to_amount_url": "https://example.com/lifi",
-            "gnosis_ledger_rpc": "https://gnosis-rpc.example.com",
-            "polygon_ledger_rpc": "https://polygon-rpc.example.com",
-            "use_x402": True,
-            "skill_context": MagicMock(),
-        }
-        with patch.object(TraderParams.__mro__[1], "__init__", return_value=None):
-            params = TraderParams.__new__(TraderParams)
-            # Simulate the parent __init__ having populated the trade fields.
-            params.min_trades = min_trades
-            params.max_trades = max_trades
-            TraderParams.__init__(params, **kwargs)
-        return params
 
-    def test_min_trades_le_max_trades_allowed(self) -> None:
-        """min_trades <= max_trades is accepted."""
-        params = self._init_with_trade_band(min_trades=3, max_trades=5)
-        assert params.min_trades == 3
-        assert params.max_trades == 5
+def test_trader_params_set_every_chat_param() -> None:
+    """The chat handler reads `context.params`, which is `TraderParams` in the agent.
 
-    def test_min_trades_gt_max_trades_raises(self) -> None:
-        """min_trades > max_trades (with a cap set) is rejected."""
-        with pytest.raises(ValueError):
-            self._init_with_trade_band(min_trades=5, max_trades=3)
+    `TraderParams` does not inherit `ChatuiParams`, so each chat param has to be
+    read by `TraderParams` or one of its parents, or the chat fails at runtime.
+    """
+    ensured = re.compile(r'_ensure\(\s*"([a-z_]+)"')
+    chat_params = set(ensured.findall(inspect.getsource(ChatuiParams.__init__)))
+    trader_params = {
+        key
+        for cls in TraderParams.__mro__
+        if inspect.isfunction(vars(cls).get("__init__"))
+        for key in ensured.findall(inspect.getsource(vars(cls)["__init__"]))
+    }
+    assert chat_params, "no chat params found"
+    assert chat_params <= trader_params, chat_params - trader_params
 
-    def test_min_trades_gt_zero_no_cap_allowed(self) -> None:
-        """max_trades=0 disables the cap, so a larger min_trades is allowed."""
-        params = self._init_with_trade_band(min_trades=5, max_trades=0)
-        assert params.min_trades == 5
+
+def test_the_chat_can_read_mechs_through_the_composed_context() -> None:
+    """`read_mech` and `read_live_rate` read the params and these models from the chat's context.
+
+    In the agent that context is the trader skill's, so its params must be
+    `MechParams` (for `mech_chain_id` and `marketplace_api_url`) and it must
+    declare every model the reader uses.
+    """
+    assert issubclass(TraderParams, MechParams)
+    config = yaml.safe_load(
+        (Path(__file__).parents[1] / "skill.yaml").read_text(encoding="utf-8")
+    )
+    models = config["models"]
+    assert {
+        "mechs_subgraph",
+        "http_dialogues",
+        "contract_api_dialogues",
+        "requests",
+    } <= set(models)
+    assert models["params"]["class_name"] == "TraderParams"
+    assert "marketplace_api_url" in models["params"]["args"]
 
 
 class TestSharedState:
@@ -161,6 +175,12 @@ class TestSharedState:
                     "params",
                     new_callable=PropertyMock,
                     return_value=mock_params,
+                ),
+                patch.object(
+                    type(state),
+                    "context",
+                    new_callable=PropertyMock,
+                    return_value=MagicMock(shared_state={}),
                 ),
                 patch.object(BaseSharedState, "setup", return_value=None),
             ):
@@ -214,3 +234,99 @@ class TestSharedState:
         finally:
             # Restore original event_to_timeout to avoid side effects
             TraderAbciApp.event_to_timeout = original_event_to_timeout
+
+
+class TestTheMechSkillAndTheGenaiConnectionShareOneSlotCount:
+    """This agent pays from one Safe through two routes that cannot see each other.
+
+    The mech skill signs marketplace requests itself against the on-chain
+    counter, and the genai connection signs the paid chat calls against
+    the facilitator's view. ``mapNonces`` only moves at settlement, so an
+    unsettled slot is invisible to both, and each route is correct alone
+    and wrong together. ``__init__`` is what joins them.
+    """
+
+    _CHAIN = "gnosis"
+    _SAFE = "0x000000000000000000000000000000000000AbCd"
+
+    @staticmethod
+    def _shared_state() -> dict:
+        """Build the skill's shared state the way the skill loader does."""
+        shared_state: dict = {}
+        context = MagicMock()
+        context.shared_state = shared_state
+        with patch.object(BaseSharedState, "__init__", return_value=None):
+            SharedState(name="state", skill_context=context)
+        return shared_state
+
+    def test_the_registry_is_bound_where_the_mech_skill_looks_for_it(self) -> None:
+        """The key is the contract between the two packages.
+
+        ``MECH_SLOT_REGISTRY`` is imported from the mech skill rather than
+        spelled out here, so a rename on either side fails this. And it is
+        the connection's own registry, not merely some object: a second
+        count is a second chance to hand out one slot twice.
+        """
+        assert self._shared_state()[MECH_SLOT_REGISTRY] is slot_registry()
+
+    def test_the_mech_skill_can_actually_drive_the_bound_registry(self) -> None:
+        """This agent binds the real registry, so the contract is not a stub.
+
+        Every other test of this pairing runs against mech-interact's own
+        stand-in, which is a separate implementation, so a signature that
+        drifts between the two packages passes there and raises here. This
+        goes through the skill's own entry points against the real object.
+        """
+        from packages.valory.skills.mech_interact_abci.nonce_allocator import (
+            release_slot,
+            reserve_slot,
+            retire_expired_slots,
+            slot_is_held,
+            sweep_dead_slots,
+        )
+
+        shared_state = self._shared_state()
+        shared_state[MECH_SLOT_REGISTRY].clear()
+        common = {"chain": self._CHAIN, "safe": self._SAFE}
+
+        taken = reserve_slot(shared_state, on_chain_nonce=7, **common)
+        assert taken == 7
+        assert slot_is_held(shared_state, slot=7, **common) is True
+        assert retire_expired_slots(shared_state, **common) == []
+        assert (
+            sweep_dead_slots(
+                shared_state, on_chain_nonce=7, older_than_secs=10**6, **common
+            )
+            == []
+        )
+
+        release_slot(shared_state, slot=taken, **common)
+
+        assert slot_is_held(shared_state, slot=7, **common) is False
+
+    def test_the_second_route_is_not_offered_the_first_ones_slot(self) -> None:
+        """Both routes reading only their own view would sign slot 7 twice."""
+        registry = self._shared_state()[MECH_SLOT_REGISTRY]
+        registry.clear()
+
+        held = registry.reserve(self._CHAIN, self._SAFE, 7, 7)
+        offered = registry.reserve(self._CHAIN, self._SAFE, 7, 7)
+
+        assert (held, offered) == (7, 8)
+
+    def test_a_slot_one_route_hands_back_is_offered_to_the_other(self) -> None:
+        """A slot nothing will settle stalls every later request for the Safe."""
+        registry = self._shared_state()[MECH_SLOT_REGISTRY]
+        registry.clear()
+
+        taken = registry.reserve(self._CHAIN, self._SAFE, 7, 7)
+        registry.release(self._CHAIN, self._SAFE, taken)
+
+        assert registry.reserve(self._CHAIN, self._SAFE, 7, 7) == taken
+
+    def test_every_skill_in_the_agent_gets_the_same_registry(self) -> None:
+        """Two views of the count are two chances to hand out one slot twice."""
+        assert (
+            self._shared_state()[MECH_SLOT_REGISTRY]
+            is self._shared_state()[MECH_SLOT_REGISTRY]
+        )

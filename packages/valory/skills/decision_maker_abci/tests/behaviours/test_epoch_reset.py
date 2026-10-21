@@ -20,8 +20,13 @@
 """Tests for EpochResetBehaviour."""
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, PropertyMock, patch
 
+from packages.valory.skills.agent_performance_summary_abci.activity_goal import (
+    count_trades_since,
+    record_trade,
+)
 from packages.valory.skills.decision_maker_abci.behaviours.base import (
     TRADE_COUNT_FILENAME,
 )
@@ -144,3 +149,20 @@ class TestEpochResetBehaviour:
             behaviour, is_checkpoint=False, current_count=0, current_queue=[]
         )
         assert payload.sender == "test_agent"
+
+
+def test_activity_ledger_and_trade_cap_reset_at_same_epoch(tmp_path: Path) -> None:
+    """The checkpoint removes old placements from both epoch counts."""
+    period_start = 1000
+    record_trade(tmp_path, period_start - 1, "previous_epoch")
+    (tmp_path / TRADE_COUNT_FILENAME).write_text("1")
+    behaviour = _make_behaviour(tmp_path)
+    payload = _run_async_act(behaviour, True, 1, [])
+    assert payload.successful_trade_count == 0
+    assert count_trades_since(tmp_path, period_start, MagicMock()) == 0
+
+    record_trade(tmp_path, period_start, "current_epoch")
+    assert behaviour.record_successful_placement("current_epoch") == 1
+    payload = _run_async_act(behaviour, False, 1, [])
+    assert payload.successful_trade_count == 1
+    assert count_trades_since(tmp_path, period_start, MagicMock()) == 1

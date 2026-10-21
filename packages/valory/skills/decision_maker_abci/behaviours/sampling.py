@@ -21,8 +21,15 @@
 
 from collections import defaultdict
 from datetime import datetime
+from functools import cached_property
 from typing import Any, Dict, Generator, List, Optional, Tuple
 
+from packages.valory.skills.agent_performance_summary_abci.activity_goal import (
+    effective_activity_goal,
+)
+from packages.valory.skills.agent_performance_summary_abci.models import (
+    read_activity_goal,
+)
 from packages.valory.skills.decision_maker_abci.behaviours.base import (
     DecisionMakerBaseBehaviour,
 )
@@ -53,19 +60,37 @@ class SamplingBehaviour(DecisionMakerBaseBehaviour, QueryingBehaviour):
         """Setup the behaviour."""
         self.read_bets()
 
+    @cached_property
+    def activity_goal_met(self) -> bool:
+        """Whether the persisted activity goal is met for the current epoch.
+
+        :return: whether the block exists, is valid and is met in this epoch.
+        """
+        goal = read_activity_goal(self.params.store_path)
+        if (
+            goal is None
+            or goal.period_start != self.synchronized_data.previous_checkpoint
+        ):
+            return False
+        target = effective_activity_goal(None, goal.target, self.params.max_trades)
+        if target != goal.target:
+            self.context.logger.info(
+                f"Activity goal capped: target={target}, goal={goal.target}, "
+                f"max_trades={self.params.max_trades}"
+            )
+        return goal.progress >= target
+
     @property
     def kpi_is_met(self) -> bool:
         """Whether the agent has done its required work this epoch.
 
-        Tracks the regime-aware activity target: in the old regime this equals
-        the on-chain staking KPI, while in the new (decoupled-activity) regime
-        it follows the off-chain target so multi-bets fallback and sell-review
-        continue until the target (e.g. 8) is reached rather than stopping at
-        the on-chain ~1.
+        Requires both the regime-aware activity target (the staking side) and
+        the user's activity goal, so multi-bets fallback and sell-review do not
+        kick in while the agent is still short of its goal.
 
-        :return: whether the regime-aware activity target is met.
+        :return: whether both the activity target and the activity goal are met.
         """
-        return self.synchronized_data.is_activity_target_met
+        return self.synchronized_data.is_activity_target_met and self.activity_goal_met
 
     @property
     def review_bets_for_selling(self) -> bool:

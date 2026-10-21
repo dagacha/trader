@@ -20,11 +20,14 @@
 """Tests for the prompts module of the chatui_abci skill."""
 
 import pickle  # nosec
+from string import Formatter
 
 from packages.valory.skills.chatui_abci.prompts import (
     CHATUI_PROMPT,
     ChatUILLMResponse,
     FieldsThatCanBeRemoved,
+    MechIntent,
+    MechIntentReading,
     TradingStrategy,
     UpdatedAgentConfig,
     build_chatui_llm_response_schema,
@@ -42,6 +45,7 @@ class TestUpdatedAgentConfig:
             selected_mechs=None,
             fixed_bet_size=None,
             max_bet_size=None,
+            activity_goal=None,
             removed_config_fields=[],
             behavior=None,
         )
@@ -49,6 +53,7 @@ class TestUpdatedAgentConfig:
         assert config.allowed_tools is None
         assert config.fixed_bet_size is None
         assert config.max_bet_size is None
+        assert config.activity_goal is None
         assert config.removed_config_fields == []
         assert config.behavior is None
 
@@ -60,6 +65,7 @@ class TestUpdatedAgentConfig:
             selected_mechs=None,
             fixed_bet_size=1.0,
             max_bet_size=2.0,
+            activity_goal=20,
             removed_config_fields=[FieldsThatCanBeRemoved.ALLOWED_TOOLS],
             behavior="test behavior",
         )
@@ -67,6 +73,7 @@ class TestUpdatedAgentConfig:
         assert config.allowed_tools == ["tool-a", "tool-b"]
         assert config.fixed_bet_size == 1.0
         assert config.max_bet_size == 2.0
+        assert config.activity_goal == 20
         assert config.removed_config_fields == [FieldsThatCanBeRemoved.ALLOWED_TOOLS]
         assert config.behavior == "test behavior"
 
@@ -78,6 +85,7 @@ class TestUpdatedAgentConfig:
             selected_mechs=None,
             fixed_bet_size=5.0,
             max_bet_size=None,
+            activity_goal=None,
             removed_config_fields=[
                 FieldsThatCanBeRemoved.FIXED_BET_SIZE,
                 FieldsThatCanBeRemoved.MAX_BET_SIZE,
@@ -99,16 +107,21 @@ class TestChatUILLMResponse:
             selected_mechs=None,
             fixed_bet_size=None,
             max_bet_size=None,
+            activity_goal=None,
             removed_config_fields=[],
             behavior=None,
         )
-        resp = ChatUILLMResponse(updated_agent_config=config, message="test")
+        resp = ChatUILLMResponse(
+            updated_agent_config=config, message="test", mech_intent=None
+        )
         assert resp.message == "test"
         assert resp.updated_agent_config is not None
 
     def test_without_config(self) -> None:
         """Test instantiation with no config (None)."""
-        resp = ChatUILLMResponse(updated_agent_config=None, message="hello")
+        resp = ChatUILLMResponse(
+            updated_agent_config=None, message="hello", mech_intent=None
+        )
         assert resp.updated_agent_config is None
         assert resp.message == "hello"
 
@@ -149,3 +162,84 @@ class TestChatuiPrompt:
         assert "{units}" in CHATUI_PROMPT
         assert "{absolute_min_bet_size}" in CHATUI_PROMPT
         assert "{absolute_max_bet_size}" in CHATUI_PROMPT
+        assert "{current_activity_goal}" in CHATUI_PROMPT
+        assert "{activity_goal_source}" in CHATUI_PROMPT
+        assert "{default_activity_goal}" in CHATUI_PROMPT
+        assert "{activity_goal_progress}" in CHATUI_PROMPT
+
+    def test_activity_goal_can_be_removed(self) -> None:
+        """The goal is one of the fields the model may revert to its default."""
+        assert FieldsThatCanBeRemoved("activity_goal") is (
+            FieldsThatCanBeRemoved.ACTIVITY_GOAL
+        )
+
+    def test_the_config_prompt_carries_no_mech_reports(self) -> None:
+        """Mech reports never reach the config model."""
+        assert "Mechs:" not in CHATUI_PROMPT
+        for field in ("{mech_reports}", "{approved_mechs}", "{pending_approval}"):
+            assert field not in CHATUI_PROMPT
+        assert "mech_action" not in CHATUI_PROMPT
+        assert "mech_action" not in ChatUILLMResponse.model_fields
+
+    def test_the_config_prompt_names_no_typed_mech_commands(self) -> None:
+        """Approving, removing and listing mechs are replies, not typed commands."""
+        assert "list approved" not in CHATUI_PROMPT
+        assert "remove <address>" not in CHATUI_PROMPT
+
+
+class TestMechIntentInTheConfigReply:
+    """The config reply carries the mech intent; the prompt adds only the chat's mech state."""
+
+    def test_the_prompt_is_filled_from_the_config_the_message_and_the_chat_state(
+        self,
+    ) -> None:
+        """The prompt is filled from the config, the message and the mech lists, not chat state."""
+        fields = {name for _, name, _, _ in Formatter().parse(CHATUI_PROMPT)}
+        assert fields - {None} == {
+            "user_prompt",
+            "current_trading_strategy",
+            "current_allowed_tools",
+            "available_tools",
+            "current_selected_mechs",
+            "available_mechs",
+            "current_approved_mechs",
+            "current_fixed_bet_size",
+            "current_max_bet_size",
+            "units",
+            "absolute_min_bet_size",
+            "absolute_max_bet_size",
+            "current_activity_goal",
+            "activity_goal_source",
+            "default_activity_goal",
+            "activity_goal_progress",
+        }
+
+    def test_a_question_about_an_action_is_answered_not_carried_out(self) -> None:
+        """The prompt says a question about removing or pinning is not that action."""
+        assert (
+            "is not that action: set mech_intent to null and answer it" in CHATUI_PROMPT
+        )
+
+    def test_the_prompt_names_every_mech_intent(self) -> None:
+        """Each intent the schema allows, other than none, is described to the model."""
+        for intent in MechIntent:
+            if intent is not MechIntent.NONE:
+                assert f'"{intent.value}"' in CHATUI_PROMPT
+
+    def test_the_prompt_sends_one_mech_actions_through_the_intent(self) -> None:
+        """No line tells the model it cannot act on a mech, which the intent instruction contradicts."""
+        assert "You cannot approve" not in CHATUI_PROMPT
+        assert (
+            "Approving, removing, pinning or unpinning one mech is done through "
+            "mech_intent" in CHATUI_PROMPT
+        )
+
+    def test_the_reply_schema_carries_the_mech_intent(self) -> None:
+        """The intent and its reference (address, list position or the mech just shown), beside the config update."""
+        assert "mech_intent" in ChatUILLMResponse.model_fields
+        assert set(MechIntentReading.model_fields) == {
+            "intent",
+            "address",
+            "position",
+            "last_shown",
+        }

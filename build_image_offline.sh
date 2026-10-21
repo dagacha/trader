@@ -22,9 +22,9 @@
 set -euo pipefail
 
 REPO="${1:-$(cd "$(dirname "$0")" && pwd)}"
-DEFAULT_AGENT="valory/trader:0.1.0:bafybeiberfq5biubzcatbh7il7jnafxpmniqoy7cgbscsutnaagy7rmw2m"
+DEFAULT_AGENT="valory/trader:0.1.0:bafybeiaknbpkhjscvux5ikkskb4lstqu7cl44mi6affkzj6qqdga5io6bm"
 # service CID corresponding to DEFAULT_AGENT (valory/trader_pearl in packages.json)
-DEFAULT_SERVICE_CID="bafybeif4xzmcmwrvwlkqewofhwg6lld7z332eqsfkph7doljidv7rygg4q"
+DEFAULT_SERVICE_CID="bafybeidu5lypzvizbcesxeuvk4vqf2bgfrqdufqrdswov4ecdwrlldnire"
 AGENT="${2:-$DEFAULT_AGENT}"
 BASE_IMAGE="valory/open-autonomy:0.21.26"
 AGENT_HASH="${AGENT##*:}"
