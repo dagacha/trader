@@ -15,6 +15,7 @@ permissions:
 
 jobs:
   snyk:
+    if: github.repository == 'valory-xyz/trader'
     continue-on-error: True
     permissions:
       contents: read
