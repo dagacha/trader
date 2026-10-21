@@ -22,7 +22,7 @@
 import json
 from abc import ABC
 from enum import Enum
-from typing import Dict, Optional, Set, Tuple, Type, cast
+from typing import Any, Dict, List, Optional, Set, Tuple, Type, cast
 
 from packages.valory.skills.abstract_round_abci.base import (
     AbciApp,
@@ -37,7 +37,9 @@ from packages.valory.skills.abstract_round_abci.base import (
 from packages.valory.skills.chatui_abci.payloads import ChatuiPayload
 
 SERIALIZED_EMPTY_PIN = "[]"
+SERIALIZED_EMPTY_APPROVALS = "{}"
 SELECTED_MECHS_DB_KEY = "selected_mechs"
+APPROVED_MECHS_DB_KEY = "approved_mechs"
 
 
 class SynchronizedData(BaseSynchronizedData):
@@ -48,7 +50,7 @@ class SynchronizedData(BaseSynchronizedData):
 
     @property
     def available_mech_tools(self) -> Set[str]:
-        """Get all the available mech tools."""
+        """Get all the available mech tools, as policy keys (see ``tool_keys``)."""
         tools = self.db.get_strict("available_mech_tools")
         return set(json.loads(tools))
 
@@ -63,18 +65,37 @@ class SynchronizedData(BaseSynchronizedData):
 
         :return: lowercased mech addresses visible to mech-interact.
         """
-        raw = self.db.get("mechs_info", "[]")
+        return {str(m["address"]).lower() for m in self._mechs_info()}
+
+    @property
+    def mech_payment_types(self) -> Dict[str, str]:
+        """Get the payment type id of each mech visible to mech-interact, by lowercase address."""
+        return {
+            str(m["address"]).lower(): str(m["payment_type"]).lower()
+            for m in self._mechs_info()
+            if m.get("payment_type")
+        }
+
+    @property
+    def mechs_info_loaded(self) -> bool:
+        """Whether this period holds a readable `mechs_info` list."""
+        return self._read_mechs_info() is not None
+
+    def _mechs_info(self) -> List[Dict[str, Any]]:
+        """The `mechs_info` entries that carry an address; missing or unreadable data reads as none."""
+        mechs = self._read_mechs_info() or []
+        return [m for m in mechs if isinstance(m, dict) and m.get("address")]
+
+    def _read_mechs_info(self) -> Optional[List[Any]]:
+        """The `mechs_info` list written in this period, or `None` when it is missing or unreadable."""
+        raw = self.db.get("mechs_info", None)
         if not isinstance(raw, str):
-            return set()
+            return None
         try:
             mechs = json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            return set()
-        return {
-            str(m["address"]).lower()
-            for m in (mechs or [])
-            if isinstance(m, dict) and m.get("address")
-        }
+        except json.JSONDecodeError:
+            return None
+        return mechs if isinstance(mechs, list) else None
 
 
 class Event(Enum):
@@ -123,13 +144,15 @@ class ChatuiLoadRound(VotingRound):
             # uniquely determined. On a future multi-agent migration
             # this must switch to a consensus rule (e.g. most_common)
             # to stay deterministic across peers.
-            raw_pin = positive_payloads[0].selected_mechs if positive_payloads else None
-            selected_mechs = raw_pin if raw_pin is not None else SERIALIZED_EMPTY_PIN
+            payload = positive_payloads[0] if positive_payloads else None
+            raw_pin = payload.selected_mechs if payload else None
+            raw_approved = payload.approved_mechs if payload else None
             synchronized_data = self.synchronized_data.update(
                 synchronized_data_class=self.synchronized_data_class,
                 **{
                     self.collection_key: self.serialized_collection,
-                    SELECTED_MECHS_DB_KEY: selected_mechs,
+                    SELECTED_MECHS_DB_KEY: raw_pin or SERIALIZED_EMPTY_PIN,
+                    APPROVED_MECHS_DB_KEY: raw_approved or SERIALIZED_EMPTY_APPROVALS,
                 },
             )
             return synchronized_data, self.done_event

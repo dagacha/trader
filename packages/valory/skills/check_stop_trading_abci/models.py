@@ -66,13 +66,21 @@ class CheckStopTradingParams(StakingParams):
         # (decoupled-activity) staking regime. Independent of the on-chain
         # liveness KPI, which is normalised to ~1 on the new contracts.
         self.activity_target: int = self._ensure("activity_target", kwargs, int)
-        # Per-epoch minimum successful trades before the agent may stop.
-        # 0 (default) disables the gate (backwards compatible). The count is
-        # read from the durable successful-trade counter that
-        # decision_maker_abci maintains and resets at each epoch boundary.
-        self.min_trades: int = self._ensure("min_trades", kwargs, int)
-        if self.min_trades < 0:
-            raise ValueError("min_trades must be non-negative!")
+        # Keep this shared field available for DecisionMakerParams in the MRO.
+        self.max_trades: int = (
+            self._ensure("max_trades", kwargs.copy(), int)
+            if "max_trades" in kwargs
+            else getattr(self, "max_trades", 0)
+        )
+        # Trades per epoch the agent places before standing by, unless the
+        # user sets their own goal through the chat.
+        self.default_activity_goal: int = self._ensure(
+            "default_activity_goal", kwargs, int
+        )
+        enforce(
+            self.default_activity_goal >= 0,
+            "'default_activity_goal' must not be negative",
+        )
         self._read_polymarket_flag(kwargs)
 
         # Default KPI request address is the mech contract

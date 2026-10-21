@@ -20,6 +20,7 @@
 """Tests for the rounds module of the chatui_abci skill."""
 
 import json
+from typing import Any, Dict, Tuple, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -45,6 +46,15 @@ class TestSynchronizedData:
             db=AbciAppDB(setup_data={"available_mech_tools": [json.dumps(tools)]})
         )
         assert data.available_mech_tools == set(tools)
+
+    def test_available_mech_tools_keeps_the_policy_keys(self) -> None:
+        """The property returns the decision maker's keys untouched."""
+        mech_a = "0x" + "a" * 40
+        keys = [f"{mech_a}::prediction-online", "legacy-tool"]
+        data = SynchronizedData(
+            db=AbciAppDB(setup_data={"available_mech_tools": [json.dumps(keys)]})
+        )
+        assert data.available_mech_tools == set(keys)
 
     def test_available_mech_tools_empty(self) -> None:
         """Test available_mech_tools returns an empty set when no tools."""
@@ -80,6 +90,52 @@ class TestSynchronizedData:
         """Malformed db payload yields an empty set rather than raising."""
         data = SynchronizedData(db=AbciAppDB(setup_data={"mechs_info": ["not-json"]}))
         assert data.available_valid_mechs == set()
+
+    @pytest.mark.parametrize("raw", ["5", '{"address": "0xabc"}', "null"])
+    def test_mechs_info_that_is_not_a_list_reads_as_none(self, raw: str) -> None:
+        """A db payload of the wrong shape yields no mechs rather than raising."""
+        data = SynchronizedData(db=AbciAppDB(setup_data={"mechs_info": [raw]}))
+        assert data.available_valid_mechs == set()
+        assert data.mech_payment_types == {}
+
+    def test_mech_payment_types_by_lowercase_address(self) -> None:
+        """Each discovered mech's payment type, lowercase; mechs without one are left out."""
+        mechs_info = [
+            {"address": "0xABC", "payment_type": "0xBA69"},
+            {"address": "0xdef", "payment_type": ""},
+            {"address": "0x123"},
+            {"payment_type": "0xba69"},
+        ]
+        data = SynchronizedData(
+            db=AbciAppDB(setup_data={"mechs_info": [json.dumps(mechs_info)]})
+        )
+        assert data.mech_payment_types == {"0xabc": "0xba69"}
+
+    @pytest.mark.parametrize(
+        "setup, loaded",
+        [
+            ({}, False),
+            ({"mechs_info": [None]}, False),
+            ({"mechs_info": ["not-json"]}, False),
+            ({"mechs_info": [json.dumps({"address": "0xabc"})]}, False),
+            ({"mechs_info": [json.dumps([])]}, True),
+            ({"mechs_info": [json.dumps([{"address": "0xabc"}])]}, True),
+        ],
+        ids=[
+            "missing",
+            "none",
+            "unparseable",
+            "not_a_list",
+            "written_empty",
+            "written",
+        ],
+    )
+    def test_mechs_info_loaded_only_once_written_this_period(
+        self, setup: Dict[str, Any], loaded: bool
+    ) -> None:
+        """A missing key is a period not discovered yet; an empty list written is a discovery that found none."""
+        data = SynchronizedData(db=AbciAppDB(setup_data=setup))
+        assert data.mechs_info_loaded is loaded
 
 
 class TestFinishedChatuiLoadRound:
@@ -179,6 +235,21 @@ class TestChatuiLoadRoundEndBlock:
         raw = new_sync.db.get("selected_mechs", None)
         assert raw is not None
         assert json.loads(raw) == ["0xabc", "0xdef"]
+
+    def test_publishes_approved_mechs_when_positive_threshold_reached(self) -> None:
+        """The accepted rates reach the key mech-interact bounds approved mechs by."""
+        payload = ChatuiPayload(
+            sender="agent-1", vote=True, approved_mechs=json.dumps({"0xabc": 10000})
+        )
+        new_sync, _ = cast(Tuple[Any, Any], self._build_round(payload).end_block())
+        assert json.loads(new_sync.db.get("approved_mechs", None)) == {"0xabc": 10000}
+        assert json.loads(new_sync.db.get("selected_mechs", None)) == []
+
+    def test_publishes_empty_approvals_when_payload_unset(self) -> None:
+        """Without approvals an explicit empty object is written, so removals take effect."""
+        payload = ChatuiPayload(sender="agent-1", vote=True)
+        new_sync, _ = cast(Tuple[Any, Any], self._build_round(payload).end_block())
+        assert json.loads(new_sync.db.get("approved_mechs", None)) == {}
 
     def test_publishes_empty_pin_when_payload_unset(self) -> None:
         """A None selected_mechs payload must publish an explicit empty list.

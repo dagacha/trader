@@ -24,7 +24,17 @@ import json
 from abc import ABC
 from datetime import datetime, timezone
 from enum import Enum, auto
-from typing import Any, Dict, Generator, List, Optional, cast
+from typing import (
+    Any,
+    Dict,
+    Generator,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    TypedDict,
+    cast,
+)
 
 from packages.valory.connections.polymarket_client.connection import (
     PUBLIC_ID as POLYMARKET_CLIENT_CONNECTION_PUBLIC_ID,
@@ -43,11 +53,11 @@ from packages.valory.skills.agent_performance_summary_abci.graph_tooling.mech_an
 )
 from packages.valory.skills.agent_performance_summary_abci.graph_tooling.queries import (
     GET_DAILY_PROFIT_STATISTICS_QUERY,
-    GET_MECH_REQUESTS_BY_TITLES_QUERY,
     GET_MECH_SENDER_QUERY,
     GET_OPEN_MARKETS_QUERY,
     GET_PENDING_BETS_QUERY,
     GET_POLYMARKET_DAILY_PROFIT_STATISTICS_QUERY,
+    GET_POLYMARKET_QUESTIONS_BY_IDS_QUERY,
     GET_POLYMARKET_TRADER_AGENT_BETS_QUERY,
     GET_POLYMARKET_TRADER_AGENT_DETAILS_QUERY,
     GET_POLYMARKET_TRADER_AGENT_PERFORMANCE_QUERY,
@@ -65,6 +75,11 @@ from packages.valory.skills.agent_performance_summary_abci.models import (
 QUERY_BATCH_SIZE = 1000
 MAX_LOG_SIZE = 1000
 
+TRADER_AGENT_RESPONSE_KEYS: Tuple[Literal["traderAgent", "traderAgentById"], ...] = (
+    "traderAgent",
+    "traderAgentById",
+)
+
 OLAS_TOKEN_ADDRESS = "0xce11e14225575945b8e6dc0d4f2dd4c570f79d9f"  # nosec
 DECIMAL_SCALING_FACTOR = 10**18
 USD_PRICE_FIELD = "usd"
@@ -72,6 +87,57 @@ USD_PRICE_FIELD = "usd"
 QUESTION_DATA_SEPARATOR = "\u241f"
 
 _MAX_SLEEP_TIME = 300.0  # 5 minutes; prevents OverflowError in timedelta
+
+
+class RawProfitStatistic(TypedDict, total=False):
+    """A Polymarket daily profit statistic as the squid returns it."""
+
+    id: str
+    date: int
+    totalBets: int
+    totalTraded: str
+    totalPayout: str
+    dailyProfit: str
+    profitParticipants: List[str]
+
+
+class HydratedProfitStatistic(TypedDict, total=False):
+    """A Polymarket daily profit statistic after profit-participant hydration."""
+
+    id: str
+    date: int
+    totalBets: int
+    totalTraded: str
+    totalPayout: str
+    dailyProfit: str
+    profitParticipants: List[Dict[str, Any]]
+
+
+def _unwrap_trader_agent(result: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Unwrap a single-agent subgraph response, whichever field name it used.
+
+    Two shapes arrive here and both are expected. Omen's ``olas_agents_subgraph``
+    sets ``response_key: data``, so the payload is still wrapped under
+    ``traderAgent`` and gets unwrapped by the loop. Polymarket's
+    ``polymarket_agents_subgraph`` sets ``response_key: data:traderAgentById``,
+    so ``ApiSpecs`` has already unwrapped it and the pass-through at the end is
+    the normal path — not a fallback. A field rename on either side surfaces
+    upstream instead of here: ``response_key`` extraction raises
+    ``UnexpectedResponseError``, which ``process_response`` logs and turns into
+    ``None`` before this function is reached.
+
+    ``traderAgent`` wins when a response somehow carries both keys, following
+    the declaration order of ``TRADER_AGENT_RESPONSE_KEYS``.
+
+    :param result: the processed subgraph response.
+    :return: the trader agent payload, or ``result`` unchanged when it carries
+        neither key (already unwrapped).
+    """
+    if result and isinstance(result, dict):
+        for key in TRADER_AGENT_RESPONSE_KEYS:
+            if key in result:
+                return result[key]
+    return result
 
 
 def to_content(query: str, variables: Dict) -> bytes:
@@ -213,8 +279,9 @@ class APTQueryingBehaviour(BaseBehaviour, ABC):
         requester: str,
         since: Optional[datetime] = None,
         until: Optional[datetime] = None,
+        endpoint: str = "scored-rows",
     ) -> Generator[None, None, Optional[List[Dict[str, Any]]]]:
-        """Page ``/v1/data/scored-rows`` for one Safe (async HTTP).
+        """Page a ``/v1/data`` row endpoint for one Safe (async HTTP).
 
         Uses the framework's async HTTP protocol so the FSM round
         doesn't block on synchronous I/O — Tendermint heartbeats and
@@ -233,6 +300,7 @@ class APTQueryingBehaviour(BaseBehaviour, ABC):
             (inclusive per the endpoint contract).
         :param until: optional upper bound on ``requested_at``
             (exclusive per the endpoint contract).
+        :param endpoint: ``scored-rows`` or its complement ``unscored-rows``.
         :return: list of scored-row dicts on success, ``None`` on any
             failure (including MAX_PAGES exceeded).
         :yield: framework yields for each paginated request.
@@ -248,11 +316,12 @@ class APTQueryingBehaviour(BaseBehaviour, ABC):
                 since=since,
                 until=until,
                 cursor=cursor,
+                endpoint=endpoint,
             )
             response = yield from self.get_http_response(method="GET", url=url)
             if response.status_code != 200:
                 self.context.logger.error(
-                    f"mech-analytics scored-rows responded {response.status_code} "
+                    f"mech-analytics {endpoint} responded {response.status_code} "
                     f"(page {page_index + 1})"
                 )
                 return None
@@ -260,7 +329,7 @@ class APTQueryingBehaviour(BaseBehaviour, ABC):
                 payload = json.loads(response.body.decode())
             except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                 self.context.logger.error(
-                    f"mech-analytics scored-rows JSON parse failed: {exc}"
+                    f"mech-analytics {endpoint} JSON parse failed: {exc}"
                 )
                 return None
             page = parse_scored_rows_page(payload, self.context.logger)
@@ -271,7 +340,7 @@ class APTQueryingBehaviour(BaseBehaviour, ABC):
             if cursor is None:
                 return all_rows
         self.context.logger.error(
-            f"mech-analytics scored-rows exceeded MAX_PAGES={MAX_PAGES}; "
+            f"mech-analytics {endpoint} exceeded MAX_PAGES={MAX_PAGES}; "
             "endpoint may be returning a cursor cycle"
         )
         return None
@@ -433,26 +502,33 @@ class APTQueryingBehaviour(BaseBehaviour, ABC):
     def _fetch_trader_agent(
         self, agent_safe_address: str
     ) -> Generator[None, None, Optional[Dict]]:
-        """Fetch trader agent details - platform-aware."""
+        """Fetch trader agent details - platform-aware.
+
+        Both branches match ``id`` against ids stored lowercased, so a
+        checksummed address returns no rows rather than an error.
+
+        :param agent_safe_address: the agent Safe whose details to fetch.
+        :return: the trader agent record, or ``None`` when the query found
+            nothing or the request failed.
+        :yield: framework yields while the subgraph request is in flight.
+        """
         if self.params.is_running_on_polymarket:
 
             result = yield from self._fetch_from_subgraph(
                 query=GET_POLYMARKET_TRADER_AGENT_PERFORMANCE_QUERY,
-                variables={"id": agent_safe_address},
+                variables={"id": agent_safe_address.lower()},
                 subgraph=self.context.polymarket_agents_subgraph,
                 res_context="polymarket_trader_agent",
             )
         else:
             result = yield from self._fetch_from_subgraph(
                 query=GET_TRADER_AGENT_QUERY,
-                variables={"id": agent_safe_address},
+                variables={"id": agent_safe_address.lower()},
                 subgraph=self.context.olas_agents_subgraph,
                 res_context="trader_agent",
             )
 
-        if result and isinstance(result, dict) and "traderAgent" in result:
-            return result.get("traderAgent")
-        return result
+        return _unwrap_trader_agent(result)
 
     def _fetch_staking_service(
         self, service_id: str
@@ -491,12 +567,21 @@ class APTQueryingBehaviour(BaseBehaviour, ABC):
     def _fetch_trader_agent_bets(
         self, agent_safe_address: str
     ) -> Generator[None, None, Optional[Dict]]:
-        """Fetch trader agent bets - platform-aware."""
+        """Fetch trader agent bets - platform-aware.
+
+        Both branches match ``id`` against ids stored lowercased, so a
+        checksummed address returns no rows rather than an error.
+
+        :param agent_safe_address: the agent Safe whose bets to fetch.
+        :return: the bets payload, or ``None`` when the agent has no bets or
+            the request failed.
+        :yield: framework yields while the subgraph request is in flight.
+        """
         if self.params.is_running_on_polymarket:
             # Fetch Polymarket bets with resolution data
             result = yield from self._fetch_from_subgraph(
                 query=GET_POLYMARKET_TRADER_AGENT_BETS_QUERY,
-                variables={"id": agent_safe_address},
+                variables={"id": agent_safe_address.lower()},
                 subgraph=self.context.polymarket_bets_subgraph,
                 res_context="polymarket_trader_agent_bets",
             )
@@ -511,13 +596,11 @@ class APTQueryingBehaviour(BaseBehaviour, ABC):
         # Omen uses olas_agents_subgraph for bet data
         result = yield from self._fetch_from_subgraph(
             query=GET_TRADER_AGENT_BETS_QUERY,
-            variables={"id": agent_safe_address},
+            variables={"id": agent_safe_address.lower()},
             subgraph=self.context.olas_agents_subgraph,
             res_context="trader_agent_bets",
         )
-        if result and isinstance(result, dict) and "traderAgent" in result:
-            return result.get("traderAgent")
-        return result
+        return _unwrap_trader_agent(result)
 
     def _fetch_agent_details(
         self, agent_safe_address: str
@@ -537,9 +620,7 @@ class APTQueryingBehaviour(BaseBehaviour, ABC):
                 subgraph=self.context.olas_agents_subgraph,
                 res_context="agent_details",
             )
-        if result and isinstance(result, dict) and "traderAgent" in result:
-            return result.get("traderAgent")
-        return result
+        return _unwrap_trader_agent(result)
 
     def _fetch_trader_agent_performance(
         self, agent_safe_address: str, first: int = 200, skip: int = 0
@@ -560,9 +641,7 @@ class APTQueryingBehaviour(BaseBehaviour, ABC):
                 res_context="trader_agent_performance",
             )
 
-        if result and isinstance(result, dict) and "traderAgent" in result:
-            return result.get("traderAgent")
-        return result
+        return _unwrap_trader_agent(result)
 
     def _fetch_pending_bets(
         self, agent_safe_address: str
@@ -574,9 +653,7 @@ class APTQueryingBehaviour(BaseBehaviour, ABC):
             subgraph=self.context.olas_agents_subgraph,
             res_context="pending_bets",
         )
-        if result and isinstance(result, dict) and "traderAgent" in result:
-            return result.get("traderAgent")
-        return result
+        return _unwrap_trader_agent(result)
 
     def _fetch_all_resolved_markets(
         self, timestamp_gt: int, timestamp_lte: Optional[int] = None
@@ -688,13 +765,26 @@ class APTQueryingBehaviour(BaseBehaviour, ABC):
                 res_context=f"{res_context_prefix}_batch_{skip // batch_size + 1}",
             )
 
+            # ``None`` = transport / schema failure on this page. Coercing
+            # it to "no more pages" (via the truthiness check below) would
+            # return the partial prefix indistinguishable from a complete
+            # result. On the schema-v2 rebuild path this writes an empty
+            # or truncated series stamped ``schema_version=2``, wiping the
+            # agent's history with no rebuild path left to fire. Propagate
+            # ``None`` so the caller's ``if daily_stats is None`` guard
+            # suppresses the write and the next FSM cycle retries.
+            if result is None:
+                self.context.logger.error(
+                    f"daily profit pagination failed at skip={skip}; "
+                    f"aborting fetch so the rebuild can retry"
+                )
+                return None
+
             # Handle null traderAgent response
             if not result:
                 break
 
-            # Unwrap traderAgent if present
-            if isinstance(result, dict) and "traderAgent" in result:
-                result = result.get("traderAgent") or {}
+            result = _unwrap_trader_agent(result) or {}
 
             # Get dailyProfitStatistics from the result
             if not result.get("dailyProfitStatistics"):
@@ -712,12 +802,116 @@ class APTQueryingBehaviour(BaseBehaviour, ABC):
 
             skip += batch_size
 
+        if self.params.is_running_on_polymarket:
+            hydrated = yield from self._hydrate_profit_participants(
+                all_statistics, agent_safe_address.lower()
+            )
+            if not hydrated:
+                return None
+
         return all_statistics
 
+    def _hydrate_profit_participants(
+        self, statistics: List[Dict[str, Any]], agent_safe_address: str
+    ) -> Generator[None, None, bool]:
+        """Replace Polymarket ``profitParticipants`` conditionIds with question objects.
+
+        The squid returns ``profitParticipants`` as ``List[str]`` conditionIds
+        where the retired subgraph returned ``Question`` objects. Each statistic
+        is mutated in place from ``RawProfitStatistic`` to
+        ``HydratedProfitStatistic``, so the two ``behaviours.py`` consumers keep
+        the ``List[Dict]`` shape they already expect.
+
+        Each question's ``bets`` are scoped to ``agent_safe_address`` via
+        ``bettorId_eq``: ``Question.bets`` spans every tracked agent on the
+        market, and unscoped bets entered ``_match_mech_requests_to_days`` and
+        corrupted this agent's mech-fee-per-day attribution. The address is
+        lowercased here so the invariant does not depend on the caller.
+
+        :param statistics: daily profit statistics, mutated in place.
+        :param agent_safe_address: the agent whose bets the questions carry.
+        :return: whether every batch of questions was fetched successfully.
+        :yield: framework yields for each batched request.
+        """
+        bettor_id = agent_safe_address.lower()
+        condition_ids = {
+            participant
+            for stat in statistics
+            for participant in stat.get("profitParticipants") or []
+            if isinstance(participant, str)
+        }
+        if not condition_ids:
+            return True
+
+        ordered_ids = sorted(condition_ids)
+        questions_by_id: Dict[str, Dict] = {}
+        for start in range(0, len(ordered_ids), QUERY_BATCH_SIZE):
+            batch = ordered_ids[start : start + QUERY_BATCH_SIZE]
+            result = yield from self._fetch_from_subgraph(
+                query=GET_POLYMARKET_QUESTIONS_BY_IDS_QUERY,
+                variables={"ids": batch, "bettorId": bettor_id},
+                subgraph=self.context.polymarket_questions_subgraph,
+                res_context=(
+                    f"polymarket_profit_questions_batch_"
+                    f"{start // QUERY_BATCH_SIZE + 1}"
+                ),
+            )
+            # Partial hydration bakes a wrong mech-fee series into the history.
+            if result is None:
+                self.context.logger.error(
+                    "profit participant hydration failed; "
+                    "aborting so the rebuild can retry"
+                )
+                return False
+            for question in result or []:
+                question_id = question.get("id")
+                if question_id:
+                    questions_by_id[question_id] = question
+
+        without_bets = sum(
+            1 for question in questions_by_id.values() if not question.get("bets")
+        )
+        if without_bets:
+            self.context.logger.warning(
+                f"{without_bets}/{len(questions_by_id)} resolved profit participants "
+                f"carry no bets for {bettor_id}; day-matching falls back to "
+                f"day-level timestamps for them"
+            )
+
+        unresolved = len(ordered_ids) - len(questions_by_id)
+        if unresolved:
+            self.context.logger.warning(
+                f"{unresolved}/{len(ordered_ids)} profit participants had no "
+                f"matching question; their mech requests will be attributed "
+                f"to the request's own day"
+            )
+
+        for stat in statistics:
+            hydrated: List[Dict[str, Any]] = []
+            raw = cast(RawProfitStatistic, stat)
+            participants: List[Any] = list(raw.get("profitParticipants") or [])
+            for participant in participants:
+                # A dict is already a question and is unhashable, so it must
+                # never reach the lookup: that raises ``TypeError`` and aborts
+                # the whole statistics fetch.
+                if isinstance(participant, dict):
+                    hydrated.append(participant)
+                elif participant in questions_by_id:
+                    hydrated.append(questions_by_id[participant])
+            cast(HydratedProfitStatistic, stat)["profitParticipants"] = hydrated
+        return True
+
     def _fetch_all_mech_requests(
-        self, agent_safe_address: str
+        self, agent_safe_address: str, block_timestamp_gt: int = 0
     ) -> Generator[None, None, Optional[List]]:
-        """Fetch all mech requests for the agent with pagination support."""
+        """Fetch all mech requests for the agent with pagination support.
+
+        :param agent_safe_address: the agent's safe address
+        :param block_timestamp_gt: only return requests strictly after this
+            timestamp (watermark); ``0`` fetches the full history
+        :return: list of mech request dicts, or None on failure
+        :yield: None
+        """
         # Flag-on path: read the per-Safe request list from mech-analytics'
         # /v1/data/scored-rows instead of the marketplace subgraph. Same
         # downstream shape via ``rows_as_subgraph_mech_requests`` so the
@@ -728,11 +922,26 @@ class APTQueryingBehaviour(BaseBehaviour, ABC):
             # Async pagination via the framework HTTP protocol (see
             # ``_page_mech_analytics_scored_rows`` docstring for why
             # sync ``requests.get`` inside the FSM round is unsafe).
-            rows = yield from self._page_mech_analytics_scored_rows(
-                requester=agent_safe_address,
-            )
-            if rows is None:
-                return None
+            since = None
+            if block_timestamp_gt > 0:
+                # The subgraph filter below is strictly-greater-than while
+                # mech-analytics' ``since`` is inclusive; ``+1`` keeps the
+                # watermark row from being fetched (and charged) twice.
+                since = datetime.fromtimestamp(
+                    int(block_timestamp_gt) + 1, tz=timezone.utc
+                )
+            # The KPI's total also counts requests that were never
+            # delivered or could not be parsed, which only unscored-rows serves.
+            rows: List[Dict[str, Any]] = []
+            for endpoint in ("scored-rows", "unscored-rows"):
+                page_rows = yield from self._page_mech_analytics_scored_rows(
+                    requester=agent_safe_address,
+                    since=since,
+                    endpoint=endpoint,
+                )
+                if page_rows is None:
+                    return None
+                rows.extend(page_rows)
             return rows_as_subgraph_mech_requests(rows)
 
         all_requests = []
@@ -752,13 +961,30 @@ class APTQueryingBehaviour(BaseBehaviour, ABC):
                 query=GET_MECH_SENDER_QUERY,
                 variables={
                     "id": agent_safe_address,
-                    "timestamp_gt": 0,
+                    "timestamp_gt": block_timestamp_gt,
                     "skip": skip,
                     "first": batch_size,
                 },
                 subgraph=subgraph,
                 res_context=f"{res_context_prefix}_batch_{skip // batch_size + 1}",
             )
+
+            # ``None`` = transport / schema failure on this page. A
+            # well-formed empty page returns ``{}`` (falsy but not
+            # ``None``). Coercing ``None`` to "no more pages" here
+            # returned partial data indistinguishable from a complete
+            # result, which the caller (``_build_mech_request_lookup``)
+            # would then write to disk alongside ``schema_version=2``
+            # — locking the agent into a permanent undercount that no
+            # rebuild path can revisit. Propagate ``None`` so the
+            # caller's empty-lookup guard suppresses the write and
+            # the next FSM cycle re-attempts the full rebuild.
+            if result is None:
+                self.context.logger.error(
+                    f"mech request pagination failed at skip={skip}; "
+                    f"aborting lookup so the rebuild can retry"
+                )
+                return None
 
             if not result:
                 break
@@ -780,81 +1006,6 @@ class APTQueryingBehaviour(BaseBehaviour, ABC):
 
         return all_requests
 
-    def _fetch_mech_requests_by_titles(
-        self,
-        agent_safe_address: str,
-        question_titles: List[str],
-        block_timestamp_gt: int = 0,
-    ) -> Generator[None, None, Optional[List]]:
-        """Fetch mech requests by question titles.
-
-        :param agent_safe_address: the agent's safe address
-        :param question_titles: list of question titles to filter by
-        :param block_timestamp_gt: only return requests after this timestamp (watermark)
-        :return: list of mech request dicts, or None on failure
-        :yield: None
-        """
-        if not question_titles:
-            return []
-
-        # Flag-on path: pull scored rows since the watermark from
-        # mech-analytics and filter to the requested titles client-side.
-        # This is the per-tick incremental fetch path used by
-        # ``_perform_incremental_update`` — without a flag branch here,
-        # off-chain days would silently attribute zero fees even when
-        # the flag is on for the initial backfill.
-        if is_flag_enabled(self.params):
-            since = None
-            if block_timestamp_gt > 0:
-                # The subgraph query below uses ``blockTimestamp_gt``
-                # (strictly greater than); mech-analytics' ``since`` is
-                # inclusive. ``block_timestamp_gt`` is the timestamp of a
-                # row already consumed in a prior round — passing it
-                # straight through would re-fetch that boundary row every
-                # tick, and because the incremental settled-count aggregation
-                # is a monotonic ``max(prev, new)``, any recurrence in
-                # ``question_titles`` would inflate ``fees_by_day`` /
-                # ``unplaced_count`` permanently. ``+1`` keeps the semantics
-                # aligned across the two backends. Same treatment as the
-                # ``ts + 1`` on ``until`` in the per-position helpers.
-                since = datetime.fromtimestamp(
-                    int(block_timestamp_gt) + 1, tz=timezone.utc
-                )
-            rows = yield from self._page_mech_analytics_scored_rows(
-                requester=agent_safe_address,
-                since=since,
-            )
-            if rows is None:
-                return None
-            title_set = set(question_titles)
-            filtered = [row for row in rows if row.get("question_title") in title_set]
-            return rows_as_subgraph_mech_requests(filtered)
-
-        # Determine which subgraph to use based on platform
-        if self.params.is_running_on_polymarket:
-            subgraph = self.context.polygon_mech_subgraph
-            res_context = "polygon_mech_requests_by_titles"
-        else:
-            subgraph = self.context.olas_mech_subgraph
-            res_context = "mech_requests_by_titles"
-
-        result = yield from self._fetch_from_subgraph(
-            query=GET_MECH_REQUESTS_BY_TITLES_QUERY,
-            variables={
-                "sender": agent_safe_address.lower(),
-                "questionTitles": question_titles,
-                "blockTimestamp_gt": str(block_timestamp_gt),
-            },
-            subgraph=subgraph,
-            res_context=res_context,
-        )
-
-        if result:
-            if isinstance(result, dict) and "sender" in result:
-                result = result.get("sender") or {}
-            return result.get("requests", []) if isinstance(result, dict) else []
-        return []
-
     def clean_up(self) -> None:
         """Clean up the resources."""
         subgraph_names = (
@@ -864,6 +1015,7 @@ class APTQueryingBehaviour(BaseBehaviour, ABC):
             "polymarket_agents_subgraph",
             "open_markets_subgraph",
             "polymarket_bets_subgraph",
+            "polymarket_questions_subgraph",
             "gnosis_staking_subgraph",
             "polygon_staking_subgraph",
         )

@@ -77,10 +77,11 @@ class PolymarketBetPlacementBehaviour(
             return
 
         token_id = self.sampled_bet.outcome_token_ids[outcome]
-        # The Polymarket CLOB fee is reserved connection-side: the order is sized
-        # to ``amount - exact_fee`` against the DepositWallet's live pUSD balance
-        # using Polymarket's documented per-market fee (``GET /fee-rate`` + market
-        # fee exponent), so the full topped-up ``investment_amount`` is offered.
+        # The full ``investment_amount`` reaches the book. The SDK sizes a market
+        # buy against the funder's live balance and holds the CLOB taker fee back
+        # out of it, so the top-up round funds the DepositWallet with the bet
+        # *plus* the quoted fee (see ``PolymarketTopUpBehaviour._top_up_amount``);
+        # the fee then comes out of that reserve instead of out of the bet.
         amount = self.usdc_to_native(self.investment_amount)
 
         if self.investment_amount > self.token_balance:
@@ -155,9 +156,20 @@ class PolymarketBetPlacementBehaviour(
                 f"Bet placement: Status={status}, OrderID={order_id}, TX={tx_hashes}, IsDuplicate={is_duplicate_error}"
             )
 
-            # Handle no orderbook error
+            # Handle an order the CLOB will not take at this size. The amount is
+            # baked into the signature, so retrying cannot change it — and
+            # BET_PLACEMENT_FAILED loops straight back into this round, which is
+            # how one under-minimum order stalls the agent indefinitely. Leave
+            # via BET_PLACEMENT_IMPOSSIBLE instead and drop any cached order, so
+            # the market is blacklisted and sampling moves on.
             response_str = str(response)
-            if "No orderbook exists for the requested token id" in response_str:
+            if response.get("below_minimum"):
+                error_message = f"Failed to place bet: {error_msg}"
+                self.context.logger.error(error_message)
+                event = Event.BET_PLACEMENT_IMPOSSIBLE
+                updated_cache.pop(cache_key, None)
+            # Handle no orderbook error
+            elif "No orderbook exists for the requested token id" in response_str:
                 error_message = "Failed to place bet: No orderbook exists for the requested token id"
                 self.context.logger.error(error_message)
                 event = Event.BET_PLACEMENT_IMPOSSIBLE
@@ -191,29 +203,30 @@ class PolymarketBetPlacementBehaviour(
             if signed_order_json:
                 updated_cache[cache_key] = signed_order_json
 
-        # On success, record conditionId → mech_tool so the redeem behaviour can
-        # later update the e-greedy policy's accuracy store for this position.
+        # On success, record conditionId → (identity, tool) key so the redeem behaviour
+        # can later update the e-greedy policy's accuracy store for this position.
         utilized_tools_json = None
         policy_str = None
         if event == Event.BET_PLACEMENT_DONE:
             condition_id = self.get_active_sampled_bet().condition_id
-            if condition_id is not None:
-                self.utilized_tools[condition_id] = self.synchronized_data.mech_tool
-                utilized_tools_json = json.dumps(self.utilized_tools, sort_keys=True)
-                self.context.logger.info(
-                    f"Recorded mech tool {self.synchronized_data.mech_tool!r} "
-                    f"for condition_id {condition_id!r} in utilized_tools."
-                )
-            else:
+            mech_tool_key = self.synchronized_data.mech_tool_key
+            if condition_id is None:
                 self.context.logger.warning(
                     "No condition_id found on the sampled bet; "
                     "utilized_tools will not be updated for this placement."
                 )
+            elif mech_tool_key is not None:
+                self.utilized_tools[condition_id] = mech_tool_key
+                utilized_tools_json = json.dumps(self.utilized_tools, sort_keys=True)
+                self.context.logger.info(
+                    f"Recorded mech tool {mech_tool_key!r} "
+                    f"for condition_id {condition_id!r} in utilized_tools."
+                )
 
             # Increment pending for the tool that was used
-            if self.synchronized_data.is_policy_set:
+            if self.synchronized_data.is_policy_set and mech_tool_key is not None:
                 self._policy = self.synchronized_data.policy
-                self.policy.tool_used(self.synchronized_data.mech_tool)
+                self.policy.tool_used(mech_tool_key)
                 policy_str = self.policy.serialize()
                 self._store_policy()
 

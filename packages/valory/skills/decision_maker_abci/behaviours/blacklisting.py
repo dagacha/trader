@@ -19,7 +19,7 @@
 
 """This module contains the behaviour for the blacklisting of the sampled bet."""
 
-from typing import Generator
+from typing import Generator, cast
 
 from packages.valory.skills.decision_maker_abci.behaviours.storage_manager import (
     StorageManagerBehaviour,
@@ -42,12 +42,6 @@ class BlacklistingBehaviour(  # type: ignore
     """A behaviour in which the agents blacklist the sampled bet."""
 
     matching_round = BlacklistingRound
-
-    @property
-    def synced_time(self) -> float:
-        """Get the synchronized time among agents."""
-        synced_time = self.shared_state.round_sequence.last_round_transition_timestamp
-        return synced_time.timestamp()
 
     def _blacklist(self) -> None:
         """Blacklist the sampled bet."""
@@ -87,10 +81,12 @@ class BlacklistingBehaviour(  # type: ignore
             if (
                 self.synchronized_data.tx_submitter
                 != HandleFailedTxRound.auto_round_id()
+                and self.synchronized_data.mech_tool_key is not None
             ):
                 # if we are here, then the tool has responded with an error
                 self.policy.tool_responded(
-                    self.synchronized_data.mech_tool, self.synced_timestamp
+                    cast(str, self.synchronized_data.mech_tool_key),
+                    self.synced_timestamp,
                 )
             policy = self.policy.serialize()
             payload = BlacklistingPayload(self.context.agent_address, bets_hash, policy)

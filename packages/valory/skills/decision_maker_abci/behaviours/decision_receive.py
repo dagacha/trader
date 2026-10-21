@@ -52,6 +52,7 @@ from packages.valory.skills.market_manager_abci.bets import (
 from packages.valory.skills.mech_interact_abci.states.base import (
     MechInteractionResponse,
 )
+from packages.valory.skills.mech_interact_abci.utils import loads_bounded
 
 WRITE_TEXT_MODE = "w+t"
 COMMA = ","
@@ -215,8 +216,8 @@ class DecisionReceiveBehaviour(StorageManagerBehaviour):
             return None
 
         try:
-            return PredictionResponse(**json.loads(self.mech_response.result))
-        except (json.JSONDecodeError, ValueError) as exc:
+            return PredictionResponse(**loads_bounded(self.mech_response.result))
+        except Exception as exc:  # the result is mech-supplied; fail closed
             self.context.logger.error(f"Could not parse the mech's response: {exc}")
             return None
 
@@ -763,11 +764,10 @@ class DecisionReceiveBehaviour(StorageManagerBehaviour):
                 self.context.logger.info("Increasing Mech call count by 1")
                 self.shared_state.benchmarking_mech_calls += 1
 
-            if prediction_response is not None:
+            tool = self.creditable_tool_key if prediction_response is not None else None
+            if tool is not None:
                 self.policy.tool_responded(
-                    self.synchronized_data.mech_tool,
-                    self.synced_timestamp,
-                    self.is_invalid_response,
+                    tool, self.synced_timestamp, self.is_invalid_response
                 )
                 policy = self.policy.serialize()
 

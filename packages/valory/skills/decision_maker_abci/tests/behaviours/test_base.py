@@ -26,7 +26,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple, TypeVar, Union
 from unittest import mock
-from unittest.mock import MagicMock, PropertyMock
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 from aea.configurations.base import PackageConfiguration
@@ -39,6 +39,10 @@ from packages.valory.protocols.contract_api import ContractApiMessage
 from packages.valory.skills.abstract_round_abci.behaviour_utils import TimeoutException
 from packages.valory.skills.abstract_round_abci.test_tools.base import (
     FSMBehaviourBaseCase,
+)
+from packages.valory.skills.agent_performance_summary_abci.activity_goal import (
+    ACTIVITY_GOAL_TRADES_FILE,
+    read_trades,
 )
 from packages.valory.skills.decision_maker_abci.behaviours.base import (
     BET_AMOUNT_FIELD,
@@ -261,6 +265,7 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
                         "valid_mechs": [],
                         "mech_marketplace_v1_suitable_tools": [],
                         "deliveries_lookback_days": 30,
+                        "delivery_rate_caps": {"native": 10**16},
                         "store_path": tempfile.gettempdir(),
                     }
                 }
@@ -596,6 +601,31 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
         result = behaviour.synced_timestamp
         assert result == 1700000000
 
+    def test_synced_timestamp_falls_back_to_local_clock(self) -> None:
+        """Test that `synced_timestamp` falls back to the local clock."""
+        behaviour = self.behaviour
+        round_sequence = MagicMock()
+        type(round_sequence).last_round_transition_timestamp = PropertyMock(
+            side_effect=ValueError("no transition has been completed yet")
+        )
+
+        with (
+            mock.patch.object(
+                type(behaviour),
+                "round_sequence",
+                new_callable=PropertyMock,
+                return_value=round_sequence,
+            ),
+            mock.patch(
+                "packages.valory.skills.decision_maker_abci.behaviours.base.datetime"
+            ) as mock_datetime,
+        ):
+            mock_datetime.now.return_value.timestamp.return_value = 1700000000.5
+            result = behaviour.synced_timestamp
+
+        assert result == 1700000000
+        behaviour.context.logger.warning.assert_called_once()
+
     def test_safe_tx_hash_getter(self) -> None:
         """Test the `safe_tx_hash` getter."""
         behaviour = self.behaviour
@@ -668,6 +698,29 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
         mock_policy = MagicMock()
         behaviour._policy = mock_policy
         assert behaviour.policy == mock_policy
+
+    @pytest.mark.parametrize("key", ["valory::tool1", None])
+    def test_creditable_tool_key_warns_only_on_a_skipped_credit(
+        self, key: Optional[str]
+    ) -> None:
+        """The key passes through; a missing one is warned about with the deliverer."""
+        behaviour = self.behaviour
+        synced = MagicMock(
+            mech_tool_key=key, delivering_mech="0xdeliverer", mech_tool="tool1"
+        )
+        with (
+            patch.object(
+                type(behaviour), "synchronized_data", new_callable=PropertyMock
+            ) as mock_sd,
+            patch.object(behaviour.context.logger, "warning") as mock_warn,
+        ):
+            mock_sd.return_value = synced
+            assert behaviour.creditable_tool_key == key
+        if key is None:
+            mock_warn.assert_called_once()
+            assert "0xdeliverer" in mock_warn.call_args[0][0]
+        else:
+            mock_warn.assert_not_called()
 
     def _set_period_count(self, behaviour: Any, value: int) -> None:
         """Set the period count via the `db.reset_index` attribute it actually reads."""
@@ -986,6 +1039,47 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
 
         mock_bet.update_investments.assert_called_once_with(1000)  # type: ignore[method-assign]
 
+    def test_update_bet_transaction_information_after_period_reset(self) -> None:
+        """Test `update_bet_transaction_information` when the transition history was wiped."""
+        behaviour = self.behaviour
+        mock_bet = MagicMock()
+        mock_bet.queue_status.next_status.return_value = MagicMock()
+        mock_bet.update_investments.return_value = True
+        mock_bet.id = "test_bet"
+
+        db_values = {"sampled_bet_index": 0, "bet_amount": 1000}
+        behaviour.synchronized_data.db.get_strict = lambda key: db_values.get(key, 0)  # type: ignore[method-assign]
+        round_sequence = MagicMock()
+        type(round_sequence).last_round_transition_timestamp = PropertyMock(
+            side_effect=ValueError("no transition has been completed yet")
+        )
+
+        with (
+            mock.patch.object(
+                type(behaviour),
+                "round_sequence",
+                new_callable=PropertyMock,
+                return_value=round_sequence,
+            ),
+            mock.patch.object(
+                type(behaviour),
+                "sampled_bet",
+                new_callable=PropertyMock,
+                return_value=mock_bet,
+            ),
+            mock.patch.object(behaviour, "store_bets") as mock_store_bets,
+            mock.patch.object(behaviour, "_update_bet_strategy"),
+            mock.patch(
+                "packages.valory.skills.decision_maker_abci.behaviours.base.datetime"
+            ) as mock_datetime,
+        ):
+            mock_datetime.now.return_value.timestamp.return_value = 1700000000.5
+            behaviour.update_bet_transaction_information()
+
+        assert mock_bet.processed_timestamp == 1700000000
+        mock_bet.update_investments.assert_called_once_with(1000)
+        mock_store_bets.assert_called_once()
+
     def test_update_bet_transaction_information_update_fails(self) -> None:
         """Test `update_bet_transaction_information` when update_investments returns False."""  # type: ignore[misc]
         behaviour = self.behaviour
@@ -1011,6 +1105,122 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
                     behaviour.update_bet_transaction_information()
 
         behaviour.context.logger.error.assert_called()  # type: ignore[method-assign]
+
+    def _apply_trade_bookkeeping(
+        self,
+        store_path: Path,
+        benchmarking: bool,
+        sell: bool = False,
+        record_ledger: bool = True,
+    ) -> MagicMock:
+        """Run the bet or sell bookkeeping against a store at ``store_path``.
+
+        :param store_path: the store directory the ledger is written to.
+        :param benchmarking: whether benchmarking mode is enabled.
+        :param sell: run the sell bookkeeping instead of the bet one.
+        :param record_ledger: the ``record_ledger`` argument of the bet bookkeeping.
+        :return: the patched ``store_bets``.
+        """
+        behaviour = self.behaviour
+        behaviour.params.store_path = store_path
+        behaviour.benchmarking_mode.enabled = benchmarking
+        mock_bet = MagicMock()
+        mock_bet.update_investments.return_value = True
+        mock_bet.id = "test_bet"
+
+        db_values = {"sampled_bet_index": 0, "bet_amount": 1000}
+        behaviour.synchronized_data.db.get_strict = lambda key: db_values.get(key, 0)  # type: ignore[method-assign]
+        mock_timestamp = MagicMock()
+        mock_timestamp.timestamp.return_value = 1700000000.0
+        behaviour.round_sequence.last_round_transition_timestamp = mock_timestamp  # type: ignore[misc]
+
+        with (
+            mock.patch.object(
+                type(behaviour),
+                "sampled_bet",
+                new_callable=PropertyMock,
+                return_value=mock_bet,
+            ),
+            mock.patch.object(behaviour, "store_bets") as store_bets,
+            mock.patch.object(behaviour, "_update_bet_strategy"),
+        ):
+            if sell:
+                behaviour.update_sell_transaction_information()
+            else:
+                behaviour.update_bet_transaction_information(record_ledger)
+        return store_bets
+
+    def test_update_bet_transaction_information_records_one_trade(
+        self, tmp_path: Path
+    ) -> None:
+        """A placed bet adds exactly one timestamped entry to the trades ledger."""
+        self._apply_trade_bookkeeping(tmp_path, benchmarking=False)
+
+        assert read_trades(tmp_path) == [
+            {"timestamp": 1700000000, "bet_id": "test_bet"}
+        ]
+
+    def test_ledger_write_failure_still_stores_bets(self, tmp_path: Path) -> None:
+        """A failed ledger write is logged and the placed bet is still persisted."""
+        missing_store = tmp_path / "missing"
+        store_bets = self._apply_trade_bookkeeping(missing_store, benchmarking=False)
+
+        store_bets.assert_called_once()
+        logged = [c.args[0] for c in self.behaviour.context.logger.error.call_args_list]  # type: ignore[attr-defined]
+        assert any("Could not record trade for bet test_bet" in m for m in logged)
+        assert not missing_store.exists()
+
+    @pytest.mark.parametrize(
+        "error", [OSError("disk full"), ValueError("bad ledger")], ids=["os", "value"]
+    )
+    def test_ledger_error_still_stores_bets(
+        self, tmp_path: Path, error: Exception
+    ) -> None:
+        """Any ledger read or write error is logged and the bet is still persisted."""
+        with mock.patch(
+            "packages.valory.skills.decision_maker_abci.behaviours.base.record_trade",
+            side_effect=error,
+        ):
+            store_bets = self._apply_trade_bookkeeping(tmp_path, benchmarking=False)
+
+        store_bets.assert_called_once()
+        logged = [c.args[0] for c in self.behaviour.context.logger.error.call_args_list]  # type: ignore[attr-defined]
+        assert any(str(error) in m for m in logged)
+
+    def test_non_utf8_ledger_still_stores_bets(self, tmp_path: Path) -> None:
+        """An undecodable ledger is left intact and the placed bet is still persisted."""
+        (tmp_path / ACTIVITY_GOAL_TRADES_FILE).write_bytes(b"\xff\xfe")
+
+        store_bets = self._apply_trade_bookkeeping(tmp_path, benchmarking=False)
+
+        store_bets.assert_called_once()
+        assert (tmp_path / ACTIVITY_GOAL_TRADES_FILE).read_bytes() == b"\xff\xfe"
+        logged = [c.args[0] for c in self.behaviour.context.logger.error.call_args_list]  # type: ignore[attr-defined]
+        assert any("Could not record trade for bet test_bet" in m for m in logged)
+
+    def test_bet_bookkeeping_without_ledger_records_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """``record_ledger=False`` updates and stores the bet without counting it."""
+        store_bets = self._apply_trade_bookkeeping(
+            tmp_path, benchmarking=False, record_ledger=False
+        )
+
+        store_bets.assert_called_once()
+        assert read_trades(tmp_path) == []
+
+    @pytest.mark.parametrize(
+        "benchmarking, sell",
+        [(True, False), (False, True)],
+        ids=["benchmarking_bet", "sell"],
+    )
+    def test_trade_bookkeeping_records_nothing(
+        self, tmp_path: Path, benchmarking: bool, sell: bool
+    ) -> None:
+        """Benchmarking placements and sells never count as trades."""
+        self._apply_trade_bookkeeping(tmp_path, benchmarking=benchmarking, sell=sell)
+
+        assert read_trades(tmp_path) == []
 
     def test_update_sell_transaction_information(self) -> None:
         """Test `update_sell_transaction_information` method."""  # type: ignore[misc]

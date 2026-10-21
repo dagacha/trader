@@ -92,7 +92,8 @@ class TestCheckStopTradingParamsInit:
                 enable_position_review=True,
                 review_period_seconds=3600,
                 activity_target=8,
-                min_trades=0,
+                max_trades=0,
+                default_activity_goal=1,
             )
         assert params.mech_contract_address == "0xabc"
         assert params.disable_trading is False
@@ -101,7 +102,7 @@ class TestCheckStopTradingParamsInit:
         assert params.enable_position_review is True
         assert params.review_period_seconds == 3600
         assert params.activity_target == 8
-        assert params.min_trades == 0
+        assert params.default_activity_goal == 1
         assert params.staking_kpi_mech_count_request_address == "0xabc"
 
     def test_init_with_marketplace(self) -> None:
@@ -117,7 +118,8 @@ class TestCheckStopTradingParamsInit:
                 enable_position_review=True,
                 review_period_seconds=3600,
                 activity_target=8,
-                min_trades=3,
+                max_trades=0,
+                default_activity_goal=1,
                 mech_marketplace_config={
                     "mech_marketplace_address": "0xMarketplace",
                     "response_timeout": 300,
@@ -127,19 +129,79 @@ class TestCheckStopTradingParamsInit:
         assert params.use_mech_marketplace is True
         assert params.staking_kpi_mech_count_request_address == "0xMarketplace"
 
-    def test_init_negative_min_trades_raises(self) -> None:
-        """min_trades < 0 is rejected at construction."""
-        mock_skill_context = MagicMock()
+    @pytest.mark.parametrize("goal", [0, 500])
+    def test_default_activity_goal_accepts_any_non_negative(self, goal: int) -> None:
+        """Zero and large goals are valid defaults."""
         with patch.object(StakingParams, "__init__", return_value=None):
-            with pytest.raises(ValueError):
-                CheckStopTradingParams(
-                    skill_context=mock_skill_context,
-                    mech_contract_address="0xabc",
-                    disable_trading=False,
-                    stop_trading_if_staking_kpi_met=True,
-                    use_mech_marketplace=False,
-                    enable_position_review=True,
-                    review_period_seconds=3600,
-                    activity_target=8,
-                    min_trades=-1,
-                )
+            params = CheckStopTradingParams(
+                skill_context=MagicMock(),
+                mech_contract_address="0xabc",
+                disable_trading=False,
+                stop_trading_if_staking_kpi_met=True,
+                use_mech_marketplace=False,
+                enable_position_review=False,
+                review_period_seconds=3600,
+                activity_target=8,
+                max_trades=0,
+                default_activity_goal=goal,
+            )
+        assert params.default_activity_goal == goal
+
+    def test_negative_default_activity_goal_raises(self) -> None:
+        """A negative default goal is refused at startup."""
+        with (
+            patch.object(StakingParams, "__init__", return_value=None),
+            pytest.raises(AEAEnforceError, match="default_activity_goal"),
+        ):
+            CheckStopTradingParams(
+                skill_context=MagicMock(),
+                mech_contract_address="0xabc",
+                disable_trading=False,
+                stop_trading_if_staking_kpi_met=True,
+                use_mech_marketplace=False,
+                enable_position_review=False,
+                review_period_seconds=3600,
+                activity_target=8,
+                max_trades=0,
+                default_activity_goal=-1,
+            )
+
+
+@pytest.mark.parametrize("inherited_cap", [0, 3])
+def test_composed_params_keep_trade_cap(inherited_cap: int) -> None:
+    """Parent models can consume the cap before check-stop params are read."""
+    params = CheckStopTradingParams.__new__(CheckStopTradingParams)
+    params.max_trades = inherited_cap
+    with patch.object(StakingParams, "__init__", return_value=None):
+        CheckStopTradingParams.__init__(
+            params,
+            skill_context=MagicMock(),
+            mech_contract_address="0xabc",
+            disable_trading=False,
+            stop_trading_if_staking_kpi_met=True,
+            use_mech_marketplace=False,
+            enable_position_review=False,
+            review_period_seconds=3600,
+            activity_target=8,
+            default_activity_goal=8,
+        )
+    assert params.max_trades == inherited_cap
+
+
+def test_trade_cap_is_forwarded_to_other_parent_models() -> None:
+    """The composed decision maker must receive the same cap value."""
+    with patch.object(StakingParams, "__init__", return_value=None) as parent:
+        params = CheckStopTradingParams(
+            skill_context=MagicMock(),
+            mech_contract_address="0xabc",
+            disable_trading=False,
+            stop_trading_if_staking_kpi_met=True,
+            use_mech_marketplace=False,
+            enable_position_review=False,
+            review_period_seconds=3600,
+            activity_target=8,
+            default_activity_goal=8,
+            max_trades=3,
+        )
+    assert params.max_trades == 3
+    assert parent.call_args.kwargs["max_trades"] == 3

@@ -21,6 +21,9 @@
 
 from typing import Any, Callable, Dict, Type, Union, cast
 
+from aea.skills.base import SkillContext
+
+from packages.valory.connections.x402.clients.mech import slot_registry
 from packages.valory.skills.abstract_round_abci.models import (
     ApiSpecs,
 )
@@ -51,6 +54,9 @@ from packages.valory.skills.agent_performance_summary_abci.models import (
 )
 from packages.valory.skills.agent_performance_summary_abci.models import (
     PolymarketBetsSubgraph as APTPolymarketBetsSubgraph,
+)
+from packages.valory.skills.agent_performance_summary_abci.models import (
+    PolymarketQuestionsSubgraph as APTPolymarketQuestionsSubgraph,
 )
 from packages.valory.skills.agent_performance_summary_abci.rounds import (
     Event as AgentPerformanceSummaryEvent,
@@ -102,6 +108,9 @@ from packages.valory.skills.mech_interact_abci.models import (
 from packages.valory.skills.mech_interact_abci.models import (
     MechsSubgraph as InteractMechsSubgraph,
 )
+from packages.valory.skills.mech_interact_abci.nonce_allocator import (
+    MECH_SLOT_REGISTRY,
+)
 from packages.valory.skills.mech_interact_abci.rounds import Event as MechInteractEvent
 from packages.valory.skills.reset_pause_abci.rounds import Event as ResetPauseEvent
 from packages.valory.skills.termination_abci.models import TerminationParams
@@ -151,8 +160,13 @@ MechsSubgraph = InteractMechsSubgraph
 PolygonMechSubgraph = APTPolygonMechSubgraph
 PolymarketAgentsSubgraph = APTPolymarketAgentsSubgraph
 PolymarketBetsSubgraph = APTPolymarketBetsSubgraph
+PolymarketQuestionsSubgraph = APTPolymarketQuestionsSubgraph
 
 MARGIN = 5
+
+# Fallback for ``native_gas_reserve`` when a service does not set it. Below
+# every shipped agent threshold, so services are expected to override it.
+DEFAULT_NATIVE_GAS_RESERVE_WEI = 10**17
 
 
 class RandomnessApi(ApiSpecs):
@@ -185,27 +199,46 @@ class TraderParams(
         self.gnosis_ledger_rpc: str = self._ensure("gnosis_ledger_rpc", kwargs, str)
         self.polygon_ledger_rpc: str = self._ensure("polygon_ledger_rpc", kwargs, str)
         self.use_x402: bool = self._ensure("use_x402", kwargs, bool)
+        # Mirrors the genai connection's own flag. The skill needs it because
+        # which account pays, and therefore what has to be funded, differs
+        # between the two payment routes; see valory-xyz/genai#45 on folding
+        # both booleans into one payment-mode setting.
+        self.use_mech_facilitator: bool = bool(
+            kwargs.pop("use_mech_facilitator", False)
+        )
+        # Marketplace pre-deposit thresholds, in the payment asset's base units.
+        # ``floor`` is when to act, ``target`` is what to reach, and ``cap``
+        # bounds one top-up so a misconfiguration cannot drain the EOA.
+        self.mech_pre_deposit_floor: int = int(kwargs.pop("mech_pre_deposit_floor", 0))
+        self.mech_pre_deposit_target: int = int(
+            kwargs.pop("mech_pre_deposit_target", 0)
+        )
+        self.mech_pre_deposit_cap: int = int(kwargs.pop("mech_pre_deposit_cap", 0))
+        # Where to ask which payment asset the facilitator charges this Safe in.
+        # The same base URL the genai connection sends paid calls to.
+        self.mech_facilitator_base_url: str = str(
+            kwargs.pop("mech_facilitator_base_url", "") or ""
+        )
+        # Native balance a top-up must leave the EOA. At or above the agent's
+        # own refill threshold in ``fund_requirements``, or a deposit drops the
+        # EOA under it and the service reports itself low on funds.
+        self.native_gas_reserve: int = int(
+            kwargs.pop("native_gas_reserve", DEFAULT_NATIVE_GAS_RESERVE_WEI)
+        )
         super().__init__(*args, **kwargs)
-        # Cross-validate the per-epoch trade band: with a cap in effect the
-        # agent enters mech-only mode at max_trades placements, so the counter
-        # can never reach a larger min_trades. max_trades=0 disables the cap,
-        # so the bound is only enforced when a cap is configured. Both fields
-        # are always present in real construction; getattr keeps the check a
-        # no-op for isolated construction that stubs the parent __init__.
-        max_trades = getattr(self, "max_trades", 0)
-        min_trades = getattr(self, "min_trades", 0)
-        if max_trades > 0 and min_trades > max_trades:
-            msg = (
-                f"min_trades ({min_trades}) must be <= max_trades "
-                f"({max_trades}) when max_trades is set!"
-            )
-            raise ValueError(msg)
 
 
 class SharedState(BaseSharedState):
     """Keep the current shared state of the skill."""
 
     abci_app_cls = TraderAbciApp
+
+    def __init__(self, *args: Any, skill_context: SkillContext, **kwargs: Any) -> None:
+        """Initialize the state."""
+        super().__init__(*args, skill_context=skill_context, **kwargs)
+        # Bound here rather than in ``setup``: a paid call can be made
+        # before setup runs, and both routes must share one count by then.
+        skill_context.shared_state[MECH_SLOT_REGISTRY] = slot_registry()
 
     @property
     def params(self) -> TraderParams:

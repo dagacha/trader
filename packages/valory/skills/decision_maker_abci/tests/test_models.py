@@ -43,6 +43,7 @@ from packages.valory.skills.decision_maker_abci.models import (
     check_prompt_template,
     extract_keys_from_template,
 )
+from packages.valory.skills.decision_maker_abci.policy import EGreedyPolicy
 
 
 class TestPromptTemplate:
@@ -606,6 +607,7 @@ def _build_decision_maker_params_kwargs() -> dict:
         "prioritize_fresh_markets": False,
         "fresh_market_max_age": 1800,
         "policy_epsilon": 0.2,
+        "tool_accuracy_prior_requests": 10,
         "tool_punishment_multiplier": 2,
         "contract_timeout": 10.0,
         "file_hash_to_strategies": {"hash1": ["kelly_criterion"]},
@@ -772,6 +774,28 @@ class TestDecisionMakerParams:
                 agent_registry_address="0xaddr",
                 max_mech_requests_per_cycle=0,
             )
+
+    def test_tool_accuracy_prior_requests_sets_the_policy_prior(self) -> None:
+        """The param is what every policy in the process ranks with."""
+        kwargs = _build_decision_maker_params_kwargs()
+        kwargs["tool_accuracy_prior_requests"] = 20
+        with patch.object(
+            DecisionMakerParams.__mro__[1], "__init__", return_value=None
+        ):
+            params = DecisionMakerParams(**kwargs)
+
+        assert params.tool_accuracy_prior_requests == 20
+        assert EGreedyPolicy.prior_requests == 20
+
+    def test_negative_tool_accuracy_prior_requests_raises(self) -> None:
+        """A negative prior would rank short records above their own accuracy."""
+        kwargs = _build_decision_maker_params_kwargs()
+        kwargs["tool_accuracy_prior_requests"] = -1
+        with (
+            patch.object(DecisionMakerParams.__mro__[1], "__init__", return_value=None),
+            pytest.raises(ValueError, match="tool_accuracy_prior_requests"),
+        ):
+            DecisionMakerParams(**kwargs)
 
     def test_prompt_template_property(self) -> None:
         """Test prompt_template property returns a PromptTemplate."""
