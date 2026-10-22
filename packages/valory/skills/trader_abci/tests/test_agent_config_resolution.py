@@ -287,3 +287,14 @@ def test_omen_default_min_expected_profit(config_path: Path) -> None:
         "strategies_kwargs"
     ]
     assert kwargs["min_expected_profit"] == 6 * 10**16
+
+
+def test_polymarket_default_min_expected_profit_is_unset() -> None:
+    """Keep the profit gate off in the Polymarket service default."""
+    config_path = _VALORY_DIR / "services" / "polymarket_trader" / "service.yaml"
+    docs = list(yaml_load_all(io.StringIO(config_path.read_text(encoding="utf-8"))))
+    resolved = apply_env_variables_on_agent_config(docs, {})
+    kwargs = _override(resolved, "trader_abci")["models"]["params"]["args"][
+        "strategies_kwargs"
+    ]
+    assert "min_expected_profit" not in kwargs
