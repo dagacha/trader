@@ -835,9 +835,9 @@ class TestMinExpectedProfit:
         assert run(**kwargs, min_expected_profit=0) == selected
 
     def test_omen_default_threshold(self) -> None:
-        """Reject a positive return below 0.10 xDAI after the mech fee."""
+        """Reject a positive return below 0.06 xDAI after the mech fee."""
         selected = run(**FPMM_KWARGS)
-        assert 0 < selected["expected_profit"] < 10**17
-        result = run(**FPMM_KWARGS, min_expected_profit=10**17)
+        assert 0 < selected["expected_profit"] < 6 * 10**16
+        result = run(**FPMM_KWARGS, min_expected_profit=6 * 10**16)
         assert result["bet_amount"] == 0
-        assert "< min 0.1000 xDAI" in result["info"][-1]
+        assert "< min 0.0600 xDAI" in result["info"][-1]

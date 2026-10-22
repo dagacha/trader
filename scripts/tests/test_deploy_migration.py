@@ -334,7 +334,7 @@ def test_settings_are_scoped_to_each_yaml_environment(tmp_path):
     assert all(value["OFFCHAIN_DEPOSIT_TARGET_CALLS"] == "7" for value in values)
 
 
-@pytest.mark.parametrize("existing", [None, 0, 123456789])
+@pytest.mark.parametrize("existing", [None, 0, 123456789, 10**17])
 @pytest.mark.parametrize("as_mapping", [False, True])
 def test_strategy_json_migration(tmp_path, existing, as_mapping):
     """Add the Omen threshold once and keep explicit values and metadata."""
@@ -351,7 +351,7 @@ def test_strategy_json_migration(tmp_path, existing, as_mapping):
     before = {path: path.read_bytes() for path in paths}
     preview = run(tmp_path, "--dry-run")
     if existing is None:
-        assert "STRATEGIES_KWARGS.min_expected_profit=100000000000000000" in preview
+        assert "STRATEGIES_KWARGS.min_expected_profit=60000000000000000" in preview
     assert all(path.read_bytes() == before[path] for path in paths)
     assert not list(tmp_path.rglob("*.bak-*"))
     run(tmp_path, "--warn-only")
@@ -364,7 +364,7 @@ def test_strategy_json_migration(tmp_path, existing, as_mapping):
         value = actual_entry["value"]
         actual = value if as_mapping else json.loads(value)
         assert actual == dict(
-            strategy, min_expected_profit=10**17 if existing is None else existing
+            strategy, min_expected_profit=6 * 10**16 if existing is None else existing
         )
         assert {k: v for k, v in actual_entry.items() if k != "value"} == {
             k: v for k, v in entry("").items() if k != "value"
@@ -379,7 +379,7 @@ def test_strategy_json_migration(tmp_path, existing, as_mapping):
 
 
 @pytest.mark.parametrize("style", ["env", "mapping", "list", "kubernetes"])
-@pytest.mark.parametrize("existing", [None, 0, 123456789])
+@pytest.mark.parametrize("existing", [None, 0, 123456789, 10**17])
 def test_strategy_deployment_migration(tmp_path, style, existing):
     """Migrate deployment scalars with the same backup and dry-run rules."""
     import yaml
@@ -427,13 +427,13 @@ def test_strategy_deployment_migration(tmp_path, style, existing):
         else:
             value = env["STRATEGIES_KWARGS"]
     assert json.loads(value) == dict(
-        strategy, min_expected_profit=10**17 if existing is None else existing
+        strategy, min_expected_profit=6 * 10**16 if existing is None else existing
     )
     backups = list(path.parent.glob(path.name + ".bak-*"))
     assert len(backups) == (1 if existing is None else 0)
     if existing is None:
         assert str(path) in preview
-        assert "STRATEGIES_KWARGS.min_expected_profit=100000000000000000" in preview
+        assert "STRATEGIES_KWARGS.min_expected_profit=60000000000000000" in preview
         assert backups[0].read_bytes() == original.encode()
     run(tmp_path)
     assert path.read_bytes() == result.encode()
@@ -451,7 +451,7 @@ def test_empty_strategy_entry(tmp_path, value):
     for path in paths:
         actual = json.loads(path.read_text())["env_variables"]["STRATEGIES_KWARGS"]
         assert actual == entry(
-            {"min_expected_profit": 10**17} if value == {} else value
+            {"min_expected_profit": 6 * 10**16} if value == {} else value
         )
 
 
@@ -473,11 +473,11 @@ def test_strategy_and_offchain_migrate_together(tmp_path):
         env = json.loads(path.read_text())["env_variables"]
         assert (
             json.loads(env["STRATEGIES_KWARGS"]["value"])["min_expected_profit"]
-            == 10**17
+            == 6 * 10**16
         )
         assert env["OFFCHAIN_DEPOSIT_TARGET_CALLS"]["value"] == "7"
     env = dict(line.split("=", 1) for line in env_path.read_text().splitlines())
-    assert json.loads(env["STRATEGIES_KWARGS"])["min_expected_profit"] == 10**17
+    assert json.loads(env["STRATEGIES_KWARGS"])["min_expected_profit"] == 6 * 10**16
     assert env["OFFCHAIN_DEPOSIT_TARGET_CALLS"] == "7"
     assert len(list(tmp_path.rglob("*.bak-*"))) == 4
 

@@ -2651,7 +2651,7 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
             executables["fixed_bet"] = ("def run(**kwargs): return {}", "run")
         behaviour.shared_state.strategies_executables = executables
         if scenario == "kelly_min_profit":
-            behaviour.params.strategies_kwargs["min_expected_profit"] = 10**17
+            behaviour.params.strategies_kwargs["min_expected_profit"] = 6 * 10**16
             if is_running_on_polymarket:
                 behaviour.token_balance = 10**7
                 behaviour.params.strategies_kwargs.update(

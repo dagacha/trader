@@ -270,3 +270,20 @@ def test_agent_config_does_not_override_headers() -> None:
         if isinstance(cfg.get("args"), dict) and "headers" in cfg["args"]
     ]
     assert not overriding, f"headers override reintroduced for: {overriding}"
+
+
+@pytest.mark.parametrize(
+    "config_path",
+    [AEA_CONFIG_PATH, _VALORY_DIR / "services" / "trader_pearl" / "service.yaml"],
+)
+def test_omen_default_min_expected_profit(config_path: Path) -> None:
+    """Resolve the Omen profit default to 0.06 xDAI.
+
+    :param config_path: the agent or service config to resolve.
+    """
+    docs = list(yaml_load_all(io.StringIO(config_path.read_text(encoding="utf-8"))))
+    resolved = apply_env_variables_on_agent_config(docs, {})
+    kwargs = _override(resolved, "trader_abci")["models"]["params"]["args"][
+        "strategies_kwargs"
+    ]
+    assert kwargs["min_expected_profit"] == 6 * 10**16
