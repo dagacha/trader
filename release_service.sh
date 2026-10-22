@@ -15,6 +15,10 @@
 #                            (published via `autonomy push-all --remote`)
 #   artifact 3: quickstart    configs/config_predict_trader.json "hash"
 #
+# Quickstart "hash" must be the trader_pearl SERVICE CID, never the agent hash.
+# valory/oar-trader:<agent hash> is local-only; it is not on Docker Hub.
+# Each host must run release_service.sh / build_image_offline.sh or load the image.
+#
 # Usage:
 #   ./release_service.sh                                    # release to ALL traders on this machine (see below)
 #   ./release_service.sh --quickstart 28                    # ~/28-trader/quickstart
@@ -152,6 +156,9 @@ if not isinstance(d, dict) or "hash" not in d or not isinstance(d["hash"], str) 
       echo "       Fix the config, or drop it from --quickstart / make it not track the fork." >&2
       exit 1
     fi
+  else
+    # Warn about stored priority mech differences before build or publish.
+    python3 "$REPO/scripts/migrate_trader_config.py" "$qs" --warn-only
   fi
 done
 
@@ -417,6 +424,11 @@ for qs in "${QUICKSTARTS[@]+"${QUICKSTARTS[@]}"}"; do
       continue 2
     fi
   done
+  if [ "$DRY_RUN" -eq 1 ]; then
+    python3 "$REPO/scripts/migrate_trader_config.py" "$qs" --dry-run
+  else
+    python3 "$REPO/scripts/migrate_trader_config.py" "$qs"
+  fi
   old_hash="$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(d["hash"])' "$cfg")"
   old_owner="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("agent_release",{}).get("repository",{}).get("owner",""))' "$cfg")"
   if [ "$old_hash" = "$SVC_CID" ] && [ "$old_owner" = "$FORK_OWNER" ]; then

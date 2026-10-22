@@ -184,7 +184,7 @@ contracts:
 - valory/conditional_tokens:0.1.0:bafybeifqpw3hnllwy3s2ktcsfup3usgaykh5gbhieyf2wb2s4iwemykn2i
 - valory/realitio:0.1.0:bafybeibfy6dqkwsz4xersouotswcug27awkvtsmjlo3r7b476qgeujn3eu
 - valory/realitio_proxy:0.1.0:bafybeibutej7uzucill5ohb3xxu245vo32kg5vchpqondwdfomixx2psba
-- valory/agent_registry:0.1.0:bafybeia6gfxdfpr4apeqd6s4777d7yf6qya2slu3ccqmwiapxe72ckvsiq
+- valory/agent_registry:0.1.0:bafybeih2bdlgomexj44mehdse4frfnvu6reozsht7r4uf4fieej4nxdmra
 - valory/deposit_wallet:0.1.0:bafybeifmw77pznzla6zwq7mfncdzboxmlmm5ffmkvlxlqfg442oypfqjje
 protocols:
 - valory/contract_api:1.0.0:bafybeibld2xb5m7kyluiptkamp4nrt6oeomkohz7a3yppbv2oo7qw2e4la
@@ -196,10 +196,10 @@ skills:
 - valory/abstract_round_abci:0.1.0:bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4
 - valory/market_manager_abci:0.1.0:bafybeicle4v4hbzfitrndz4iezmpzqft7q26eijmzpqpfs7o4ccv7pkfcu
 - valory/transaction_settlement_abci:0.1.0:bafybeidmmhjcgp7chozxovensq3zplkufvaityd2w3zladtssu4ijvqbzm
-- valory/mech_interact_abci:0.1.0:bafybeiebpfrnppflewr2uxzn5yvayv5gwyymhf2jcrsfshd6q4f72yz4dm
+- valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m
 - valory/staking_abci:0.1.0:bafybeiab5fq6b7nd5nmedsxtfd452ufwtnd7gdsm5qi7sqhbey6nl2h3u4
 - valory/agent_performance_summary_abci:0.1.0:bafybeihqelp7sckax5vncee3ezks4fip4i7u54jmxks3wqe3wavbe42sbq
-- valory/chatui_abci:0.1.0:bafybeigxt3qu4lz6hceeqeijlrygk3prui6bq355pg6dvbhfbjhidfkbgq
+- valory/chatui_abci:0.1.0:bafybeielvplz7nin3smkh3jolvdkv7mqy2fn2a2dx2jk5xq3kcottchx2m
 behaviours:
   main:
     args: {}
