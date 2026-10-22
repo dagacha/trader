@@ -17,7 +17,11 @@
 #
 # ------------------------------------------------------------------------------
 
-"""Migrate off-chain settings and Omen strategy defaults during a release."""
+"""Migrate off-chain settings and Omen strategy defaults during a release.
+
+Use only with an Omen quickstart and Omen cached services. The profit threshold
+uses 18-decimal xDAI units. Do not run against Polymarket or mixed-service caches.
+"""
 
 import argparse
 import json
@@ -89,7 +93,7 @@ def edit_json(text, desired, value=None, addition=None):
 
 
 def add_min_expected_profit(strategy, changes):
-    """Add the Omen profit threshold only when it is absent."""
+    """Add the 18-decimal Omen profit threshold only when it is absent."""
     if "min_expected_profit" in strategy:
         return False
     strategy["min_expected_profit"] = MIN_EXPECTED_PROFIT
