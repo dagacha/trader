@@ -144,11 +144,16 @@ def migrate_json(text, priorities, hashes, warnings):
     changes = []
     for env in objects(data):
         if "mech_marketplace_config" in env:
-            mech = env["mech_marketplace_config"]
+            value = env["mech_marketplace_config"]
+            mech = json.loads(value) if isinstance(value, str) else value
             if update_marketplace(
                 mech, env.get("use_mech_marketplace"), changes, warnings
             ):
-                text = edit_json(text, data, V2_MARKETPLACE)
+                if isinstance(value, str):
+                    env["mech_marketplace_config"] = json.dumps(mech)
+                    text = edit_json(text, data, env["mech_marketplace_config"])
+                else:
+                    text = edit_json(text, data, V2_MARKETPLACE)
         for variable in (STRATEGIES, STRATEGY_HASHES):
             if variable not in env:
                 continue
@@ -173,9 +178,10 @@ def migrate_json(text, priorities, hashes, warnings):
             continue
         mech = json.loads(value) if isinstance(value, str) else value
         priorities.append(mech)
-        changed = update_marketplace(
-            mech, env.get("USE_MECH_MARKETPLACE", {}).get("value"), changes, warnings
-        )
+        enabled = env.get("USE_MECH_MARKETPLACE")
+        if isinstance(enabled, dict):
+            enabled = enabled.get("value")
+        changed = update_marketplace(mech, enabled, changes, warnings)
         removed = {key: mech[key] for key in KEYS if key in mech}
         if not removed and not changed:
             continue

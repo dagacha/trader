@@ -664,7 +664,8 @@ ZERO_ADDRESS = "0x" + "0" * 40
 
 @pytest.mark.parametrize("address", [V1_MARKETPLACE, V1_MARKETPLACE.lower()])
 @pytest.mark.parametrize("mapping", [False, True])
-def test_marketplace_json_migration(tmp_path, address, mapping):
+@pytest.mark.parametrize("plain_enabled", [False, True])
+def test_marketplace_json_migration(tmp_path, address, mapping, plain_enabled):
     """Replace the old address in quickstart and every cached config."""
     paths = fixture(tmp_path)
     mech = {
@@ -676,7 +677,7 @@ def test_marketplace_json_migration(tmp_path, address, mapping):
         data = {
             "env_variables": {
                 "MECH_MARKETPLACE_CONFIG": entry(mech if mapping else json.dumps(mech)),
-                "USE_MECH_MARKETPLACE": entry("true"),
+                "USE_MECH_MARKETPLACE": "true" if plain_enabled else entry("true"),
             },
             "keep": "unchanged",
         }
@@ -693,8 +694,12 @@ def test_marketplace_json_migration(tmp_path, address, mapping):
         assert str(path) in output
         data = json.loads(path.read_text())
         actual = data["env_variables"]["MECH_MARKETPLACE_CONFIG"]["value"]
+        assert isinstance(actual, dict if mapping else str)
         actual = json.loads(actual) if isinstance(actual, str) else actual
         assert actual == dict(mech, mech_marketplace_address=V2_MARKETPLACE)
+        assert data["env_variables"]["USE_MECH_MARKETPLACE"] == (
+            "true" if plain_enabled else entry("true")
+        )
         assert data["keep"] == "unchanged"
         assert (
             list(path.parent.glob(path.name + ".bak-*"))[0].read_bytes() == before[path]
@@ -756,7 +761,8 @@ def test_marketplace_deployment_migration(tmp_path, style):
 
 @pytest.mark.parametrize("enabled", ["true", "false", True, False])
 @pytest.mark.parametrize("address", [V2_MARKETPLACE, "0x" + "a" * 40])
-def test_marketplace_warnings_do_not_edit(tmp_path, enabled, address):
+@pytest.mark.parametrize("plain_enabled", [False, True])
+def test_marketplace_warnings_do_not_edit(tmp_path, enabled, address, plain_enabled):
     """Warn for unknown addresses and enabled zero requester staking only."""
     path = tmp_path / "configs/config_predict_trader.json"
     path.parent.mkdir()
@@ -769,7 +775,9 @@ def test_marketplace_warnings_do_not_edit(tmp_path, enabled, address):
             {
                 "env_variables": {
                     "MECH_MARKETPLACE_CONFIG": entry(json.dumps(mech)),
-                    "USE_MECH_MARKETPLACE": entry(enabled),
+                    "USE_MECH_MARKETPLACE": (
+                        enabled if plain_enabled else entry(enabled)
+                    ),
                 }
             }
         )
@@ -812,30 +820,46 @@ def test_requester_warning_is_scoped_to_yaml_environment(tmp_path):
 
 
 @pytest.mark.parametrize("address", [V1_MARKETPLACE, V2_MARKETPLACE])
-def test_direct_operate_marketplace_config(tmp_path, address):
+@pytest.mark.parametrize("mapping", [False, True])
+def test_direct_operate_marketplace_config(tmp_path, address, mapping):
     """Migrate stored user args and warn without changing requester staking."""
-    path = tmp_path / ".operate/services/sc-one/config.json"
-    path.parent.mkdir(parents=True)
+    paths = fixture(tmp_path)
+    path = paths[1]
+    mech = {
+        "mech_marketplace_address": address,
+        "requester_staking_instance_address": ZERO_ADDRESS,
+    }
     path.write_text(
         json.dumps(
             {
                 "user_params": {
                     "use_mech_marketplace": True,
-                    "mech_marketplace_config": {
-                        "mech_marketplace_address": address,
-                        "requester_staking_instance_address": ZERO_ADDRESS,
-                    },
+                    "mech_marketplace_config": mech if mapping else json.dumps(mech),
                 }
             }
         )
     )
     before = path.read_bytes()
-    assert "requester_staking_instance_address" in run(tmp_path, "--warn-only")
-    assert path.read_bytes() == before
+    for args in [("--dry-run",), ("--warn-only",)]:
+        assert "requester_staking_instance_address" in run(tmp_path, *args)
+        assert path.read_bytes() == before
+        assert not list(tmp_path.rglob("*.bak-*"))
     run(tmp_path)
     actual = json.loads(path.read_text())["user_params"]["mech_marketplace_config"]
-    assert actual["mech_marketplace_address"] == V2_MARKETPLACE
-    assert actual["requester_staking_instance_address"] == ZERO_ADDRESS
+    assert isinstance(actual, dict if mapping else str)
+    actual = actual if mapping else json.loads(actual)
+    assert actual == dict(mech, mech_marketplace_address=V2_MARKETPLACE)
+    backups = list(path.parent.glob(path.name + ".bak-*"))
+    assert len(backups) == (1 if address == V1_MARKETPLACE else 0)
+    if backups:
+        assert backups[0].read_bytes() == before
+    later = json.loads(paths[2].read_text())["env_variables"]
+    assert "use_offchain" not in json.loads(later["MECH_MARKETPLACE_CONFIG"]["value"])
+    after = {path: path.read_bytes() for path in paths}
+    backups = list(tmp_path.rglob("*.bak-*"))
+    run(tmp_path)
+    assert all(path.read_bytes() == after[path] for path in paths)
+    assert list(tmp_path.rglob("*.bak-*")) == backups
 
 
 @pytest.mark.parametrize(
