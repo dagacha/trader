@@ -792,3 +792,52 @@ class TestRunVenueMinClamp:
         assert result["bet_amount"] >= 1_000_000  # >= min_bet, not junk-sized
         assert result["bet_amount"] < 2_500_000  # interior, not clamped to cap
         assert result["vote"] == 0  # YES
+
+
+class TestMinExpectedProfit:
+    """Check the profit gate after fees and bet selection."""
+
+    @pytest.mark.parametrize("p_yes, side", [(0.65, "YES"), (0.35, "NO")])
+    def test_below_threshold(self, p_yes: float, side: str) -> None:
+        """Reject a selected bet one wei below the required profit."""
+        kwargs = dict(FPMM_KWARGS, p_yes=p_yes)
+        selected = run(**kwargs)
+        threshold = selected["expected_profit"] + 1
+        result = run(**kwargs, min_expected_profit=threshold)
+        assert selected["bet_amount"] > 0
+        assert result["bet_amount"] == 0
+        assert result["vote"] is None
+        assert result["expected_profit"] == 0
+        assert result["g_improvement"] == 0.0
+        assert result["error"] == []
+        assert result["info"][:-1] == selected["info"]
+        assert result["info"][-1] == (
+            "No trade: [MIN_EXPECTED_PROFIT] expected_profit "
+            f"{selected['expected_profit'] / 10**18:.4f} xDAI < min "
+            f"{threshold / 10**18:.4f} xDAI "
+            f"(bet {selected['bet_amount'] / 10**18:.2f} xDAI on {side})"
+        )
+
+    @pytest.mark.parametrize("offset", [0, -1])
+    def test_at_or_above_threshold(self, offset: int) -> None:
+        """Keep the full result when profit meets the threshold."""
+        selected = run(**FPMM_KWARGS)
+        assert (
+            run(**FPMM_KWARGS, min_expected_profit=selected["expected_profit"] + offset)
+            == selected
+        )
+
+    @pytest.mark.parametrize("kwargs", [FPMM_KWARGS, CLOB_KWARGS])
+    def test_disabled_or_missing(self, kwargs: dict) -> None:
+        """Keep xDAI and six-decimal USDC bets when the gate is off."""
+        selected = run(**kwargs)
+        assert selected["bet_amount"] > 0
+        assert run(**kwargs, min_expected_profit=0) == selected
+
+    def test_omen_default_threshold(self) -> None:
+        """Reject a positive return below 0.10 xDAI after the mech fee."""
+        selected = run(**FPMM_KWARGS)
+        assert 0 < selected["expected_profit"] < 10**17
+        result = run(**FPMM_KWARGS, min_expected_profit=10**17)
+        assert result["bet_amount"] == 0
+        assert "< min 0.1000 xDAI" in result["info"][-1]

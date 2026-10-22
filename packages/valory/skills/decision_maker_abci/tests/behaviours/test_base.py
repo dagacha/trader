@@ -2590,6 +2590,7 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
         "scenario, strategy_body, amount",
         [
             ("kelly_no_edge", None, 0),
+            ("kelly_min_profit", None, 0),
             ("zero_float", "return {'bet_amount': 0.0}", 0.0),
             ("positive", "return {'bet_amount': 100}", 100),
             ("positive_float", "return {'bet_amount': 1.5}", 1.5),
@@ -2649,6 +2650,15 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
         elif scenario == "all_fail":
             executables["fixed_bet"] = ("def run(**kwargs): return {}", "run")
         behaviour.shared_state.strategies_executables = executables
+        if scenario == "kelly_min_profit":
+            behaviour.params.strategies_kwargs["min_expected_profit"] = 10**17
+            if is_running_on_polymarket:
+                behaviour.token_balance = 10**7
+                behaviour.params.strategies_kwargs.update(
+                    fee_per_trade=10**4,
+                    absolute_min_bet_size=10**4,
+                    min_expected_profit=10**6,
+                )
 
         fallback_expected = amount is None and use_fallback_strategy
         expected_amount = amount if amount is not None else 0
@@ -2665,9 +2675,14 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
                 0,
                 PUSD_POLYGON if is_running_on_polymarket else WXDAI,
                 market_type="clob" if is_running_on_polymarket else "fpmm",
-                price_yes=0.6,
-                price_no=0.4,
-                orderbook_asks_yes=[{"price": "0.6", "size": "100"}],
+                price_yes=0.5 if scenario == "kelly_min_profit" else 0.6,
+                price_no=0.5 if scenario == "kelly_min_profit" else 0.4,
+                orderbook_asks_yes=[
+                    {
+                        "price": "0.5" if scenario == "kelly_min_profit" else "0.6",
+                        "size": "100",
+                    }
+                ],
                 orderbook_asks_no=[{"price": "0.4", "size": "100"}],
             )
             next(gen)
@@ -2681,6 +2696,11 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
             if fallback_expected
             else ["kelly_criterion"]
         )
+        if scenario == "kelly_min_profit":
+            assert any(
+                "[MIN_EXPECTED_PROFIT]" in str(call)
+                for call in behaviour.context.logger.info.call_args_list
+            )
         if amount == 0:
             behaviour.context.logger.info.assert_any_call(
                 "[NO_TRADE] kelly_criterion returned 0; not falling back"
