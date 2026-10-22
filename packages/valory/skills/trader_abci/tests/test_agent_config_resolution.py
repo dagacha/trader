@@ -298,3 +298,21 @@ def test_polymarket_default_min_expected_profit_is_unset() -> None:
         "strategies_kwargs"
     ]
     assert "min_expected_profit" not in kwargs
+
+
+@pytest.mark.parametrize("service_name", ["trader_pearl", "polymarket_trader"])
+def test_service_exports_irrelevant_tools(service_name: str) -> None:
+    """The service must pass the denylist into the fetched agent config."""
+    from autonomy.configurations.loader import load_service_config
+
+    denylist = ["factual_research", "propose-question"]
+    with mock.patch.dict(
+        "os.environ", {"IRRELEVANT_TOOLS": json.dumps(denylist)}, clear=True
+    ):
+        service = load_service_config(_VALORY_DIR / "services" / service_name)
+        exported = {}
+        for override in service.overrides:
+            exported.update(service.process_component_overrides(0, override))
+    exported = {key: str(value) for key, value in exported.items() if value is not None}
+    args = _override(_resolve(exported), "trader_abci")["models"]["params"]["args"]
+    assert args["irrelevant_tools"] == denylist

@@ -45,6 +45,17 @@ V1_MARKETPLACE = "0x4554fE75c1f5576c1d7F765B2A036c199Adae329"
 V2_MARKETPLACE = "0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB"
 ZERO_ADDRESS = "0x" + "0" * 40
 DECODER = json.JSONDecoder()
+# These controls are operator settings, not service-specific runtime addresses.
+CONTROL_ENV = (
+    "IRRELEVANT_TOOLS",
+    "MAX_TRADES",
+    "MAX_MECH_REQUESTS_PER_CYCLE",
+    "DEFAULT_ACTIVITY_GOAL",
+    "ACTIVITY_TARGET",
+    "STOP_TRADING_IF_STAKING_KPI_MET",
+    "DISABLE_TRADING",
+)
+PARAM_PREFIX = "SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_"
 
 
 def scalar(value):
@@ -367,6 +378,144 @@ def migrate_env(text, priorities, hashes, warnings):
     return "".join(lines), changes
 
 
+def sync_cached_json(text, desired):
+    """Sync explicit quickstart controls without changing cached runtime values."""
+    data = json.loads(text)
+    changes = []
+    for obj in list(objects(data)):
+        env = obj.get("env_variables")
+        if isinstance(env, dict):
+            for key, source in desired.items():
+                value = source["value"]
+                if key not in env:
+                    env[key] = dict(source)
+                    text = edit_json(text, data, addition=(key, env[key]))
+                    changes.append(f"sync {key} from quickstart")
+                elif isinstance(env[key], dict):
+                    if env[key].get("value") != value:
+                        env[key]["value"] = value
+                        text = edit_json(text, data, value)
+                        changes.append(f"sync {key} from quickstart")
+                elif env[key] != value:
+                    env[key] = value
+                    text = edit_json(text, data, value)
+                    changes.append(f"sync {key} from quickstart")
+        for key, source in desired.items():
+            field = key.lower()
+            if field not in obj:
+                continue
+            value = source["value"]
+            if not isinstance(obj[field], str):
+                value = json.loads(scalar(value))
+            if obj[field] != value:
+                obj[field] = value
+                text = edit_json(text, data, value)
+                changes.append(f"sync {field} from quickstart")
+    return text, changes
+
+
+def sync_cached_env(text, desired, env_file=False):
+    """Sync bare controls and existing component-path keys in agent env blocks."""
+    values = {key: scalar(source["value"]) for key, source in desired.items()}
+    lines = text.splitlines(keepends=True)
+    blocks = [(0, len(lines), None)] if env_file else []
+    if not env_file:
+        for index, line in enumerate(lines):
+            match = re.match(r"(\s*)(?:environment|env):\s*$", line)
+            if not match:
+                continue
+            level = len(match[1])
+            end = index + 1
+            while end < len(lines):
+                entry = lines[end]
+                depth = len(entry) - len(entry.lstrip())
+                if entry.strip() and (
+                    depth < level
+                    or (depth == level and not entry.lstrip().startswith("-"))
+                ):
+                    break
+                end += 1
+            block = "".join(lines[index + 1 : end])
+            if PARAM_PREFIX in block or any(
+                re.search(r"\b" + key + r"(?:=|:|\s*$)", block, re.M) for key in values
+            ):
+                blocks.append((index + 1, end, level))
+    changes = []
+    for start, end, level in reversed(blocks):
+        present = set()
+        style = "env" if env_file else "mapping"
+        indent = ""
+        for index in range(start, end):
+            line = lines[index]
+            pair = re.match(r"(\s*)- name: ([A-Z_0-9]+)\s*$", line)
+            match = pair or re.match(
+                r"(\s*(?:-\s*)?)([A-Z_0-9]+)(=|:\s*)(.*?)(\r?\n)?$", line
+            )
+            if not match:
+                continue
+            key = match[2]
+            if pair:
+                style = "kubernetes"
+                indent = pair[1]
+            else:
+                style = "env" if env_file else "list" if "-" in match[1] else "mapping"
+                indent = match[1]
+            bare = key.removeprefix(PARAM_PREFIX)
+            if bare not in values:
+                continue
+            present.add(key)
+            value = values[bare]
+            if pair:
+                target = index + 1
+                scalar_match = re.match(r"(\s*value:\s*)(.*?)(\r?\n)?$", lines[target])
+                if not scalar_match:
+                    raise ValueError(f"Missing value for {key}")
+                replacement = (
+                    scalar_match[1] + json.dumps(value) + (scalar_match[3] or "\n")
+                )
+                old_value = scalar_match[2]
+            else:
+                target = index
+                replacement = (
+                    match[1]
+                    + key
+                    + match[3]
+                    + (value if match[3] == "=" else json.dumps(value))
+                    + (match[5] or "\n")
+                )
+                old_value = match[4]
+            # Preserve existing formatting when the scalar already matches.
+            try:
+                existing = json.loads(old_value)
+            except ValueError:
+                existing = old_value.strip("'\"")
+            if old_value != value and scalar(existing) != value:
+                lines[target] = replacement
+                changes.append(f"sync {key} from quickstart")
+        additions = []
+        for key, value in values.items():
+            if key in present:
+                continue
+            if style == "kubernetes":
+                additions.append(
+                    indent
+                    + "- name: "
+                    + key
+                    + "\n"
+                    + indent
+                    + "  value: "
+                    + json.dumps(value)
+                    + "\n"
+                )
+            elif style in ("env", "list"):
+                additions.append(indent + key + "=" + value + "\n")
+            else:
+                additions.append(indent + key + ": " + json.dumps(value) + "\n")
+            changes.append(f"add {key} from quickstart")
+        lines[end:end] = additions
+    return "".join(lines), changes
+
+
 def migrate(quickstart, dry_run=False, warn_only=False):
     """Migrate a selected quickstart and every cached operate service."""
     packages = json.loads(
@@ -385,6 +534,7 @@ def migrate(quickstart, dry_run=False, warn_only=False):
         paths.extend(sorted(service.rglob("agent_0.env")))
         paths.extend(sorted(service.rglob("build.yaml")))
     stored = []
+    desired = {}
     for path in paths:
         if not path.is_file():
             print(f">> {path}: missing; skipping")
@@ -396,6 +546,22 @@ def migrate(quickstart, dry_run=False, warn_only=False):
         updated, changes = (migrate_json if path.suffix == ".json" else migrate_env)(
             text, priorities, hashes, warnings
         )
+        if path == paths[0]:
+            env = json.loads(updated).get("env_variables", {})
+            desired = {
+                key: entry
+                for key, entry in env.items()
+                if key in CONTROL_ENV
+                and isinstance(entry, dict)
+                and entry.get("value") not in (None, "")
+            }
+        elif desired:
+            updated, synced = (
+                sync_cached_json(updated, desired)
+                if path.suffix == ".json"
+                else sync_cached_env(updated, desired, path.name == "agent_0.env")
+            )
+            changes.extend(synced)
         for warning in warnings:
             print(f"WARNING: {path}: {warning}")
         for mech in priorities:

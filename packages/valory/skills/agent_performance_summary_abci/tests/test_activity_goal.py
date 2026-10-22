@@ -350,3 +350,18 @@ class TestUpdateActivityGoal:
         """Without an epoch on record there is nothing to retarget."""
         assert retarget_activity_goal(tmp_path, 3, PERIOD_START) is None
         assert not (tmp_path / AGENT_PERFORMANCE_SUMMARY_FILE).exists()
+
+
+@pytest.mark.parametrize(
+    "state", [True, -1, "2", [], {}, {"count": False}, {"count": -1}, {"count": 2}]
+)
+def test_invalid_durable_counter_keeps_ledger_progress(
+    tmp_path: Path, state: Any
+) -> None:
+    """Invalid counter values cannot complete the activity goal."""
+    from packages.valory.skills.agent_performance_summary_abci.activity_goal import (
+        activity_goal_progress,
+    )
+
+    (tmp_path / "successful_trade_count.txt").write_text(json.dumps(state))
+    assert activity_goal_progress(tmp_path, PERIOD_START, 1) == 1

@@ -417,6 +417,10 @@ class DecisionMakerParams(
         )
         agent_registry_address = cast(str, agent_registry_address)
 
+        self.irrelevant_tools: FrozenSet[str] = frozenset(
+            tool.lower() for tool in self._ensure("irrelevant_tools", kwargs, List[str])
+        )
+
         # V1-only operator allowlist applied in `_get_mech_tools`. On the V2
         # marketplace path the suitability classifier in
         # `behaviours/tool_selection.py::_fetch_mech_manifests` replaces it

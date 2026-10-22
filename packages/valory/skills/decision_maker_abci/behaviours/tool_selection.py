@@ -56,7 +56,7 @@ class ToolSelectionBehaviour(StorageManagerBehaviour):
 
         :return: the candidate keys and, when they are empty, the pin to blame.
         """
-        candidate = set(self.mech_tools)
+        candidate = self.eligible_tools(set(self.mech_tools))
         cause: Optional[str] = None
 
         if self._tool_metadata:
@@ -217,7 +217,7 @@ class ToolSelectionBehaviour(StorageManagerBehaviour):
                     "skipping this round so the user can adjust the pin."
                 )
                 return None
-            selected_tool = self.policy.select_tool(randomness)
+            return None
         elif candidate_tools != set(self.policy.accuracy_store):
             restricted_policy = copy.deepcopy(self.policy)
             restricted_policy.accuracy_store = {

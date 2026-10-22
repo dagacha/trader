@@ -23,6 +23,8 @@ import json
 from dataclasses import fields
 from unittest.mock import MagicMock, PropertyMock, patch
 
+import pytest
+
 from packages.valory.skills.decision_maker_abci.behaviours.mech_only import (
     MechOnlyReceiveBehaviour,
     MechOnlySelectionBehaviour,
@@ -59,6 +61,7 @@ def _make_behaviour(behaviour_cls):  # type: ignore[no-untyped-def]
     measure_cm.local.return_value.__enter__.return_value = None
     measure_cm.local.return_value.__exit__.return_value = False
     context.benchmark_tool.measure.return_value = measure_cm
+    context.params.irrelevant_tools = frozenset()
     behaviour.__dict__["_context"] = context
     return behaviour
 
@@ -162,7 +165,7 @@ class TestMechOnlyReceiveBehaviour:
         with patch.object(
             type(behaviour), "synchronized_data", new_callable=PropertyMock
         ) as mock_sd:
-            sd = MagicMock()
+            sd = MagicMock(is_activity_target_met=False)
             sd.mech_only_queue = ["market_2", "market_3"]
             mock_sd.return_value = sd
             payload = _run_async_act(behaviour)
@@ -174,7 +177,7 @@ class TestMechOnlyReceiveBehaviour:
         with patch.object(
             type(behaviour), "synchronized_data", new_callable=PropertyMock
         ) as mock_sd:
-            sd = MagicMock()
+            sd = MagicMock(is_activity_target_met=False)
             sd.mech_only_queue = []
             mock_sd.return_value = sd
             payload = _run_async_act(behaviour)
@@ -288,7 +291,7 @@ class TestMechOnlySelectionBehaviourAsyncAct:
                 type(behaviour), "synced_timestamp", new_callable=PropertyMock
             ) as mock_ts,
         ):
-            sd = MagicMock()
+            sd = MagicMock(is_activity_target_met=False)
             sd.mech_only_queue = []
             sd.has_tool_selection_run = True
             sd.mech_tool = "tool1"
@@ -328,7 +331,7 @@ class TestMechOnlySelectionBehaviourAsyncAct:
                 type(behaviour), "synced_timestamp", new_callable=PropertyMock
             ) as mock_ts,
         ):
-            sd = MagicMock()
+            sd = MagicMock(is_activity_target_met=False)
             sd.mech_only_queue = []
             sd.has_tool_selection_run = True
             sd.mech_tool = "tool1"
@@ -362,7 +365,7 @@ class TestMechOnlySelectionBehaviourAsyncAct:
                 type(behaviour), "synced_timestamp", new_callable=PropertyMock
             ) as mock_ts,
         ):
-            sd = MagicMock()
+            sd = MagicMock(is_activity_target_met=False)
             sd.mech_only_queue = ["m_x"]
             sd.has_tool_selection_run = True
             sd.mech_tool = "tool1"
@@ -397,7 +400,7 @@ class TestMechOnlySelectionBehaviourAsyncAct:
                 type(behaviour), "synced_timestamp", new_callable=PropertyMock
             ) as mock_ts,
         ):
-            sd = MagicMock()
+            sd = MagicMock(is_activity_target_met=False)
             sd.mech_only_queue = []
             sd.has_tool_selection_run = True
             sd.mech_tool = "tool1"
@@ -429,7 +432,7 @@ class TestMechOnlySelectionBehaviourAsyncAct:
                 type(behaviour), "synced_timestamp", new_callable=PropertyMock
             ) as mock_ts,
         ):
-            sd = MagicMock()
+            sd = MagicMock(is_activity_target_met=False)
             sd.mech_only_queue = ["m_gone", "m_alive"]
             sd.has_tool_selection_run = True
             sd.mech_tool = "tool1"
@@ -480,7 +483,7 @@ class TestMechOnlySelectionBehaviourAsyncAct:
                 type(behaviour), "synced_timestamp", new_callable=PropertyMock
             ) as mock_ts,
         ):
-            sd = MagicMock()
+            sd = MagicMock(is_activity_target_met=False)
             sd.mech_only_queue = ["m_blacklisted", "m_alive"]
             sd.has_tool_selection_run = True
             sd.mech_tool = "tool1"
@@ -540,7 +543,7 @@ class TestMechOnlySelectionToolFallback:
         policy = MagicMock()
         policy.weighted_accuracy = {"toolA": 0.1, "toolB": 0.9}
         policy.best_tool = "toolB"
-        sd = MagicMock()
+        sd = MagicMock(is_activity_target_met=False)
         sd.mech_only_queue = ["m_a"]
         sd.has_tool_selection_run = False
         sd.is_policy_set = True
@@ -560,7 +563,7 @@ class TestMechOnlySelectionToolFallback:
         policy = MagicMock()
         policy.weighted_accuracy = {"gone": 0.9}
         policy.best_tool = "gone"
-        sd = MagicMock()
+        sd = MagicMock(is_activity_target_met=False)
         sd.mech_only_queue = ["m_a"]
         sd.has_tool_selection_run = False
         sd.is_policy_set = True
@@ -577,7 +580,7 @@ class TestMechOnlySelectionToolFallback:
         """When the policy has no weighted accuracy yet, pick a deterministic tool."""
         policy = MagicMock()
         policy.weighted_accuracy = {}
-        sd = MagicMock()
+        sd = MagicMock(is_activity_target_met=False)
         sd.mech_only_queue = ["m_a"]
         sd.has_tool_selection_run = False
         sd.is_policy_set = True
@@ -591,7 +594,7 @@ class TestMechOnlySelectionToolFallback:
 
     def test_no_policy_drops_batch(self) -> None:
         """With no tool_selection and no policy, the batch is dropped (no crash)."""
-        sd = MagicMock()
+        sd = MagicMock(is_activity_target_met=False)
         sd.mech_only_queue = ["m_a"]
         sd.has_tool_selection_run = False
         sd.is_policy_set = False
@@ -602,7 +605,7 @@ class TestMechOnlySelectionToolFallback:
 
     def test_empty_available_tools_drops_batch(self) -> None:
         """With a policy set but no available tools, the batch is dropped."""
-        sd = MagicMock()
+        sd = MagicMock(is_activity_target_met=False)
         sd.mech_only_queue = ["m_a"]
         sd.has_tool_selection_run = False
         sd.is_policy_set = True
@@ -641,7 +644,7 @@ class TestMechOnlySelectionToolFallback:
         to redeem") it is absent, so selection must fall back to the tools
         actually served by the fetched mechs instead of bailing out.
         """
-        sd = MagicMock()
+        sd = MagicMock(is_activity_target_met=False)
         sd.mech_only_queue = ["m_a"]
         sd.has_tool_selection_run = False
         sd.is_policy_set = False
@@ -658,7 +661,7 @@ class TestMechOnlySelectionToolFallback:
 
     def test_prefers_served_tool_over_unserved_curated(self) -> None:
         """A curated tool no mech serves must not win over a served one."""
-        sd = MagicMock()
+        sd = MagicMock(is_activity_target_met=False)
         sd.mech_only_queue = ["m_a"]
         sd.has_tool_selection_run = False
         sd.is_policy_set = False
@@ -670,3 +673,85 @@ class TestMechOnlySelectionToolFallback:
         requests = json.loads(payload.mech_requests)
         assert requests[0]["tool"] == "superforcaster"
         assert payload.mech_tool == "superforcaster"
+
+
+def test_mech_only_never_selects_irrelevant_tool() -> None:
+    """A previous tool selection and all fallback sets must obey the denylist."""
+    behaviour = _make_behaviour(MechOnlySelectionBehaviour)
+    behaviour.context.params.irrelevant_tools = frozenset({"factual_research"})
+    with patch.object(
+        type(behaviour), "synchronized_data", new_callable=PropertyMock
+    ) as sync:
+        sd = sync.return_value
+        sd.has_tool_selection_run = True
+        sd.mech_tool = "factual_research"
+        sd.available_mech_tools = ["valory::factual_research", "valory::prediction"]
+        sd.mech_tools = ["valory::factual_research", "valory::prediction"]
+        sd.is_policy_set = False
+        assert behaviour._select_mech_tool() == "prediction"
+        sd.available_mech_tools = ["valory::factual_research"]
+        sd.mech_tools = ["valory::factual_research"]
+        assert behaviour._select_mech_tool() is None
+
+
+@pytest.mark.parametrize("target_met,target", [(True, 8), (False, 0)])
+def test_mech_only_stops_paid_requests_after_activity_target(
+    target_met: bool, target: int
+) -> None:
+    """The capped flow must stop even if the stop-trading switch is disabled."""
+    behaviour = _make_behaviour(MechOnlySelectionBehaviour)
+    behaviour.read_bets = MagicMock()
+    behaviour.bets = []
+    behaviour.context.params.max_mech_requests_per_cycle = 10
+    behaviour.context.params.multisend_batch_size = 1
+    with (
+        patch.object(
+            type(behaviour),
+            "synced_timestamp",
+            new_callable=PropertyMock,
+            return_value=1000,
+        ),
+        patch.object(
+            type(behaviour), "synchronized_data", new_callable=PropertyMock
+        ) as sync,
+    ):
+        sync.return_value.is_activity_target_met = target_met
+        sync.return_value.activity_target = target
+        sync.return_value.mech_only_queue = []
+        sync.return_value.has_tool_selection_run = True
+        sync.return_value.mech_tool = "prediction"
+        payload = _run_async_act(behaviour)
+    assert payload.mech_requests is None
+    assert json.loads(payload.mech_only_queue) == []
+    behaviour.read_bets.assert_not_called()
+
+
+def test_mech_only_uses_served_tool_when_policy_is_unreadable() -> None:
+    """An unreadable policy must still obey the denylist on fallback."""
+    behaviour = _make_behaviour(MechOnlySelectionBehaviour)
+    with patch.object(
+        type(behaviour), "synchronized_data", new_callable=PropertyMock
+    ) as sync:
+        sd = sync.return_value
+        sd.has_tool_selection_run = False
+        sd.available_mech_tools = []
+        sd.mech_tools = ["prediction"]
+        sd.is_policy_set = True
+        type(sd).policy = PropertyMock(side_effect=ValueError("unreadable"))
+        assert behaviour._select_mech_tool() == "prediction"
+
+
+def test_mech_only_uses_served_tool_when_policy_has_no_best() -> None:
+    """A policy with no best tool must use a served fallback."""
+    behaviour = _make_behaviour(MechOnlySelectionBehaviour)
+    with patch.object(
+        type(behaviour), "synchronized_data", new_callable=PropertyMock
+    ) as sync:
+        sd = sync.return_value
+        sd.has_tool_selection_run = False
+        sd.available_mech_tools = []
+        sd.mech_tools = ["prediction"]
+        sd.is_policy_set = True
+        sd.policy.best_tool = None
+        sd.policy.weighted_accuracy = {"prediction": 1}
+        assert behaviour._select_mech_tool() == "prediction"

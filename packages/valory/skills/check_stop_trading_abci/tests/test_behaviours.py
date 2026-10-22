@@ -853,3 +853,30 @@ class TestAsyncAct:
         assert payload.is_activity_target_met is False
         assert payload.activity_target == 8
         assert payload.activity_completed == 9
+
+
+@pytest.mark.parametrize("state", ["2", '{"count": 2, "placement_keys": []}'])
+def test_durable_cap_stops_with_missing_ledger(tmp_path: Path, state: str) -> None:
+    """The durable cap must stop paid requests when the ledger is absent."""
+    (tmp_path / "successful_trade_count.txt").write_text(state)
+    result = TestActivityGoalGate._run(tmp_path, completed=8, max_trades=2)
+    assert result.stop
+    assert TestActivityGoalGate._block(tmp_path)["progress"] == 2
+
+
+def test_previous_period_counter_does_not_stop_new_period(tmp_path: Path) -> None:
+    """A counter from an old checkpoint must not stop a new activity period."""
+    (tmp_path / "successful_trade_count.txt").write_text(
+        json.dumps({"count": 2, "placement_keys": [], "period_start": PERIOD_START - 1})
+    )
+    result = TestActivityGoalGate._run(tmp_path, completed=8, max_trades=2)
+    assert not result.stop
+    assert TestActivityGoalGate._block(tmp_path)["progress"] == 0
+
+
+def test_durable_cap_stops_with_unreadable_ledger(tmp_path: Path) -> None:
+    """An invalid ledger must not cause unbounded paid requests at the cap."""
+    (tmp_path / "successful_trade_count.txt").write_text("2")
+    (tmp_path / ACTIVITY_GOAL_TRADES_FILE).write_text("invalid")
+    result = TestActivityGoalGate._run(tmp_path, completed=8, max_trades=2)
+    assert result.stop

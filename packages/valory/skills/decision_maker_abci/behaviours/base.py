@@ -49,8 +49,11 @@ from packages.valory.protocols.ipfs import IpfsMessage
 from packages.valory.skills.abstract_round_abci.base import BaseTxPayload
 from packages.valory.skills.abstract_round_abci.behaviour_utils import TimeoutException
 from packages.valory.skills.agent_performance_summary_abci.activity_goal import (
+    TRADE_COUNT_FILENAME,
+    read_successful_trade_count_state,
     record_trade,
 )
+from packages.valory.skills.chatui_abci.tool_keys import split_tool_key
 from packages.valory.skills.decision_maker_abci.io_.loader import ComponentPackageLoader
 from packages.valory.skills.decision_maker_abci.models import (
     AccuracyInfoFields,
@@ -99,11 +102,6 @@ NEW_LINE = "\n"
 QUOTE = '"'
 TWO_QUOTES = '""'
 INIT_LIQUIDITY_INFO = LiquidityInfo()
-# The successful-trade counter is persisted to a file in the agent data dir
-# (like the staking checkpoint) so the MAX_TRADES cap survives agent restarts.
-# The ABCI synchronized-data DB is rebuilt from scratch on restart, so a
-# counter kept only there resets to 0 and silently re-arms the cap.
-TRADE_COUNT_FILENAME = "successful_trade_count.txt"
 
 
 class TradingOperation(str, Enum):
@@ -220,25 +218,9 @@ class DecisionMakerBaseBehaviour(BetsManagerBehaviour, ABC):
 
         :return: persisted count and placement keys, or ``(None, set())``.
         """
-        try:
-            raw_state = self.trade_count_filepath.read_text()
-            try:
-                return int(raw_state), set()
-            except ValueError:
-                state = json.loads(raw_state)
-
-            count = state["count"]
-            placement_keys = state["placement_keys"]
-            if (
-                isinstance(count, bool)
-                or not isinstance(count, int)
-                or not isinstance(placement_keys, list)
-                or not all(isinstance(key, str) for key in placement_keys)
-            ):
-                return None, set()
-            return count, set(placement_keys)
-        except (FileNotFoundError, KeyError, TypeError, ValueError, OSError):
-            return None, set()
+        return read_successful_trade_count_state(
+            self.params.store_path, self.synchronized_data.previous_checkpoint
+        )
 
     def store_trade_count_state(self, count: int, placement_keys: Set[str]) -> bool:
         """Atomically persist count and placement keys in one record.
@@ -251,6 +233,9 @@ class DecisionMakerBaseBehaviour(BetsManagerBehaviour, ABC):
             "count": count,
             "placement_keys": sorted(placement_keys),
         }
+        period_start = self.synchronized_data.previous_checkpoint
+        if isinstance(period_start, int) and not isinstance(period_start, bool):
+            state["period_start"] = period_start
         try:
             self.trade_count_temp_filepath.write_text(json.dumps(state, sort_keys=True))
             os.replace(self.trade_count_temp_filepath, self.trade_count_filepath)
@@ -884,13 +869,32 @@ class DecisionMakerBaseBehaviour(BetsManagerBehaviour, ABC):
         setattr(self, placeholder, data)
         return True
 
+    @property
+    def v1_mech_address(self) -> str:
+        """Get the mech address used for V1 requests and metadata lookups."""
+        if self.params.use_mech_marketplace:
+            return self.params.mech_marketplace_config.priority_mech_address or ""
+        return self.params.mech_contract_address
+
+    def eligible_tools(self, tools: Set[str]) -> Set[str]:
+        """Exclude configured tool names from bare names or policy keys.
+
+        :param tools: the candidate tool names or policy keys.
+        :return: candidates that are not in the denylist.
+        """
+        return {
+            tool
+            for tool in tools
+            if split_tool_key(tool)[1].lower() not in self.params.irrelevant_tools
+        }
+
     def _mech_contract_interact(
         self, contract_callable: str, data_key: str, placeholder: str, **kwargs: Any
     ) -> WaitableConditionType:
         """Interact with the mech contract."""
         status = yield from self.contract_interact(
             performative=ContractApiMessage.Performative.GET_RAW_TRANSACTION,  # type: ignore
-            contract_address=self.params.mech_contract_address,
+            contract_address=self.v1_mech_address,
             contract_public_id=Mech.contract_id,
             contract_callable=contract_callable,
             data_key=data_key,

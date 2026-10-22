@@ -135,13 +135,6 @@ class StorageManagerBehaviour(DecisionMakerBaseBehaviour, ABC):
         """Get the mech agent api specs."""
         return self.context.agent_tools
 
-    @property
-    def v1_mech_address(self) -> str:
-        """Get the address of the single mech the V1 flows request from."""
-        if self.params.use_mech_marketplace:
-            return self.params.mech_marketplace_config.priority_mech_address or ""
-        return self.params.mech_contract_address
-
     def setup(self) -> None:
         """Set the behaviour up."""
         try:
@@ -211,7 +204,7 @@ class StorageManagerBehaviour(DecisionMakerBaseBehaviour, ABC):
         """Check the validity of the obtained mech hash."""
         if self.mech_hash.endswith(NO_METADATA_HASH):
             self.context.logger.error(
-                f"No metadata hash was found for the mech with address {self.params.mech_contract_address} "
+                f"No metadata hash was found for the mech with address {self.v1_mech_address} "
                 f"and id {self.mech_id}!"
             )
 

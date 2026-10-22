@@ -8,7 +8,7 @@ license: Apache-2.0
 fingerprint:
   README.md: bafybeichoh5tnk4qctaazcjcrxvpwc5yasodleqoeapnfapwrrdh3tm5gu
 fingerprint_ignore_patterns: []
-agent: valory/trader:0.1.0:bafybeiaowsyv4bhnxnydmz24vts6ikorzl5b3nwtnit3fprzeolltvt6zi
+agent: valory/trader:0.1.0:bafybeiawuix6m3a3r36amzdrl6v4xocrmxpxauzpflehkd6hlmwg2k6izy
 number_of_agents: 1
 deployment:
   agent:
@@ -93,6 +93,7 @@ models:
       mech_contract_address: ${MECH_CONTRACT_ADDRESS:str:0x45F25db135E83d7a010b05FFc1202F8473E3ae7D}
       mech_chain_id: ${MECH_CHAIN_ID:str:polygon}
       mech_wrapped_native_token_address: ${MECH_WRAPPED_NATIVE_TOKEN_ADDRESS:str:0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270}
+      irrelevant_tools: ${IRRELEVANT_TOOLS:list:[]}
       max_trades: ${MAX_TRADES:int:0}
       max_mech_requests_per_cycle: ${MAX_MECH_REQUESTS_PER_CYCLE:int:10}
       sample_bets_closing_days: ${SAMPLE_BETS_CLOSING_DAYS:int:10}
