@@ -455,6 +455,39 @@ def test_empty_strategy_entry(tmp_path, value):
         )
 
 
+@pytest.mark.parametrize("raw", ["", "''", '""', "{}"])
+@pytest.mark.parametrize("style", ["env", "mapping", "list", "kubernetes"])
+def test_empty_strategy_deployment_entry(tmp_path, raw, style):
+    """Keep unset strategy scalars and continue to the next cache file."""
+    paths = fixture(tmp_path)
+    service = paths[1].parent
+    path = service / ("agent_0.env" if style == "env" else "build.yaml")
+    prefix = {
+        "env": "STRATEGIES_KWARGS=",
+        "mapping": "    STRATEGIES_KWARGS: ",
+        "list": "    - STRATEGIES_KWARGS=",
+        "kubernetes": "    - name: STRATEGIES_KWARGS\n      value: ",
+    }[style]
+    original = prefix + raw + "\n"
+    path.write_text(original)
+    run(tmp_path, "--dry-run")
+    run(tmp_path, "--warn-only")
+    assert path.read_text() == original
+    assert not list(path.parent.glob(path.name + ".bak-*"))
+    run(tmp_path)
+    result = path.read_text()
+    if raw == "{}":
+        assert "min_expected_profit" in result
+        assert list(path.parent.glob(path.name + ".bak-*"))[0].read_text() == original
+    else:
+        assert result == original
+        assert not list(path.parent.glob(path.name + ".bak-*"))
+    later_env = json.loads(paths[2].read_text())["env_variables"]
+    assert later_env["OFFCHAIN_DEPOSIT_TARGET_CALLS"]["value"] == "7"
+    run(tmp_path)
+    assert path.read_text() == result
+
+
 def test_strategy_and_offchain_migrate_together(tmp_path):
     """Apply both migrations with one backup for each file."""
     paths = fixture(tmp_path)

@@ -212,7 +212,7 @@ def migrate_env(text, priorities, hashes):
             prefix, separator, raw, newline = match.groups()
         else:
             prefix, _, separator, raw, newline = match.groups()
-        if variable == STRATEGY_HASHES and raw.strip() in ("", "''", '""'):
+        if variable in (STRATEGIES, STRATEGY_HASHES) and raw.strip() in ("", "''", '""'):
             continue
         scalar_end = value_index
         while True:
