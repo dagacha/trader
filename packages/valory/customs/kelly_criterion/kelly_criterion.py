@@ -44,6 +44,7 @@ OPTIONAL_FIELDS = frozenset(
         "max_edge",
         "min_oracle_prob",
         "fee_per_trade",
+        "min_expected_profit",
         "grid_points",
         "token_decimals",
         "tokens_yes",
@@ -275,6 +276,7 @@ def run(**kwargs: Any) -> Dict[str, Any]:  # pylint: disable=too-many-locals
     max_bet_wei: int = kwargs.get("max_bet", default_max_bet)
     min_bet_wei: int = kwargs.get("min_bet", DEFAULT_MIN_BET)
     fee_per_trade_wei: int = kwargs.get("fee_per_trade", default_fee)
+    min_expected_profit_wei: int = kwargs.get("min_expected_profit", 0)
     n_bets: int = kwargs.get("n_bets", DEFAULT_N_BETS)
     min_edge: float = kwargs.get("min_edge", DEFAULT_MIN_EDGE)
     max_edge: float = kwargs.get("max_edge", DEFAULT_MAX_EDGE)
@@ -494,6 +496,15 @@ def run(**kwargs: Any) -> Dict[str, Any]:  # pylint: disable=too-many-locals
         f"expected_profit={expected_profit:.6f} {token_name}, "
         f"G_improvement={best_result['g_improvement']:.6f}"
     )
+
+    if min_expected_profit_wei > 0 and expected_profit_wei < min_expected_profit_wei:
+        return _no_trade(
+            info,
+            error,
+            f"[MIN_EXPECTED_PROFIT] expected_profit {expected_profit:.4f} {token_name} "
+            f"< min {min_expected_profit_wei / scale:.4f} {token_name} "
+            f"(bet {best_result['spend']:.2f} {token_name} on {best_result['label'].upper()})",
+        )
 
     return {
         "bet_amount": bet_amount_wei,

@@ -17,7 +17,11 @@
 #
 # ------------------------------------------------------------------------------
 
-"""Move old off-chain settings to top-level env entries during a release."""
+"""Migrate off-chain settings and Omen strategy defaults during a release.
+
+Use only with an Omen quickstart and Omen cached services. The profit threshold
+uses 18-decimal xDAI units. Do not run against Polymarket or mixed-service caches.
+"""
 
 import argparse
 import json
@@ -34,6 +38,9 @@ KEYS = {
     ),
 }
 MARKETPLACE = "MECH_MARKETPLACE_CONFIG"
+STRATEGIES = "STRATEGIES_KWARGS"
+STRATEGY_HASHES = "FILE_HASH_TO_STRATEGIES"
+MIN_EXPECTED_PROFIT = 60000000000000000
 DECODER = json.JSONDecoder()
 
 
@@ -85,11 +92,48 @@ def edit_json(text, desired, value=None, addition=None):
     raise ValueError("Could not locate a unique JSON value to edit")
 
 
-def migrate_json(text, priorities):
-    """Change only the marketplace value and missing env entries."""
+def add_min_expected_profit(strategy, changes):
+    """Add the 18-decimal Omen profit threshold only when it is absent."""
+    if "min_expected_profit" in strategy:
+        return False
+    strategy["min_expected_profit"] = MIN_EXPECTED_PROFIT
+    changes.append(f"add {STRATEGIES}.min_expected_profit={MIN_EXPECTED_PROFIT}")
+    return True
+
+
+def update_strategy_hashes(mapping, changes, hashes):
+    """Replace hash keys only for known single-strategy entries."""
+    changed = False
+    for old, strategies in list(mapping.items()):
+        for name, current in hashes.items():
+            if strategies == [name] and old != current:
+                mapping[current] = mapping.pop(old)
+                changes.append(f"{STRATEGY_HASHES}: {old} -> {current}")
+                changed = True
+    return changed
+
+
+def migrate_json(text, priorities, hashes):
+    """Change marketplace settings and add missing strategy defaults."""
     data = json.loads(text)
     changes = []
     for env in objects(data):
+        for variable in (STRATEGIES, STRATEGY_HASHES):
+            if variable not in env:
+                continue
+            strategy_entry = env[variable]
+            value = strategy_entry.get("value")
+            if value is not None and value != "":
+                strategy = json.loads(value) if isinstance(value, str) else value
+                changed = (
+                    add_min_expected_profit(strategy, changes)
+                    if variable == STRATEGIES
+                    else update_strategy_hashes(strategy, changes, hashes)
+                )
+                if changed:
+                    value = json.dumps(strategy) if isinstance(value, str) else strategy
+                    strategy_entry["value"] = value
+                    text = edit_json(text, data, value)
         if MARKETPLACE not in env:
             continue
         entry = env[MARKETPLACE]
@@ -140,26 +184,44 @@ def decode_env(raw):
     return json.loads(value) if isinstance(value, str) else value
 
 
-def migrate_env(text, priorities):
+def migrate_env(text, priorities, hashes):
     """Edit env assignments, compose mappings, and Kubernetes env pairs."""
     lines = text.splitlines(keepends=True)
     changes = []
     for index in range(len(lines) - 1, -1, -1):
         line = lines[index]
         match = re.match(
-            r"(\s*(?:-\s*)?)MECH_MARKETPLACE_CONFIG(=|:\s*)(.*?)(\r?\n)?$", line
+            r"(\s*(?:-\s*)?)(MECH_MARKETPLACE_CONFIG|STRATEGIES_KWARGS|"
+            r"FILE_HASH_TO_STRATEGIES)"
+            r"(=|:\s*)(.*?)(\r?\n)?$",
+            line,
         )
-        pair = re.match(r"(\s*)- name: MECH_MARKETPLACE_CONFIG\s*$", line)
+        pair = re.match(
+            r"(\s*)- name: (MECH_MARKETPLACE_CONFIG|STRATEGIES_KWARGS|"
+            r"FILE_HASH_TO_STRATEGIES)\s*$",
+            line,
+        )
         if pair:
+            variable = pair[2]
             value_index = index + 1
             match = re.match(r"(\s*value)(:\s*)(.*?)(\r?\n)?$", lines[value_index])
             if not match:
                 raise ValueError("Missing marketplace value after Kubernetes env name")
         elif match:
+            variable = match[2]
             value_index = index
         else:
             continue
-        prefix, separator, raw, newline = match.groups()
+        if pair:
+            prefix, separator, raw, newline = match.groups()
+        else:
+            prefix, _, separator, raw, newline = match.groups()
+        if variable in (STRATEGIES, STRATEGY_HASHES) and raw.strip() in (
+            "",
+            "''",
+            '""',
+        ):
+            continue
         scalar_end = value_index
         while True:
             try:
@@ -172,24 +234,32 @@ def migrate_env(text, priorities):
                 ) <= len(line) - len(line.lstrip()):
                     raise
                 raw += "\n" + lines[scalar_end].rstrip("\r\n")
-        priorities.append(mech)
-        removed = {key: mech.pop(key) for key in KEYS if key in mech}
-        if not removed:
-            continue
-        clean = json.dumps(mech)
+        removed = {}
+        if variable == STRATEGIES:
+            if not add_min_expected_profit(mech, changes):
+                continue
+        elif variable == STRATEGY_HASHES:
+            if not update_strategy_hashes(mech, changes, hashes):
+                continue
+        else:
+            priorities.append(mech)
+            removed = {key: mech.pop(key) for key in KEYS if key in mech}
+            if not removed:
+                continue
+        clean = (
+            json.dumps(mech, separators=(",", ":"))
+            if variable != MARKETPLACE and separator == "="
+            else json.dumps(mech)
+        )
         if raw.startswith("'"):
             clean = "'" + clean.replace("'", "''") + "'"
         elif raw.startswith('"'):
             clean = json.dumps(clean)
         lines[value_index : scalar_end + 1] = [
-            (
-                prefix
-                + ("" if pair else MARKETPLACE)
-                + separator
-                + clean
-                + (newline or "\n")
-            )
+            prefix + ("" if pair else variable) + separator + clean + (newline or "\n")
         ]
+        if variable != MARKETPLACE:
+            continue
         # Limit existing-value checks to this YAML environment block.
         indent = len(line) - len(line.lstrip())
 
@@ -247,6 +317,13 @@ def migrate_env(text, priorities):
 
 def migrate(quickstart, dry_run=False, warn_only=False):
     """Migrate a selected quickstart and every cached operate service."""
+    packages = json.loads(
+        (Path(__file__).resolve().parents[1] / "packages/packages.json").read_text()
+    )
+    hashes = {
+        name: packages["dev"][f"custom/valory/{name}/0.1.0"]
+        for name in ("kelly_criterion", "fixed_bet")
+    }
     paths = [quickstart / "configs/config_predict_trader.json"]
     services = sorted((quickstart / ".operate/services").glob("sc-*"))
     if not services:
@@ -264,7 +341,7 @@ def migrate(quickstart, dry_run=False, warn_only=False):
             text = source.read()
         priorities = []
         updated, changes = (migrate_json if path.suffix == ".json" else migrate_env)(
-            text, priorities
+            text, priorities, hashes
         )
         for mech in priorities:
             priority = (
@@ -288,7 +365,7 @@ def migrate(quickstart, dry_run=False, warn_only=False):
                     destination.write(updated)
                 print(f"   backup: {backup}")
         else:
-            print(f">> {path}: off-chain config unchanged")
+            print(f">> {path}: config unchanged")
     if stored:
         reference_path, reference = stored[0]
         for path, priority in stored[1:]:
