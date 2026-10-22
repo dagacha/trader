@@ -655,3 +655,322 @@ def test_strategy_hashes_follow_package_manifest(tmp_path, monkeypatch):
             "current-fixed_bet": ["fixed_bet"],
         }
     )
+
+
+V1_MARKETPLACE = "0x4554fE75c1f5576c1d7F765B2A036c199Adae329"
+V2_MARKETPLACE = "0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB"
+ZERO_ADDRESS = "0x" + "0" * 40
+
+
+@pytest.mark.parametrize("address", [V1_MARKETPLACE, V1_MARKETPLACE.lower()])
+@pytest.mark.parametrize("mapping", [False, True])
+@pytest.mark.parametrize("plain_enabled", [False, True])
+def test_marketplace_json_migration(tmp_path, address, mapping, plain_enabled):
+    """Replace the old address in quickstart and every cached config."""
+    paths = fixture(tmp_path)
+    mech = {
+        "mech_marketplace_address": address,
+        "requester_staking_instance_address": ZERO_ADDRESS,
+        "response_timeout": 300,
+    }
+    for path in paths:
+        data = {
+            "env_variables": {
+                "MECH_MARKETPLACE_CONFIG": entry(mech if mapping else json.dumps(mech)),
+                "USE_MECH_MARKETPLACE": "true" if plain_enabled else entry("true"),
+            },
+            "keep": "unchanged",
+        }
+        path.write_text(json.dumps(data, indent=2) + "\n")
+    before = {path: path.read_bytes() for path in paths}
+    preview = run(tmp_path, "--dry-run")
+    assert V1_MARKETPLACE.lower() in preview.lower()
+    assert V2_MARKETPLACE in preview
+    assert "requester_staking_instance_address" in preview
+    assert all(path.read_bytes() == before[path] for path in paths)
+    assert not list(tmp_path.rglob("*.bak-*"))
+    output = run(tmp_path)
+    for path in paths:
+        assert str(path) in output
+        data = json.loads(path.read_text())
+        actual = data["env_variables"]["MECH_MARKETPLACE_CONFIG"]["value"]
+        assert isinstance(actual, dict if mapping else str)
+        actual = json.loads(actual) if isinstance(actual, str) else actual
+        assert actual == dict(mech, mech_marketplace_address=V2_MARKETPLACE)
+        assert data["env_variables"]["USE_MECH_MARKETPLACE"] == (
+            "true" if plain_enabled else entry("true")
+        )
+        assert data["keep"] == "unchanged"
+        assert (
+            list(path.parent.glob(path.name + ".bak-*"))[0].read_bytes() == before[path]
+        )
+    after = {path: path.read_bytes() for path in paths}
+    run(tmp_path)
+    assert all(path.read_bytes() == after[path] for path in paths)
+    assert len(list(tmp_path.rglob("*.bak-*"))) == len(paths)
+
+
+@pytest.mark.parametrize("style", ["env", "mapping", "list", "kubernetes"])
+def test_marketplace_deployment_migration(tmp_path, style):
+    """Replace only the old marketplace in each deployment format."""
+    import yaml
+
+    service = tmp_path / ".operate/services/sc-one"
+    service.mkdir(parents=True)
+    mech = {
+        "mech_marketplace_address": V1_MARKETPLACE.lower(),
+        "requester_staking_instance_address": ZERO_ADDRESS,
+    }
+    if style == "env":
+        path = service / "agent_0.env"
+        original = (
+            "USE_MECH_MARKETPLACE=true\nMECH_MARKETPLACE_CONFIG="
+            + json.dumps(mech)
+            + "\n"
+        )
+    else:
+        path = service / "build.yaml"
+        env = {
+            "USE_MECH_MARKETPLACE": "true",
+            "MECH_MARKETPLACE_CONFIG": json.dumps(mech),
+        }
+        if style == "list":
+            env = [key + "=" + value for key, value in env.items()]
+            original = "environment:\n" + "\n".join("- " + item for item in env) + "\n"
+        elif style == "kubernetes":
+            env = [{"name": key, "value": value} for key, value in env.items()]
+        if style != "list":
+            original = yaml.safe_dump(
+                {"environment": env, "keep": "unchanged"}, width=60
+            )
+    path.write_text(original)
+    preview = run(tmp_path, "--dry-run")
+    assert V2_MARKETPLACE in preview
+    assert "WARNING" in preview and "requester_staking_instance_address" in preview
+    assert path.read_text() == original
+    run(tmp_path)
+    result = path.read_text()
+    assert V1_MARKETPLACE.lower() not in result.lower()
+    assert V2_MARKETPLACE in result
+    assert ZERO_ADDRESS in result
+    assert list(service.glob(path.name + ".bak-*"))[0].read_text() == original
+    run(tmp_path)
+    assert path.read_text() == result
+    assert len(list(service.glob("*.bak-*"))) == 1
+
+
+@pytest.mark.parametrize("enabled", ["true", "false", True, False])
+@pytest.mark.parametrize("address", [V2_MARKETPLACE, "0x" + "a" * 40])
+@pytest.mark.parametrize("plain_enabled", [False, True])
+def test_marketplace_warnings_do_not_edit(tmp_path, enabled, address, plain_enabled):
+    """Warn for unknown addresses and enabled zero requester staking only."""
+    path = tmp_path / "configs/config_predict_trader.json"
+    path.parent.mkdir()
+    mech = {
+        "mech_marketplace_address": address,
+        "requester_staking_instance_address": ZERO_ADDRESS,
+    }
+    path.write_text(
+        json.dumps(
+            {
+                "env_variables": {
+                    "MECH_MARKETPLACE_CONFIG": entry(json.dumps(mech)),
+                    "USE_MECH_MARKETPLACE": (
+                        enabled if plain_enabled else entry(enabled)
+                    ),
+                }
+            }
+        )
+    )
+    before = path.read_bytes()
+    for args in [(), ("--dry-run",), ("--warn-only",)]:
+        output = run(tmp_path, *args)
+        assert ("requester_staking_instance_address" in output) == (
+            str(enabled).lower() == "true"
+        )
+        assert (address in output) == (address != V2_MARKETPLACE)
+        if address != V2_MARKETPLACE:
+            assert "WARNING" in output and str(path) in output
+        assert path.read_bytes() == before
+        assert not list(tmp_path.rglob("*.bak-*"))
+
+
+def test_requester_warning_is_scoped_to_yaml_environment(tmp_path):
+    """An enabled container must not trigger a warning for another container."""
+    import yaml
+
+    path = tmp_path / ".operate/services/sc-one/build.yaml"
+    path.parent.mkdir(parents=True)
+    docs = [
+        {"environment": {"USE_MECH_MARKETPLACE": "true"}},
+        {
+            "environment": {
+                "USE_MECH_MARKETPLACE": "false",
+                "MECH_MARKETPLACE_CONFIG": json.dumps(
+                    {
+                        "mech_marketplace_address": V2_MARKETPLACE,
+                        "requester_staking_instance_address": ZERO_ADDRESS,
+                    }
+                ),
+            }
+        },
+    ]
+    path.write_text(yaml.safe_dump_all(docs))
+    assert "requester_staking_instance_address" not in run(tmp_path)
+
+
+@pytest.mark.parametrize("address", [V1_MARKETPLACE, V2_MARKETPLACE])
+@pytest.mark.parametrize("mapping", [False, True])
+def test_direct_operate_marketplace_config(tmp_path, address, mapping):
+    """Migrate stored user args and warn without changing requester staking."""
+    paths = fixture(tmp_path)
+    path = paths[1]
+    mech = {
+        "mech_marketplace_address": address,
+        "requester_staking_instance_address": ZERO_ADDRESS,
+    }
+    path.write_text(
+        json.dumps(
+            {
+                "user_params": {
+                    "use_mech_marketplace": True,
+                    "mech_marketplace_config": mech if mapping else json.dumps(mech),
+                }
+            }
+        )
+    )
+    before = path.read_bytes()
+    for args in [("--dry-run",), ("--warn-only",)]:
+        assert "requester_staking_instance_address" in run(tmp_path, *args)
+        assert path.read_bytes() == before
+        assert not list(tmp_path.rglob("*.bak-*"))
+    run(tmp_path)
+    actual = json.loads(path.read_text())["user_params"]["mech_marketplace_config"]
+    assert isinstance(actual, dict if mapping else str)
+    actual = actual if mapping else json.loads(actual)
+    assert actual == dict(mech, mech_marketplace_address=V2_MARKETPLACE)
+    backups = list(path.parent.glob(path.name + ".bak-*"))
+    assert len(backups) == (1 if address == V1_MARKETPLACE else 0)
+    if backups:
+        assert backups[0].read_bytes() == before
+    later = json.loads(paths[2].read_text())["env_variables"]
+    assert "use_offchain" not in json.loads(later["MECH_MARKETPLACE_CONFIG"]["value"])
+    after = {path: path.read_bytes() for path in paths}
+    backups = list(tmp_path.rglob("*.bak-*"))
+    run(tmp_path)
+    assert all(path.read_bytes() == after[path] for path in paths)
+    assert list(tmp_path.rglob("*.bak-*")) == backups
+
+
+@pytest.mark.parametrize(
+    "config", ["agents/trader/aea-config.yaml", "services/trader_pearl/service.yaml"]
+)
+def test_gnosis_marketplace_default(config):
+    """Use the V2 marketplace in both Gnosis defaults."""
+    text = (SCRIPT.parents[1] / "packages/valory" / config).read_text()
+    assert '"mech_marketplace_address":"' + V2_MARKETPLACE + '"' in text
+
+
+@pytest.mark.parametrize(
+    "style", ["json-string", "json-mapping", "env", "mapping", "list", "kubernetes"]
+)
+def test_marketplace_and_strategy_migrate_together(tmp_path, style):
+    """Apply all migrations in one pass with one backup and stable repeat runs."""
+    import yaml
+
+    packages = json.loads((SCRIPT.parents[1] / "packages/packages.json").read_text())
+    values = {
+        "MECH_MARKETPLACE_CONFIG": dict(
+            OLD,
+            mech_marketplace_address=V1_MARKETPLACE.lower(),
+            requester_staking_instance_address=ZERO_ADDRESS,
+        ),
+        "STRATEGIES_KWARGS": {},
+        "FILE_HASH_TO_STRATEGIES": {"old-kelly": ["kelly_criterion"]},
+        "USE_MECH_MARKETPLACE": True,
+    }
+    expected = dict(values)
+    expected["MECH_MARKETPLACE_CONFIG"] = {
+        key: value
+        for key, value in dict(
+            values["MECH_MARKETPLACE_CONFIG"], mech_marketplace_address=V2_MARKETPLACE
+        ).items()
+        if key not in ("use_offchain", "offchain_deposit_target_calls")
+    }
+    expected["STRATEGIES_KWARGS"] = {"min_expected_profit": 6 * 10**16}
+    expected["FILE_HASH_TO_STRATEGIES"] = {
+        packages["dev"]["custom/valory/kelly_criterion/0.1.0"]: ["kelly_criterion"]
+    }
+    expected.update(USE_OFFCHAIN=False, OFFCHAIN_DEPOSIT_TARGET_CALLS=7)
+    if style.startswith("json"):
+        paths = fixture(tmp_path)
+        original = json.dumps(
+            {
+                "env_variables": {
+                    key: entry(value if style == "json-mapping" else json.dumps(value))
+                    for key, value in values.items()
+                }
+            }
+        )
+    else:
+        path = (
+            tmp_path
+            / ".operate/services/sc-one"
+            / ("agent_0.env" if style == "env" else "build.yaml")
+        )
+        path.parent.mkdir(parents=True)
+        paths = [path]
+        env = {key: json.dumps(value) for key, value in values.items()}
+        if style in ("env", "list"):
+            original = ("environment:\n" if style == "list" else "") + "".join(
+                ("  - " if style == "list" else "") + key + "=" + value + "\n"
+                for key, value in env.items()
+            )
+        else:
+            original = yaml.safe_dump(
+                {
+                    "environment": (
+                        [{"name": key, "value": value} for key, value in env.items()]
+                        if style == "kubernetes"
+                        else env
+                    )
+                },
+                width=60,
+            )
+    for path in paths:
+        path.write_text(original)
+    preview = run(tmp_path, "--dry-run")
+    assert V2_MARKETPLACE in preview
+    assert "min_expected_profit" in preview
+    assert "FILE_HASH_TO_STRATEGIES: old-kelly" in preview
+    assert "requester_staking_instance_address is zero" in preview
+    run(tmp_path, "--warn-only")
+    assert all(path.read_text() == original for path in paths)
+    assert not list(tmp_path.rglob("*.bak-*"))
+    run(tmp_path)
+    for path in paths:
+        result = path.read_text()
+        if style.startswith("json"):
+            env = {
+                key: item["value"]
+                for key, item in json.loads(result)["env_variables"].items()
+            }
+        elif style == "env":
+            env = dict(line.split("=", 1) for line in result.splitlines())
+        else:
+            env = yaml.safe_load(result)["environment"]
+            if style == "kubernetes":
+                env = {item["name"]: item["value"] for item in env}
+            elif style == "list":
+                env = dict(item.split("=", 1) for item in env)
+        assert {
+            key: json.loads(value) if isinstance(value, str) else value
+            for key, value in env.items()
+        } == expected
+        backups = list(path.parent.glob(path.name + ".bak-*"))
+        assert len(backups) == 1
+        assert backups[0].read_text() == original
+    after = {path: path.read_bytes() for path in paths}
+    run(tmp_path)
+    assert all(path.read_bytes() == after[path] for path in paths)
+    assert len(list(tmp_path.rglob("*.bak-*"))) == len(paths)

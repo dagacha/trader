@@ -268,7 +268,7 @@ models:
       mech_interaction_sleep_time: ${int:10}
       use_mech_marketplace: ${USE_MECH_MARKETPLACE:bool:false}
       policy_store_update_offset: ${int:259200}
-      mech_marketplace_config: ${MECH_MARKETPLACE_CONFIG:dict:{"mech_marketplace_address":"0x0000000000000000000000000000000000000000","priority_mech_address":"0x0000000000000000000000000000000000000000","priority_mech_staking_instance_address":"0x0000000000000000000000000000000000000000","priority_mech_service_id":0,"requester_staking_instance_address":"0x0000000000000000000000000000000000000000","response_timeout":300}}
+      mech_marketplace_config: ${MECH_MARKETPLACE_CONFIG:dict:{"mech_marketplace_address":"0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB","priority_mech_address":"0x0000000000000000000000000000000000000000","priority_mech_staking_instance_address":"0x0000000000000000000000000000000000000000","priority_mech_service_id":0,"requester_staking_instance_address":"0x0000000000000000000000000000000000000000","response_timeout":300}}
       use_offchain: ${USE_OFFCHAIN:bool:false}
       offchain_deposit_target_calls: ${OFFCHAIN_DEPOSIT_TARGET_CALLS:int:10}
       expected_mech_response_time: ${int:300}

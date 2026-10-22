@@ -17,7 +17,7 @@
 #
 # ------------------------------------------------------------------------------
 
-"""Migrate off-chain settings and Omen strategy defaults during a release.
+"""Migrate off-chain settings, marketplace addresses, and Omen strategy defaults.
 
 Use only with an Omen quickstart and Omen cached services. The profit threshold
 uses 18-decimal xDAI units. Do not run against Polymarket or mixed-service caches.
@@ -41,6 +41,9 @@ MARKETPLACE = "MECH_MARKETPLACE_CONFIG"
 STRATEGIES = "STRATEGIES_KWARGS"
 STRATEGY_HASHES = "FILE_HASH_TO_STRATEGIES"
 MIN_EXPECTED_PROFIT = 60000000000000000
+V1_MARKETPLACE = "0x4554fE75c1f5576c1d7F765B2A036c199Adae329"
+V2_MARKETPLACE = "0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB"
+ZERO_ADDRESS = "0x" + "0" * 40
 DECODER = json.JSONDecoder()
 
 
@@ -92,6 +95,28 @@ def edit_json(text, desired, value=None, addition=None):
     raise ValueError("Could not locate a unique JSON value to edit")
 
 
+def update_marketplace(mech, enabled, changes, warnings):
+    """Replace the known V1 address and report settings that need review."""
+    address = mech.get("mech_marketplace_address")
+    changed = str(address).lower() == V1_MARKETPLACE.lower()
+    if changed:
+        mech["mech_marketplace_address"] = V2_MARKETPLACE
+        changes.append(
+            f"{MARKETPLACE}.mech_marketplace_address: {address} -> {V2_MARKETPLACE}"
+        )
+    elif address is not None and str(address).lower() != V2_MARKETPLACE.lower():
+        warnings.append(f"unknown mech_marketplace_address={address}; kept unchanged")
+    if (
+        str(enabled).lower() == "true"
+        and mech.get("requester_staking_instance_address") == ZERO_ADDRESS
+    ):
+        warnings.append(
+            "requester_staking_instance_address is zero while USE_MECH_MARKETPLACE "
+            "is true; kept unchanged"
+        )
+    return changed
+
+
 def add_min_expected_profit(strategy, changes):
     """Add the 18-decimal Omen profit threshold only when it is absent."""
     if "min_expected_profit" in strategy:
@@ -113,11 +138,22 @@ def update_strategy_hashes(mapping, changes, hashes):
     return changed
 
 
-def migrate_json(text, priorities, hashes):
+def migrate_json(text, priorities, hashes, warnings):
     """Change marketplace settings and add missing strategy defaults."""
     data = json.loads(text)
     changes = []
     for env in objects(data):
+        if "mech_marketplace_config" in env:
+            value = env["mech_marketplace_config"]
+            mech = json.loads(value) if isinstance(value, str) else value
+            if update_marketplace(
+                mech, env.get("use_mech_marketplace"), changes, warnings
+            ):
+                if isinstance(value, str):
+                    env["mech_marketplace_config"] = json.dumps(mech)
+                    text = edit_json(text, data, env["mech_marketplace_config"])
+                else:
+                    text = edit_json(text, data, V2_MARKETPLACE)
         for variable in (STRATEGIES, STRATEGY_HASHES):
             if variable not in env:
                 continue
@@ -142,12 +178,16 @@ def migrate_json(text, priorities, hashes):
             continue
         mech = json.loads(value) if isinstance(value, str) else value
         priorities.append(mech)
+        enabled = env.get("USE_MECH_MARKETPLACE")
+        if isinstance(enabled, dict):
+            enabled = enabled.get("value")
+        changed = update_marketplace(mech, enabled, changes, warnings)
         removed = {key: mech[key] for key in KEYS if key in mech}
-        if not removed:
+        if not removed and not changed:
             continue
         clean = {key: val for key, val in mech.items() if key not in removed}
-        entry["value"] = json.dumps(clean)
-        text = edit_json(text, data, json.dumps(clean))
+        entry["value"] = json.dumps(clean) if isinstance(value, str) else clean
+        text = edit_json(text, data, entry["value"])
         for key, val in removed.items():
             target, name = KEYS[key]
             changes.append(f"remove {MARKETPLACE}.{key}={scalar(val)}")
@@ -184,7 +224,7 @@ def decode_env(raw):
     return json.loads(value) if isinstance(value, str) else value
 
 
-def migrate_env(text, priorities, hashes):
+def migrate_env(text, priorities, hashes, warnings):
     """Edit env assignments, compose mappings, and Kubernetes env pairs."""
     lines = text.splitlines(keepends=True)
     changes = []
@@ -234,32 +274,6 @@ def migrate_env(text, priorities, hashes):
                 ) <= len(line) - len(line.lstrip()):
                     raise
                 raw += "\n" + lines[scalar_end].rstrip("\r\n")
-        removed = {}
-        if variable == STRATEGIES:
-            if not add_min_expected_profit(mech, changes):
-                continue
-        elif variable == STRATEGY_HASHES:
-            if not update_strategy_hashes(mech, changes, hashes):
-                continue
-        else:
-            priorities.append(mech)
-            removed = {key: mech.pop(key) for key in KEYS if key in mech}
-            if not removed:
-                continue
-        clean = (
-            json.dumps(mech, separators=(",", ":"))
-            if variable != MARKETPLACE and separator == "="
-            else json.dumps(mech)
-        )
-        if raw.startswith("'"):
-            clean = "'" + clean.replace("'", "''") + "'"
-        elif raw.startswith('"'):
-            clean = json.dumps(clean)
-        lines[value_index : scalar_end + 1] = [
-            prefix + ("" if pair else variable) + separator + clean + (newline or "\n")
-        ]
-        if variable != MARKETPLACE:
-            continue
         # Limit existing-value checks to this YAML environment block.
         indent = len(line) - len(line.lstrip())
 
@@ -282,6 +296,44 @@ def migrate_env(text, priorities, hashes):
         while end < len(lines) and in_environment(lines[end]):
             end += 1
         block = "".join(lines[start:end])
+        removed = {}
+        if variable == STRATEGIES:
+            if not add_min_expected_profit(mech, changes):
+                continue
+        elif variable == STRATEGY_HASHES:
+            if not update_strategy_hashes(mech, changes, hashes):
+                continue
+        else:
+            priorities.append(mech)
+            enabled = re.search(
+                r"(?m)^\s*(?:-\s*)?USE_MECH_MARKETPLACE[=:]\s*['\"]?(true|false)"
+                r"|^\s*- name: USE_MECH_MARKETPLACE\s*\n\s*value:\s*['\"]?(true|false)",
+                block,
+                re.IGNORECASE,
+            )
+            changed = update_marketplace(
+                mech,
+                next(value for value in enabled.groups() if value) if enabled else None,
+                changes,
+                warnings,
+            )
+            removed = {key: mech.pop(key) for key in KEYS if key in mech}
+            if not removed and not changed:
+                continue
+        clean = (
+            json.dumps(mech, separators=(",", ":"))
+            if separator == "="
+            else json.dumps(mech)
+        )
+        if raw.startswith("'"):
+            clean = "'" + clean.replace("'", "''") + "'"
+        elif raw.startswith('"'):
+            clean = json.dumps(clean)
+        lines[value_index : scalar_end + 1] = [
+            prefix + ("" if pair else variable) + separator + clean + (newline or "\n")
+        ]
+        if variable != MARKETPLACE:
+            continue
         additions = []
         for key, val in removed.items():
             target, _ = KEYS[key]
@@ -340,9 +392,12 @@ def migrate(quickstart, dry_run=False, warn_only=False):
         with path.open(encoding="utf-8", newline="") as source:
             text = source.read()
         priorities = []
+        warnings = []
         updated, changes = (migrate_json if path.suffix == ".json" else migrate_env)(
-            text, priorities, hashes
+            text, priorities, hashes, warnings
         )
+        for warning in warnings:
+            print(f"WARNING: {path}: {warning}")
         for mech in priorities:
             priority = (
                 mech.get("priority_mech_address"),
