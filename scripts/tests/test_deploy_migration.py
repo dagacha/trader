@@ -480,3 +480,145 @@ def test_strategy_and_offchain_migrate_together(tmp_path):
     assert json.loads(env["STRATEGIES_KWARGS"])["min_expected_profit"] == 10**17
     assert env["OFFCHAIN_DEPOSIT_TARGET_CALLS"] == "7"
     assert len(list(tmp_path.rglob("*.bak-*"))) == 4
+
+
+@pytest.mark.parametrize(
+    "style", ["json-string", "json-mapping", "env", "mapping", "list", "kubernetes"]
+)
+@pytest.mark.parametrize(
+    "case", ["old", "current", "unknown", "missing", "empty", "unset"]
+)
+def test_strategy_hash_migration(tmp_path, style, case):
+    """Update known strategy hashes with backups, dry runs, and repeat safety."""
+    import yaml
+
+    packages = json.loads((SCRIPT.parents[1] / "packages/packages.json").read_text())
+    current = {
+        name: packages["dev"][f"custom/valory/{name}/0.1.0"]
+        for name in ("kelly_criterion", "fixed_bet")
+    }
+    unknown = {
+        "unknown-hash": ["unknown"],
+        "shared-hash": ["kelly_criterion", "fixed_bet"],
+        "empty-hash": [],
+    }
+    mapping = dict(unknown)
+    expected = dict(unknown)
+    if case in ("old", "current"):
+        for name, cid in current.items():
+            mapping[f"old-{name}" if case == "old" else cid] = [name]
+            expected[cid] = [name]
+    elif case == "empty":
+        mapping = expected = {}
+    variable = "FILE_HASH_TO_STRATEGIES"
+    value = "" if case == "unset" else json.dumps(mapping)
+    if style.startswith("json"):
+        paths = fixture(tmp_path)
+        env = (
+            {}
+            if case == "missing"
+            else {
+                variable: entry(mapping if style == "json-mapping" and value else value)
+            }
+        )
+        original = json.dumps({"user_params": {"env_variables": env}}, indent=2) + "\n"
+    else:
+        paths = []
+        for service in ("sc-one", "sc-two"):
+            name = "agent_0.env" if style == "env" else "build.yaml"
+            paths.append(tmp_path / ".operate/services" / service / "deployment" / name)
+        if case == "missing":
+            original = "# keep\nOTHER=keep\n" if style == "env" else "other: keep\n"
+        elif style in ("env", "list"):
+            prefix = "# keep\r\n" if style == "env" else "environment:\n  - "
+            original = prefix + variable + "=" + (value or '""') + "\n"
+        else:
+            env = (
+                [{"name": variable, "value": value}]
+                if style == "kubernetes"
+                else {variable: value}
+            )
+            original = yaml.safe_dump({"environment": env, "other": "keep"}, width=60)
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(original.encode())
+    preview = run(tmp_path, "--dry-run")
+    run(tmp_path, "--warn-only")
+    assert all(path.read_bytes() == original.encode() for path in paths)
+    assert not list(tmp_path.rglob("*.bak-*"))
+    output = run(tmp_path)
+    for path in paths:
+        if case == "old":
+            assert str(path) in preview
+            assert str(path) in output
+            for name, cid in current.items():
+                assert f"{variable}: old-{name} -> {cid}" in preview
+            result = path.read_text()
+            if style.startswith("json"):
+                actual = json.loads(result)["user_params"]["env_variables"][variable]
+                assert actual == entry(
+                    expected if style == "json-mapping" else json.dumps(expected)
+                )
+            else:
+                if style == "env":
+                    value = result.split(variable + "=", 1)[1]
+                else:
+                    env = yaml.safe_load(result)["environment"]
+                    value = (
+                        env[0].split("=", 1)[1]
+                        if style == "list"
+                        else env[0]["value"] if style == "kubernetes" else env[variable]
+                    )
+                assert json.loads(value) == expected
+            backups = list(path.parent.glob(path.name + ".bak-*"))
+            assert len(backups) == 1
+            assert backups[0].read_bytes() == original.encode()
+        else:
+            assert path.read_bytes() == original.encode()
+            assert not list(path.parent.glob(path.name + ".bak-*"))
+    after = {path: path.read_bytes() for path in paths}
+    backups = list(tmp_path.rglob("*.bak-*"))
+    run(tmp_path)
+    assert all(path.read_bytes() == after[path] for path in paths)
+    assert list(tmp_path.rglob("*.bak-*")) == backups
+
+
+def test_strategy_hashes_follow_package_manifest(tmp_path, monkeypatch):
+    """Read replacement hashes from the repo that contains the helper."""
+    script = tmp_path / "repo/scripts/migrate_trader_config.py"
+    script.parent.mkdir(parents=True)
+    script.write_bytes(SCRIPT.read_bytes())
+    packages = script.parents[1] / "packages/packages.json"
+    packages.parent.mkdir()
+    packages.write_text(
+        json.dumps(
+            {
+                "dev": {
+                    f"custom/valory/{name}/0.1.0": f"current-{name}"
+                    for name in ("kelly_criterion", "fixed_bet")
+                }
+            }
+        )
+    )
+    monkeypatch.setattr(sys.modules[__name__], "SCRIPT", script)
+    path = fixture(tmp_path / "quickstart")[0]
+    path.write_text(
+        json.dumps(
+            {
+                "env_variables": {
+                    "FILE_HASH_TO_STRATEGIES": entry(
+                        {"old-kelly": ["kelly_criterion"], "old-fixed": ["fixed_bet"]}
+                    )
+                }
+            }
+        )
+    )
+    run(path.parents[1])
+    assert json.loads(path.read_text())["env_variables"][
+        "FILE_HASH_TO_STRATEGIES"
+    ] == entry(
+        {
+            "current-kelly_criterion": ["kelly_criterion"],
+            "current-fixed_bet": ["fixed_bet"],
+        }
+    )

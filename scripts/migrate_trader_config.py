@@ -35,6 +35,7 @@ KEYS = {
 }
 MARKETPLACE = "MECH_MARKETPLACE_CONFIG"
 STRATEGIES = "STRATEGIES_KWARGS"
+STRATEGY_HASHES = "FILE_HASH_TO_STRATEGIES"
 MIN_EXPECTED_PROFIT = 100000000000000000
 DECODER = json.JSONDecoder()
 
@@ -96,17 +97,36 @@ def add_min_expected_profit(strategy, changes):
     return True
 
 
-def migrate_json(text, priorities):
+def update_strategy_hashes(mapping, changes, hashes):
+    """Replace hash keys only for known single-strategy entries."""
+    changed = False
+    for old, strategies in list(mapping.items()):
+        for name, current in hashes.items():
+            if strategies == [name] and old != current:
+                mapping[current] = mapping.pop(old)
+                changes.append(f"{STRATEGY_HASHES}: {old} -> {current}")
+                changed = True
+    return changed
+
+
+def migrate_json(text, priorities, hashes):
     """Change marketplace settings and add missing strategy defaults."""
     data = json.loads(text)
     changes = []
     for env in objects(data):
-        if STRATEGIES in env:
-            strategy_entry = env[STRATEGIES]
+        for variable in (STRATEGIES, STRATEGY_HASHES):
+            if variable not in env:
+                continue
+            strategy_entry = env[variable]
             value = strategy_entry.get("value")
             if value is not None and value != "":
                 strategy = json.loads(value) if isinstance(value, str) else value
-                if add_min_expected_profit(strategy, changes):
+                changed = (
+                    add_min_expected_profit(strategy, changes)
+                    if variable == STRATEGIES
+                    else update_strategy_hashes(strategy, changes, hashes)
+                )
+                if changed:
                     value = json.dumps(strategy) if isinstance(value, str) else strategy
                     strategy_entry["value"] = value
                     text = edit_json(text, data, value)
@@ -160,19 +180,22 @@ def decode_env(raw):
     return json.loads(value) if isinstance(value, str) else value
 
 
-def migrate_env(text, priorities):
+def migrate_env(text, priorities, hashes):
     """Edit env assignments, compose mappings, and Kubernetes env pairs."""
     lines = text.splitlines(keepends=True)
     changes = []
     for index in range(len(lines) - 1, -1, -1):
         line = lines[index]
         match = re.match(
-            r"(\s*(?:-\s*)?)(MECH_MARKETPLACE_CONFIG|STRATEGIES_KWARGS)"
+            r"(\s*(?:-\s*)?)(MECH_MARKETPLACE_CONFIG|STRATEGIES_KWARGS|"
+            r"FILE_HASH_TO_STRATEGIES)"
             r"(=|:\s*)(.*?)(\r?\n)?$",
             line,
         )
         pair = re.match(
-            r"(\s*)- name: (MECH_MARKETPLACE_CONFIG|STRATEGIES_KWARGS)\s*$", line
+            r"(\s*)- name: (MECH_MARKETPLACE_CONFIG|STRATEGIES_KWARGS|"
+            r"FILE_HASH_TO_STRATEGIES)\s*$",
+            line,
         )
         if pair:
             variable = pair[2]
@@ -189,6 +212,8 @@ def migrate_env(text, priorities):
             prefix, separator, raw, newline = match.groups()
         else:
             prefix, _, separator, raw, newline = match.groups()
+        if variable == STRATEGY_HASHES and raw.strip() in ("", "''", '""'):
+            continue
         scalar_end = value_index
         while True:
             try:
@@ -205,6 +230,9 @@ def migrate_env(text, priorities):
         if variable == STRATEGIES:
             if not add_min_expected_profit(mech, changes):
                 continue
+        elif variable == STRATEGY_HASHES:
+            if not update_strategy_hashes(mech, changes, hashes):
+                continue
         else:
             priorities.append(mech)
             removed = {key: mech.pop(key) for key in KEYS if key in mech}
@@ -212,7 +240,7 @@ def migrate_env(text, priorities):
                 continue
         clean = (
             json.dumps(mech, separators=(",", ":"))
-            if variable == STRATEGIES and separator == "="
+            if variable != MARKETPLACE and separator == "="
             else json.dumps(mech)
         )
         if raw.startswith("'"):
@@ -222,7 +250,7 @@ def migrate_env(text, priorities):
         lines[value_index : scalar_end + 1] = [
             prefix + ("" if pair else variable) + separator + clean + (newline or "\n")
         ]
-        if variable == STRATEGIES:
+        if variable != MARKETPLACE:
             continue
         # Limit existing-value checks to this YAML environment block.
         indent = len(line) - len(line.lstrip())
@@ -281,6 +309,13 @@ def migrate_env(text, priorities):
 
 def migrate(quickstart, dry_run=False, warn_only=False):
     """Migrate a selected quickstart and every cached operate service."""
+    packages = json.loads(
+        (Path(__file__).resolve().parents[1] / "packages/packages.json").read_text()
+    )
+    hashes = {
+        name: packages["dev"][f"custom/valory/{name}/0.1.0"]
+        for name in ("kelly_criterion", "fixed_bet")
+    }
     paths = [quickstart / "configs/config_predict_trader.json"]
     services = sorted((quickstart / ".operate/services").glob("sc-*"))
     if not services:
@@ -298,7 +333,7 @@ def migrate(quickstart, dry_run=False, warn_only=False):
             text = source.read()
         priorities = []
         updated, changes = (migrate_json if path.suffix == ".json" else migrate_env)(
-            text, priorities
+            text, priorities, hashes
         )
         for mech in priorities:
             priority = (
