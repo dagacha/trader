@@ -334,6 +334,329 @@ def test_settings_are_scoped_to_each_yaml_environment(tmp_path):
     assert all(value["OFFCHAIN_DEPOSIT_TARGET_CALLS"] == "7" for value in values)
 
 
+@pytest.mark.parametrize("existing", [None, 0, 123456789, 10**17])
+@pytest.mark.parametrize("as_mapping", [False, True])
+def test_strategy_json_migration(tmp_path, existing, as_mapping):
+    """Add the Omen threshold once and keep explicit values and metadata."""
+    paths = fixture(tmp_path)
+    strategy = {"floor_balance": 0, "fee_per_trade": 10**16}
+    if existing is not None:
+        strategy["min_expected_profit"] = existing
+    for path in paths:
+        data = json.loads(path.read_text())
+        data["env_variables"] = {
+            "STRATEGIES_KWARGS": entry(strategy if as_mapping else json.dumps(strategy))
+        }
+        path.write_text(json.dumps({"user_params": data}, indent=2) + "\n")
+    before = {path: path.read_bytes() for path in paths}
+    preview = run(tmp_path, "--dry-run")
+    if existing is None:
+        assert "STRATEGIES_KWARGS.min_expected_profit=60000000000000000" in preview
+    assert all(path.read_bytes() == before[path] for path in paths)
+    assert not list(tmp_path.rglob("*.bak-*"))
+    run(tmp_path, "--warn-only")
+    assert all(path.read_bytes() == before[path] for path in paths)
+    run(tmp_path)
+    for path in paths:
+        actual_entry = json.loads(path.read_text())["user_params"]["env_variables"][
+            "STRATEGIES_KWARGS"
+        ]
+        value = actual_entry["value"]
+        actual = value if as_mapping else json.loads(value)
+        assert actual == dict(
+            strategy, min_expected_profit=6 * 10**16 if existing is None else existing
+        )
+        assert {k: v for k, v in actual_entry.items() if k != "value"} == {
+            k: v for k, v in entry("").items() if k != "value"
+        }
+        backups = list(path.parent.glob(path.name + ".bak-*"))
+        assert len(backups) == (1 if existing is None else 0)
+        if backups:
+            assert backups[0].read_bytes() == before[path]
+    after = {path: path.read_bytes() for path in paths}
+    run(tmp_path)
+    assert all(path.read_bytes() == after[path] for path in paths)
+
+
+@pytest.mark.parametrize("style", ["env", "mapping", "list", "kubernetes"])
+@pytest.mark.parametrize("existing", [None, 0, 123456789, 10**17])
+def test_strategy_deployment_migration(tmp_path, style, existing):
+    """Migrate deployment scalars with the same backup and dry-run rules."""
+    import yaml
+
+    fixture(tmp_path)
+    strategy = {"floor_balance": 0, "fee_per_trade": 10**16, "grid_points": 500}
+    if existing is not None:
+        strategy["min_expected_profit"] = existing
+    raw = json.dumps(strategy)
+    service = tmp_path / ".operate/services/sc-one"
+    if style == "env":
+        path = service / "agent_0.env"
+        original = "# keep\r\nSTRATEGIES_KWARGS=" + raw
+    elif style == "list":
+        path = service / "build.yaml"
+        original = (
+            "environment:\n  - STRATEGIES_KWARGS="
+            + json.dumps(strategy, separators=(",", ":"))
+            + "\n"
+        )
+    else:
+        path = service / "build.yaml"
+        env = (
+            [{"name": "STRATEGIES_KWARGS", "value": raw}]
+            if style == "kubernetes"
+            else {"STRATEGIES_KWARGS": raw}
+        )
+        original = yaml.safe_dump({"environment": env, "untouched": "keep"}, width=60)
+    path.write_bytes(original.encode())
+    preview = run(tmp_path, "--dry-run")
+    assert path.read_bytes() == original.encode()
+    assert not list(path.parent.glob(path.name + ".bak-*"))
+    run(tmp_path)
+    with path.open(newline="") as source:
+        result = source.read()
+    if style == "env":
+        assert result.startswith("# keep\r\n")
+        value = result.split("STRATEGIES_KWARGS=", 1)[1]
+    else:
+        env = yaml.safe_load(result)["environment"]
+        if style == "list":
+            value = env[0].split("=", 1)[1]
+        elif style == "kubernetes":
+            value = env[0]["value"]
+        else:
+            value = env["STRATEGIES_KWARGS"]
+    assert json.loads(value) == dict(
+        strategy, min_expected_profit=6 * 10**16 if existing is None else existing
+    )
+    backups = list(path.parent.glob(path.name + ".bak-*"))
+    assert len(backups) == (1 if existing is None else 0)
+    if existing is None:
+        assert str(path) in preview
+        assert "STRATEGIES_KWARGS.min_expected_profit=60000000000000000" in preview
+        assert backups[0].read_bytes() == original.encode()
+    run(tmp_path)
+    assert path.read_bytes() == result.encode()
+
+
+@pytest.mark.parametrize("value", [{}, "", None])
+def test_empty_strategy_entry(tmp_path, value):
+    """Migrate an empty dict but leave unset templates alone."""
+    paths = fixture(tmp_path)
+    for path in paths:
+        path.write_text(
+            json.dumps({"env_variables": {"STRATEGIES_KWARGS": entry(value)}})
+        )
+    run(tmp_path)
+    for path in paths:
+        actual = json.loads(path.read_text())["env_variables"]["STRATEGIES_KWARGS"]
+        assert actual == entry(
+            {"min_expected_profit": 6 * 10**16} if value == {} else value
+        )
+
+
+@pytest.mark.parametrize("raw", ["", "''", '""', "{}"])
+@pytest.mark.parametrize("style", ["env", "mapping", "list", "kubernetes"])
+def test_empty_strategy_deployment_entry(tmp_path, raw, style):
+    """Keep unset strategy scalars and continue to the next cache file."""
+    paths = fixture(tmp_path)
+    service = paths[1].parent
+    path = service / ("agent_0.env" if style == "env" else "build.yaml")
+    prefix = {
+        "env": "STRATEGIES_KWARGS=",
+        "mapping": "    STRATEGIES_KWARGS: ",
+        "list": "    - STRATEGIES_KWARGS=",
+        "kubernetes": "    - name: STRATEGIES_KWARGS\n      value: ",
+    }[style]
+    original = prefix + raw + "\n"
+    path.write_text(original)
+    run(tmp_path, "--dry-run")
+    run(tmp_path, "--warn-only")
+    assert path.read_text() == original
+    assert not list(path.parent.glob(path.name + ".bak-*"))
+    run(tmp_path)
+    result = path.read_text()
+    if raw == "{}":
+        assert "min_expected_profit" in result
+        assert list(path.parent.glob(path.name + ".bak-*"))[0].read_text() == original
+    else:
+        assert result == original
+        assert not list(path.parent.glob(path.name + ".bak-*"))
+    later_env = json.loads(paths[2].read_text())["env_variables"]
+    assert later_env["OFFCHAIN_DEPOSIT_TARGET_CALLS"]["value"] == "7"
+    run(tmp_path)
+    assert path.read_text() == result
+
+
+def test_strategy_and_offchain_migrate_together(tmp_path):
+    """Apply both migrations with one backup for each file."""
+    paths = fixture(tmp_path)
+    for path in paths:
+        data = json.loads(path.read_text())
+        data["env_variables"]["STRATEGIES_KWARGS"] = entry("{}")
+        path.write_text(json.dumps(data))
+    env_path = tmp_path / ".operate/services/sc-one/agent_0.env"
+    env_path.write_text(
+        "STRATEGIES_KWARGS={}\nMECH_MARKETPLACE_CONFIG=" + json.dumps(OLD) + "\n"
+    )
+    output = run(tmp_path)
+    assert "STRATEGIES_KWARGS.min_expected_profit" in output
+    assert "OFFCHAIN_DEPOSIT_TARGET_CALLS" in output
+    for path in paths:
+        env = json.loads(path.read_text())["env_variables"]
+        assert (
+            json.loads(env["STRATEGIES_KWARGS"]["value"])["min_expected_profit"]
+            == 6 * 10**16
+        )
+        assert env["OFFCHAIN_DEPOSIT_TARGET_CALLS"]["value"] == "7"
+    env = dict(line.split("=", 1) for line in env_path.read_text().splitlines())
+    assert json.loads(env["STRATEGIES_KWARGS"])["min_expected_profit"] == 6 * 10**16
+    assert env["OFFCHAIN_DEPOSIT_TARGET_CALLS"] == "7"
+    assert len(list(tmp_path.rglob("*.bak-*"))) == 4
+
+
+@pytest.mark.parametrize(
+    "style", ["json-string", "json-mapping", "env", "mapping", "list", "kubernetes"]
+)
+@pytest.mark.parametrize(
+    "case", ["old", "current", "unknown", "missing", "empty", "unset"]
+)
+def test_strategy_hash_migration(tmp_path, style, case):
+    """Update known strategy hashes with backups, dry runs, and repeat safety."""
+    import yaml
+
+    packages = json.loads((SCRIPT.parents[1] / "packages/packages.json").read_text())
+    current = {
+        name: packages["dev"][f"custom/valory/{name}/0.1.0"]
+        for name in ("kelly_criterion", "fixed_bet")
+    }
+    unknown = {
+        "unknown-hash": ["unknown"],
+        "shared-hash": ["kelly_criterion", "fixed_bet"],
+        "empty-hash": [],
+    }
+    mapping = dict(unknown)
+    expected = dict(unknown)
+    if case in ("old", "current"):
+        for name, cid in current.items():
+            mapping[f"old-{name}" if case == "old" else cid] = [name]
+            expected[cid] = [name]
+    elif case == "empty":
+        mapping = expected = {}
+    variable = "FILE_HASH_TO_STRATEGIES"
+    value = "" if case == "unset" else json.dumps(mapping)
+    if style.startswith("json"):
+        paths = fixture(tmp_path)
+        env = (
+            {}
+            if case == "missing"
+            else {
+                variable: entry(mapping if style == "json-mapping" and value else value)
+            }
+        )
+        original = json.dumps({"user_params": {"env_variables": env}}, indent=2) + "\n"
+    else:
+        paths = []
+        for service in ("sc-one", "sc-two"):
+            name = "agent_0.env" if style == "env" else "build.yaml"
+            paths.append(tmp_path / ".operate/services" / service / "deployment" / name)
+        if case == "missing":
+            original = "# keep\nOTHER=keep\n" if style == "env" else "other: keep\n"
+        elif style in ("env", "list"):
+            prefix = "# keep\r\n" if style == "env" else "environment:\n  - "
+            original = prefix + variable + "=" + (value or '""') + "\n"
+        else:
+            env = (
+                [{"name": variable, "value": value}]
+                if style == "kubernetes"
+                else {variable: value}
+            )
+            original = yaml.safe_dump({"environment": env, "other": "keep"}, width=60)
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(original.encode())
+    preview = run(tmp_path, "--dry-run")
+    run(tmp_path, "--warn-only")
+    assert all(path.read_bytes() == original.encode() for path in paths)
+    assert not list(tmp_path.rglob("*.bak-*"))
+    output = run(tmp_path)
+    for path in paths:
+        if case == "old":
+            assert str(path) in preview
+            assert str(path) in output
+            for name, cid in current.items():
+                assert f"{variable}: old-{name} -> {cid}" in preview
+            result = path.read_text()
+            if style.startswith("json"):
+                actual = json.loads(result)["user_params"]["env_variables"][variable]
+                assert actual == entry(
+                    expected if style == "json-mapping" else json.dumps(expected)
+                )
+            else:
+                if style == "env":
+                    value = result.split(variable + "=", 1)[1]
+                else:
+                    env = yaml.safe_load(result)["environment"]
+                    value = (
+                        env[0].split("=", 1)[1]
+                        if style == "list"
+                        else env[0]["value"] if style == "kubernetes" else env[variable]
+                    )
+                assert json.loads(value) == expected
+            backups = list(path.parent.glob(path.name + ".bak-*"))
+            assert len(backups) == 1
+            assert backups[0].read_bytes() == original.encode()
+        else:
+            assert path.read_bytes() == original.encode()
+            assert not list(path.parent.glob(path.name + ".bak-*"))
+    after = {path: path.read_bytes() for path in paths}
+    backups = list(tmp_path.rglob("*.bak-*"))
+    run(tmp_path)
+    assert all(path.read_bytes() == after[path] for path in paths)
+    assert list(tmp_path.rglob("*.bak-*")) == backups
+
+
+def test_strategy_hashes_follow_package_manifest(tmp_path, monkeypatch):
+    """Read replacement hashes from the repo that contains the helper."""
+    script = tmp_path / "repo/scripts/migrate_trader_config.py"
+    script.parent.mkdir(parents=True)
+    script.write_bytes(SCRIPT.read_bytes())
+    packages = script.parents[1] / "packages/packages.json"
+    packages.parent.mkdir()
+    packages.write_text(
+        json.dumps(
+            {
+                "dev": {
+                    f"custom/valory/{name}/0.1.0": f"current-{name}"
+                    for name in ("kelly_criterion", "fixed_bet")
+                }
+            }
+        )
+    )
+    monkeypatch.setattr(sys.modules[__name__], "SCRIPT", script)
+    path = fixture(tmp_path / "quickstart")[0]
+    path.write_text(
+        json.dumps(
+            {
+                "env_variables": {
+                    "FILE_HASH_TO_STRATEGIES": entry(
+                        {"old-kelly": ["kelly_criterion"], "old-fixed": ["fixed_bet"]}
+                    )
+                }
+            }
+        )
+    )
+    run(path.parents[1])
+    assert json.loads(path.read_text())["env_variables"][
+        "FILE_HASH_TO_STRATEGIES"
+    ] == entry(
+        {
+            "current-kelly_criterion": ["kelly_criterion"],
+            "current-fixed_bet": ["fixed_bet"],
+        }
+    )
+
+
 V1_MARKETPLACE = "0x4554fE75c1f5576c1d7F765B2A036c199Adae329"
 V2_MARKETPLACE = "0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB"
 ZERO_ADDRESS = "0x" + "0" * 40
@@ -522,3 +845,108 @@ def test_gnosis_marketplace_default(config):
     """Use the V2 marketplace in both Gnosis defaults."""
     text = (SCRIPT.parents[1] / "packages/valory" / config).read_text()
     assert '"mech_marketplace_address":"' + V2_MARKETPLACE + '"' in text
+
+
+@pytest.mark.parametrize(
+    "style", ["json-string", "json-mapping", "env", "mapping", "list", "kubernetes"]
+)
+def test_marketplace_and_strategy_migrate_together(tmp_path, style):
+    """Apply all migrations in one pass with one backup and stable repeat runs."""
+    import yaml
+
+    packages = json.loads((SCRIPT.parents[1] / "packages/packages.json").read_text())
+    values = {
+        "MECH_MARKETPLACE_CONFIG": dict(
+            OLD,
+            mech_marketplace_address=V1_MARKETPLACE.lower(),
+            requester_staking_instance_address=ZERO_ADDRESS,
+        ),
+        "STRATEGIES_KWARGS": {},
+        "FILE_HASH_TO_STRATEGIES": {"old-kelly": ["kelly_criterion"]},
+        "USE_MECH_MARKETPLACE": True,
+    }
+    expected = dict(values)
+    expected["MECH_MARKETPLACE_CONFIG"] = {
+        key: value
+        for key, value in dict(
+            values["MECH_MARKETPLACE_CONFIG"], mech_marketplace_address=V2_MARKETPLACE
+        ).items()
+        if key not in ("use_offchain", "offchain_deposit_target_calls")
+    }
+    expected["STRATEGIES_KWARGS"] = {"min_expected_profit": 6 * 10**16}
+    expected["FILE_HASH_TO_STRATEGIES"] = {
+        packages["dev"]["custom/valory/kelly_criterion/0.1.0"]: ["kelly_criterion"]
+    }
+    expected.update(USE_OFFCHAIN=False, OFFCHAIN_DEPOSIT_TARGET_CALLS=7)
+    if style.startswith("json"):
+        paths = fixture(tmp_path)
+        original = json.dumps(
+            {
+                "env_variables": {
+                    key: entry(value if style == "json-mapping" else json.dumps(value))
+                    for key, value in values.items()
+                }
+            }
+        )
+    else:
+        path = (
+            tmp_path
+            / ".operate/services/sc-one"
+            / ("agent_0.env" if style == "env" else "build.yaml")
+        )
+        path.parent.mkdir(parents=True)
+        paths = [path]
+        env = {key: json.dumps(value) for key, value in values.items()}
+        if style in ("env", "list"):
+            original = ("environment:\n" if style == "list" else "") + "".join(
+                ("  - " if style == "list" else "") + key + "=" + value + "\n"
+                for key, value in env.items()
+            )
+        else:
+            original = yaml.safe_dump(
+                {
+                    "environment": (
+                        [{"name": key, "value": value} for key, value in env.items()]
+                        if style == "kubernetes"
+                        else env
+                    )
+                },
+                width=60,
+            )
+    for path in paths:
+        path.write_text(original)
+    preview = run(tmp_path, "--dry-run")
+    assert V2_MARKETPLACE in preview
+    assert "min_expected_profit" in preview
+    assert "FILE_HASH_TO_STRATEGIES: old-kelly" in preview
+    assert "requester_staking_instance_address is zero" in preview
+    run(tmp_path, "--warn-only")
+    assert all(path.read_text() == original for path in paths)
+    assert not list(tmp_path.rglob("*.bak-*"))
+    run(tmp_path)
+    for path in paths:
+        result = path.read_text()
+        if style.startswith("json"):
+            env = {
+                key: item["value"]
+                for key, item in json.loads(result)["env_variables"].items()
+            }
+        elif style == "env":
+            env = dict(line.split("=", 1) for line in result.splitlines())
+        else:
+            env = yaml.safe_load(result)["environment"]
+            if style == "kubernetes":
+                env = {item["name"]: item["value"] for item in env}
+            elif style == "list":
+                env = dict(item.split("=", 1) for item in env)
+        assert {
+            key: json.loads(value) if isinstance(value, str) else value
+            for key, value in env.items()
+        } == expected
+        backups = list(path.parent.glob(path.name + ".bak-*"))
+        assert len(backups) == 1
+        assert backups[0].read_text() == original
+    after = {path: path.read_bytes() for path in paths}
+    run(tmp_path)
+    assert all(path.read_bytes() == after[path] for path in paths)
+    assert len(list(tmp_path.rglob("*.bak-*"))) == len(paths)
