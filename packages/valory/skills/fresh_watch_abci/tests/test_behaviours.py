@@ -381,12 +381,16 @@ def test_placement_log(tmp_path: Any, placed: bool, tokens: int) -> None:
     assert result["stake"] == (4 if placed else 0)
 
 
-def test_closed_at_answer(tmp_path: Any) -> None:
+@pytest.mark.parametrize(
+    "opening,reason,stake",
+    [(1099, "market_closed", 0), (1100, "market_closed", 0), (1101, "", 4)],
+)
+def test_closed_at_answer(tmp_path: Any, opening: int, reason: str, stake: int) -> None:
     """Skip a market that closed while the mech was running."""
     b = make(FastDecisionBehaviour, tmp_path)
     raw = raw_market()
     raw.pop("condition")
-    raw["openingTimestamp"] = 1070
+    raw["openingTimestamp"] = opening
     bet = Bet(**raw, market="omen_subgraph")
     with (
         patch.object(
@@ -394,14 +398,19 @@ def test_closed_at_answer(tmp_path: Any) -> None:
         ),
         patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
     ):
-        sd.return_value.db.get_strict.return_value = 1050
+        sd.return_value.db.get_strict.side_effect = lambda key: {
+            "requested_at": 1050,
+            "request_prices": [0.5, 0.5],
+        }[key]
         b._get_decision_prediction = lambda: SimpleNamespace(p_yes=0.9)
         b._get_pool_balances = lambda *args: done([100, 100])
         with patch(
             "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
             return_value=1100,
         ):
-            assert run(b.evaluate())["reason"] == "market_closed"
+            result = run(b.evaluate())
+            assert result["reason"] == reason
+            assert result["stake"] == stake
 
 
 def test_discovery_runs_during_request(tmp_path: Any) -> None:
@@ -562,3 +571,46 @@ def test_overlap_query_bound(
     ):
         run(b.async_act() if cls is FreshMarketPoller else b.select())
     assert calls == [(expected, 1050)]
+
+
+@pytest.mark.parametrize(
+    "selected_at,quoted_at,opening,allowed",
+    [
+        (1600, 1600, 100000, True),
+        (1601, 1601, 100000, False),
+        (1599, 1601, 100000, False),
+        (1050, 1050, 1049, False),
+        (1050, 1050, 1050, False),
+        (1050, 1051, 1051, False),
+    ],
+)
+def test_queued_market_expires_before_request(
+    tmp_path: Any, selected_at: int, quoted_at: int, opening: int, allowed: bool
+) -> None:
+    """Only a fresh, open queue entry can enter the paid-request lane."""
+    b = make(FreshWatchBehaviour, tmp_path)
+    b.context.state.fast_background_running = True
+    b.sleep = lambda *args: done(None)
+    row = {**raw_market(), "openingTimestamp": opening}
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    queue.ingest([row], 1001, FastConfig().creators, 600)
+    queue.save()
+    b._get_pool_balances = lambda *args: done([100, 100])
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+            side_effect=[selected_at, quoted_at],
+        ),
+    ):
+        sd.return_value.mechs_info = [
+            SimpleNamespace(relevant_tools=set(FastConfig().tools))
+        ]
+        selection = run(b.select())
+    assert selection["lane"] == ("market" if allowed else "wait")
+    reloaded = FreshQueue(queue.path)
+    assert reloaded.pending == []
+    assert reloaded.asked == {"market": 1000}
+    reloaded.ingest([row], quoted_at, FastConfig().creators, 600)
+    reloaded.save()
+    assert FreshQueue(queue.path).pending == []

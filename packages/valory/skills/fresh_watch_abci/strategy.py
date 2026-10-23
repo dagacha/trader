@@ -211,6 +211,7 @@ class FreshQueue:
             self.last_seen = max(self.last_seen, created)
             if (
                 now - created <= max_age
+                and int(row["openingTimestamp"]) > now
                 and row["creator"].lower() in allowed
                 and row["id"] not in self.asked
             ):

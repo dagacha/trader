@@ -118,7 +118,9 @@ def test_skip(title: Any, p: Any, prices: Any, requested: Any, reason: Any) -> N
 
 def market(id_: Any, timestamp: Any, creator: str = "allowed") -> Any:
     """Build a small raw market."""
-    return dict(id=id_, creationTimestamp=timestamp, creator=creator)
+    return dict(
+        id=id_, creationTimestamp=timestamp, creator=creator, openingTimestamp=100000
+    )
 
 
 def test_queue(tmp_path: Any) -> None:
@@ -243,3 +245,13 @@ def test_legacy_asked_state(tmp_path: Any) -> None:
     queue.ingest([market("asked", 990)], 1721, ["allowed"], 600)
     assert not queue.asked
     assert queue.pending == []
+
+
+@pytest.mark.parametrize("opening,queued", [(999, False), (1000, False), (1001, True)])
+def test_queue_market_close_time(tmp_path: Any, opening: int, queued: bool) -> None:
+    """Realitio answering opens when the Omen trading window closes."""
+    queue = FreshQueue(tmp_path / "fresh.json")
+    row = {**market("market", 950), "openingTimestamp": str(opening)}
+    queue.ingest([row], 1000, ["allowed"], 600)
+    queue.save()
+    assert bool(FreshQueue(queue.path).pending) is queued

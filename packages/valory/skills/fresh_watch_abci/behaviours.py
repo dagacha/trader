@@ -188,7 +188,11 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour):
             bet.id, bet.collateralToken, bet.condition_id
         )
         requested_at = time.time()
-        if balances is None or bet.openingTimestamp <= requested_at:
+        if (
+            balances is None
+            or bet.openingTimestamp <= requested_at
+            or requested_at - bet.creationTimestamp > cfg.fresh_max_age_s
+        ):
             log_decision(
                 self,
                 dict(
@@ -203,7 +207,7 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour):
                     price=None,
                     edge=None,
                     stake=0,
-                    reason="request_price_unavailable_or_closed",
+                    reason="request_price_unavailable_closed_or_expired",
                 ),
             )
             return {"lane": "wait"}
