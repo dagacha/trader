@@ -1434,3 +1434,36 @@ def test_priority_sync_uses_only_explicit_inputs(tmp_path, key, value):
         ]
         == expected
     )
+
+
+def test_skip_fast_template_and_caches(tmp_path):
+    """Keep the fast strategy out of the normal trader migration."""
+    template = tmp_path / "configs/config_omenstrat_fast.json"
+    cache = tmp_path / ".operate/services/sc-fast/config.json"
+    env = tmp_path / ".operate/services/sc-fast/agent_0.env"
+    for path in (template, cache, env):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_SERVICE_ID=omenstrat_fast\n"
+            if path == env
+            else json.dumps(
+                {
+                    "name": "omenstrat_fast",
+                    "env_variables": {
+                        "STRATEGIES_KWARGS": entry(
+                            '{"absolute_max_bet_size":4000000000000000000}'
+                        )
+                    },
+                }
+            )
+        )
+    before = {path: path.read_bytes() for path in (template, cache, env)}
+    from scripts import migrate_trader_config
+
+    output_stream = io.StringIO()
+    with redirect_stdout(output_stream):
+        migrate_trader_config.migrate(tmp_path)
+    output = output_stream.getvalue()
+    assert "omenstrat_fast: skipping trader migration" in output
+    assert all(path.read_bytes() == data for path, data in before.items())
+    assert not list(tmp_path.rglob("*.bak-*"))

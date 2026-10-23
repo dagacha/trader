@@ -578,7 +578,10 @@ def migrate(quickstart, dry_run=False, warn_only=False):
         name: packages["dev"][f"custom/valory/{name}/0.1.0"]
         for name in ("kelly_criterion", "fixed_bet")
     }
-    paths = [quickstart / "configs/config_predict_trader.json"]
+    paths = [
+        quickstart / "configs/config_predict_trader.json",
+        quickstart / "configs/config_omenstrat_fast.json",
+    ]
     paths.extend(sorted((quickstart / ".operate").glob("*-quickstart-config.json")))
     legacy = quickstart / ".operate/local_config.json"
     if legacy.is_file():
@@ -598,6 +601,12 @@ def migrate(quickstart, dry_run=False, warn_only=False):
             continue
         with path.open(encoding="utf-8", newline="") as source:
             text = source.read()
+        if (
+            "omenstrat_fast" in text.lower()
+            or path.name == "config_omenstrat_fast.json"
+        ):
+            print(f">> {path}: omenstrat_fast: skipping trader migration")
+            continue
         priorities = []
         warnings = []
         # Saved inputs use plain values. Only sync explicit controls there.

@@ -26,6 +26,7 @@ models:
   params:
     args:
       fund_requirements: {}
+      is_running_on_polymarket: false
       rpc_urls: {}
       safe_contract_addresses: {}
       rpc_timeout_seconds: 10

@@ -1,0 +1,350 @@
+{
+    "name": "omenstrat_fast",
+    "hash": "bafybeifp5je65v5bvs6cjej7wj3fdngstf5paoq2mc3wmba5itexj43num",
+    "description": "Fresh-watch Omen agent with the fixed fast strategy.",
+    "image": "https://operate.olas.network/_next/image?url=%2Fimages%2Fprediction-agent.png&w=3840&q=75",
+    "service_version": "feat/omenstrat-fast",
+    "agent_release": {
+        "is_aea": true,
+        "repository": {
+            "owner": "dagacha",
+            "name": "trader",
+            "version": "feat/omenstrat-fast"
+        }
+    },
+    "home_chain": "gnosis",
+    "configurations": {
+        "gnosis": {
+            "agent_id": 25,
+            "nft": "bafybeig64atqaladigoc3ds4arltdu63wkdrk3gesjfvnfdmz35amv7faq",
+            "threshold": 1,
+            "use_mech_marketplace": true,
+            "fund_requirements": {
+                "0x0000000000000000000000000000000000000000": {
+                    "agent": 100000000000000000,
+                    "safe": 5000000000000000000
+                }
+            }
+        }
+    },
+    "env_variables": {
+        "SAFE_CONTRACT_ADDRESSES": {
+            "name": "Safe contract addresses",
+            "description": "",
+            "value": "",
+            "provision_type": "computed"
+        },
+        "GNOSIS_LEDGER_RPC": {
+            "name": "Gnosis ledger RPC",
+            "description": "",
+            "value": "",
+            "provision_type": "computed"
+        },
+        "STAKING_CONTRACT_ADDRESS": {
+            "name": "Staking contract address",
+            "description": "",
+            "value": "",
+            "provision_type": "computed"
+        },
+        "MECH_ACTIVITY_CHECKER_CONTRACT": {
+            "name": "Mech activity checker contract",
+            "description": "",
+            "value": "",
+            "provision_type": "computed"
+        },
+        "MECH_CONTRACT_ADDRESS": {
+            "name": "Mech contract address",
+            "description": "",
+            "value": "",
+            "provision_type": "computed"
+        },
+        "PRIORITY_MECH_ADDRESS": {
+            "name": "Priority mech address",
+            "description": "",
+            "value": "0x552cEA7Bc33CbBEb9f1D90c1D11D2C6daefFd053",
+            "provision_type": "user"
+        },
+        "PRIORITY_MECH_SERVICE_ID": {
+            "name": "Priority mech service id",
+            "description": "",
+            "value": "975",
+            "provision_type": "user"
+        },
+        "MECH_REQUEST_PRICE": {
+            "name": "Mech request price",
+            "description": "",
+            "value": "",
+            "provision_type": "computed"
+        },
+        "STORE_PATH": {
+            "name": "Store Path",
+            "description": "",
+            "value": "/data",
+            "provision_type": "computed"
+        },
+        "MECH_MARKETPLACE_CONFIG": {
+            "name": "Mech marketplace config",
+            "description": "",
+            "value": "{\"mech_marketplace_address\":\"0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB\",\"priority_mech_address\":\"0x552cEA7Bc33CbBEb9f1D90c1D11D2C6daefFd053\",\"priority_mech_staking_instance_address\":\"0x0000000000000000000000000000000000000000\",\"priority_mech_service_id\":975,\"requester_staking_instance_address\":\"0x0000000000000000000000000000000000000000\",\"response_timeout\":300,\"offchain_url\":null,\"auto_deposit_cap_per_cycle\":5000000000000000000,\"offchain_poll_interval_seconds\":1.5,\"offchain_poll_timeout_seconds\":300.0,\"offchain_failover_max_retries\":0}",
+            "provision_type": "user"
+        },
+        "USE_MECH_MARKETPLACE": {
+            "name": "Use mech marketplace",
+            "description": "",
+            "value": "true",
+            "provision_type": "user"
+        },
+        "USE_MULTI_BETS_MODE": {
+            "name": "Use multi bets mode",
+            "description": "",
+            "value": "false",
+            "provision_type": "fixed"
+        },
+        "ENABLE_POSITION_REVIEW": {
+            "name": "Enable position review",
+            "description": "",
+            "value": "false",
+            "provision_type": "fixed"
+        },
+        "TRADING_STRATEGY": {
+            "name": "Trading strategy",
+            "description": "",
+            "value": "fixed_bet",
+            "provision_type": "fixed"
+        },
+        "TOOLS_ACCURACY_HASH": {
+            "name": "Tools accuracy hash",
+            "description": "",
+            "value": "QmWgsqncF22hPLNTyWtDzVoKPJ9gmgR1jcuLL5t31xyzzr",
+            "provision_type": "fixed"
+        },
+        "ACC_INFO_FIELDS_REQUESTS": {
+            "name": "Acc info fields requests",
+            "description": "",
+            "value": "nr_responses",
+            "provision_type": "fixed"
+        },
+        "IRRELEVANT_TOOLS": {
+            "name": "Irrelevant tools",
+            "description": "",
+            "value": "[\"native-transfer\",\"prediction-online-lite\",\"claude-prediction-online-lite\",\"prediction-online-sme-lite\",\"prediction-request-reasoning-lite\",\"prediction-request-reasoning-claude-lite\",\"prediction-offline-sme\",\"deepmind-optimization\",\"deepmind-optimization-strong\",\"openai-gpt-3.5-turbo\",\"openai-gpt-3.5-turbo-instruct\",\"openai-gpt-4\",\"openai-text-davinci-002\",\"openai-text-davinci-003\",\"prediction-online-sum-url-content\",\"prediction-online-summarized-info\",\"stabilityai-stable-diffusion-512-v2-1\",\"stabilityai-stable-diffusion-768-v2-1\",\"stabilityai-stable-diffusion-v1-5\",\"stabilityai-stable-diffusion-xl-beta-v2-2-2\",\"prediction-url-cot-claude\",\"prediction-url-cot\",\"resolve-market-reasoning-gpt-4.1\",\"resolve-market-jury-v1\",\"openai-gpt-4o-2024-08-06\",\"echo\",\"google_image_gen\",\"short_maker\",\"stabilityai-stable-diffusion-v1-6\",\"stabilityai-stable-diffusion-xl-1024-v1-0\",\"gemini-2.5-flash\",\"anthropic-claude-opus-4-5-latest\",\"claude-prediction-online\",\"prediction-request-rag-claude\",\"prediction-online-sme\",\"profit_pulse\",\"openai-gpt-5.2-chat-latest\",\"prediction_request_reasoning-claude\",\"prediction_request_reasoning-5.2.mini\",\"prediction_request_reasoning\",\"prediction-request-reasoning\",\"prediction-request-rag\",\"prediction-online\",\"claude-prediction-offline\",\"nephyr_risk_mech\",\"nephyr_weather_mech\",\"nephyr_wallets_mech\",\"nephyr_backtest_mech\",\"openai-gpt-4.1-2025-04-14\"]",
+            "provision_type": "fixed"
+        },
+        "CREATOR_PER_SUBGRAPH": {
+            "name": "Creator per subgraph",
+            "description": "",
+            "value": "{\"omen_subgraph\":[\"0x89c5cc945dd550BcFfb72Fe42BfF002429F46Fec\"]}",
+            "provision_type": "fixed"
+        },
+        "SUBGRAPH_API_KEY": {
+            "name": "Subgraph API key",
+            "description": "Subgraph API key can be obtained at https://thegraph.com/studio/apikeys/",
+            "value": "",
+            "provision_type": "user"
+        },
+        "CONDITIONAL_TOKENS_SUBGRAPH_URL": {
+            "name": "Conditional tokens subgraph URL",
+            "description": "",
+            "value": "https://gateway-arbitrum.network.thegraph.com/api/{SUBGRAPH_API_KEY}/subgraphs/id/7s9rGBffUTL8kDZuxvvpuc46v44iuDarbrADBFw5uVp2",
+            "provision_type": "fixed"
+        },
+        "NETWORK_SUBGRAPH_URL": {
+            "name": "Network subgraph URL",
+            "description": "",
+            "value": "https://gateway-arbitrum.network.thegraph.com/api/{SUBGRAPH_API_KEY}/subgraphs/id/FxV6YUix58SpYmLBwc9gEHkwjfkqwe1X5FJQjn8nKPyA",
+            "provision_type": "fixed"
+        },
+        "OMEN_SUBGRAPH_URL": {
+            "name": "Omen subgraph URL",
+            "description": "",
+            "value": "https://gateway-arbitrum.network.thegraph.com/api/{SUBGRAPH_API_KEY}/subgraphs/id/9fUVQpFwzpdWS9bq5WkAnmKbNNcoBwatMR4yZq81pbbz",
+            "provision_type": "fixed"
+        },
+        "REALITIO_SUBGRAPH_URL": {
+            "name": "Realitio subgraph URL",
+            "description": "",
+            "value": "https://gateway-arbitrum.network.thegraph.com/api/{SUBGRAPH_API_KEY}/subgraphs/id/E7ymrCnNcQdAAgLbdFWzGE5mvr5Mb5T9VfT43FqA7bNh",
+            "provision_type": "fixed"
+        },
+        "TRADES_SUBGRAPH_URL": {
+            "name": "Trades subgraph URL",
+            "description": "",
+            "value": "https://gateway-arbitrum.network.thegraph.com/api/{SUBGRAPH_API_KEY}/subgraphs/id/9fUVQpFwzpdWS9bq5WkAnmKbNNcoBwatMR4yZq81pbbz",
+            "provision_type": "fixed"
+        },
+        "OPEN_AUTONOMY_TM_WRITE_TO_LOG": {
+            "name": "Open Autonomy TM Write to Log",
+            "description": "",
+            "value": "false",
+            "provision_type": "fixed"
+        },
+        "MECH_INTERACTION_SLEEP_TIME": {
+            "name": "The sleep time after a failed mech interaction",
+            "description": "",
+            "value": "30",
+            "provision_type": "fixed"
+        },
+        "IS_AGENT_PERFORMANCE_SUMMARY_ENABLED": {
+            "name": "Is agent performance summary enabled",
+            "description": "",
+            "value": "false",
+            "provision_type": "fixed"
+        },
+        "MECH_INTERACT_ROUND_TIMEOUT_SECONDS": {
+            "name": "Mech interact round timeout in seconds",
+            "description": "The timeout for the mech interact's rounds in seconds. It also translates to how much time we wait for a mech to respond before giving up.",
+            "value": "900",
+            "provision_type": "fixed"
+        },
+        "PENALIZE_MECH_TIME_WINDOW": {
+            "name": "The penalization window for an unresponsive mech in seconds",
+            "description": "The penalization window for an unresponsive mech in seconds.",
+            "value": "7200",
+            "provision_type": "fixed"
+        },
+        "IGNORED_MECHS": {
+            "name": "Ignored mechs",
+            "description": "The list of ignored mechs. The agent will ignore these mechs when using the mech marketplace.",
+            "value": "[\"0x33ca1e117c4254b2ee8cd7ef1621739431a37396\",\"0x2ebd2237e5db798e36a2fa67afa74effb17c5ebb\"]",
+            "provision_type": "fixed"
+        },
+        "CREATORS": {
+            "name": "Creators",
+            "description": "",
+            "value": "[\"0x89c5cc945dd550bcffb72fe42bff002429f46fec\",\"0xffc8029154ecd55abed15bd428ba596e7d23f557\"]",
+            "provision_type": "user"
+        },
+        "FRESH_MAX_AGE_S": {
+            "name": "Fresh max age s",
+            "description": "",
+            "value": "600",
+            "provision_type": "user"
+        },
+        "POLL_S": {
+            "name": "Poll s",
+            "description": "",
+            "value": "15",
+            "provision_type": "user"
+        },
+        "ACTIVE_WINDOW_UTC": {
+            "name": "Active window utc",
+            "description": "",
+            "value": "00:00-05:30",
+            "provision_type": "user"
+        },
+        "HOUSEKEEPING_INTERVAL_S": {
+            "name": "Housekeeping interval s",
+            "description": "",
+            "value": "600",
+            "provision_type": "user"
+        },
+        "TOOLS": {
+            "name": "Tools",
+            "description": "",
+            "value": "[\"superforcaster_calibrated_full_search\",\"superforcaster\"]",
+            "provision_type": "user"
+        },
+        "PRIOR_WEIGHT": {
+            "name": "Prior weight",
+            "description": "",
+            "value": "0.5",
+            "provision_type": "user"
+        },
+        "PRIORS": {
+            "name": "Priors",
+            "description": "",
+            "value": "{\"still_hold\":0.85,\"numeric_threshold\":0.6,\"other_event\":0.18}",
+            "provision_type": "user"
+        },
+        "MIN_EDGE": {
+            "name": "Min edge",
+            "description": "",
+            "value": "0.03",
+            "provision_type": "user"
+        },
+        "MAX_PRICE": {
+            "name": "Max price",
+            "description": "",
+            "value": "0.9",
+            "provision_type": "user"
+        },
+        "NO_MIN_P": {
+            "name": "No min p",
+            "description": "",
+            "value": "0.7",
+            "provision_type": "user"
+        },
+        "CAP": {
+            "name": "Cap",
+            "description": "",
+            "value": "4.0",
+            "provision_type": "user"
+        },
+        "KELLY_BANKROLL": {
+            "name": "Kelly bankroll",
+            "description": "",
+            "value": "10.0",
+            "provision_type": "user"
+        },
+        "MAX_SLIP": {
+            "name": "Max slip",
+            "description": "",
+            "value": "0.1",
+            "provision_type": "user"
+        },
+        "SERVICE_ID": {
+            "name": "Service id",
+            "description": "",
+            "value": "omenstrat_fast",
+            "provision_type": "user"
+        },
+        "USE_OFFCHAIN": {
+            "name": "Use offchain",
+            "description": "",
+            "value": "true",
+            "provision_type": "user"
+        },
+        "STOP_TRADING_IF_STAKING_KPI_MET": {
+            "name": "Stop trading if staking kpi met",
+            "description": "",
+            "value": "false",
+            "provision_type": "user"
+        },
+        "IS_RUNNING_ON_POLYMARKET": {
+            "name": "Is running on polymarket",
+            "description": "",
+            "value": "false",
+            "provision_type": "user"
+        },
+        "FINALIZE_TIMEOUT": {
+            "name": "Finalize timeout",
+            "description": "",
+            "value": "15.0",
+            "provision_type": "user"
+        },
+        "TM_CHECK_SLEEP_DELAY": {
+            "name": "Tm check sleep delay",
+            "description": "",
+            "value": "1",
+            "provision_type": "user"
+        },
+        "RETRY_TIMEOUT": {
+            "name": "Retry timeout",
+            "description": "",
+            "value": "1",
+            "provision_type": "user"
+        },
+        "VALID_MECHS": {
+            "name": "Valid mechs",
+            "description": "",
+            "value": "[\"0x552cEA7Bc33CbBEb9f1D90c1D11D2C6daefFd053\"]",
+            "provision_type": "user"
+        },
+        "STRATEGIES_KWARGS": {
+            "name": "Strategies kwargs",
+            "description": "",
+            "value": "{\"floor_balance\":0,\"default_max_bet_size\":800000000000000000,\"absolute_min_bet_size\":10000000000000000,\"absolute_max_bet_size\":4000000000000000000,\"n_bets\":1,\"min_edge\":0.03,\"min_oracle_prob\":0.5,\"fee_per_trade\":10000000000000000,\"grid_points\":500}",
+            "provision_type": "user"
+        }
+    }
+}

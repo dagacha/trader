@@ -68,7 +68,7 @@ skills:
 - valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m
 - valory/chatui_abci:0.1.0:bafybeianhfooj7ncojnpd3b5d6wmuyxcsyqrsis4xxweafycsjd3gccp2q
 - valory/agent_performance_summary_abci:0.1.0:bafybeiet4cq3ata4ny7e5edfuyaupimltzzb2drefxxue2tmni5c64gvae
-- valory/funds_manager:0.1.0:bafybeigiaepsk7t2dqmbwgk2iesxuttlsmypadfvku5sp4mucckzpdgssi
+- valory/funds_manager:0.1.0:bafybeia3ercbrdugw36ji2d5cl46ed5y623ju7qztek3eqzvtsueos5nu4
 behaviours:
   main:
     args: {}
