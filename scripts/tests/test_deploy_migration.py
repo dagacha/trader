@@ -21,7 +21,10 @@
 
 import io
 import json
+import os
 import runpy
+import shutil
+import subprocess
 import sys
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -1107,3 +1110,145 @@ def test_sync_rejects_kubernetes_control_without_value(tmp_path):
         run(tmp_path)
     assert path.read_text() == text
     assert not list(tmp_path.rglob("*.bak-*"))
+
+
+@pytest.mark.parametrize(
+    "filename", ["Trader Agent-quickstart-config.json", "local_config.json"]
+)
+@pytest.mark.parametrize("saved", [{"MAX_TRADES": "2"}, {}])
+def test_sync_saved_quickstart_inputs(tmp_path, filename, saved):
+    """Prevent saved user inputs from restoring stale values on redeploy."""
+    source = fixture(tmp_path)[0]
+    source.write_text(json.dumps({"env_variables": {"MAX_TRADES": entry("1")}}))
+    path = tmp_path / ".operate" / filename
+    untouched = {
+        "KEEP": "value",
+        "STRATEGIES_KWARGS": '{"min_edge": 0.2}',
+        "MECH_MARKETPLACE_CONFIG": json.dumps(OLD),
+    }
+    original = json.dumps({"user_provided_args": dict(saved, **untouched)}) + "\n"
+    path.write_text(original)
+    for flag in ["--dry-run", "--warn-only"]:
+        run(tmp_path, flag)
+        assert path.read_text() == original
+    assert not list(tmp_path.rglob("*.bak-*"))
+    run(tmp_path)
+    assert json.loads(path.read_text())["user_provided_args"] == dict(
+        untouched, MAX_TRADES="1"
+    )
+    backups = list(path.parent.glob(path.name + ".bak-*"))
+    assert len(backups) == 1
+    assert backups[0].read_text() == original
+    after = path.read_bytes()
+    run(tmp_path)
+    assert path.read_bytes() == after
+    assert list(path.parent.glob(path.name + ".bak-*")) == backups
+
+
+def test_sync_kubernetes_container_env(tmp_path):
+    """Sync the list-item env block emitted by the Kubernetes generator."""
+    import yaml
+
+    source = fixture(tmp_path)[0]
+    source.write_text(json.dumps({"env_variables": {"MAX_TRADES": entry("1")}}))
+    path = tmp_path / ".operate/services/sc-one/deployment/abci_build_k8s/build.yaml"
+    path.parent.mkdir(parents=True)
+    original = """apiVersion: v1
+kind: Service
+---
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+      - env:
+        - name: KEEP
+          value: tendermint
+        name: node0
+      - env:
+        - name: SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_MAX_TRADES
+          value: '2'
+        - name: KEEP
+          value: agent
+        image: agent-image
+        name: abci0
+"""
+    path.write_text(original)
+    run(tmp_path, "--dry-run")
+    assert path.read_text() == original
+    run(tmp_path)
+    documents = list(yaml.safe_load_all(path.read_text()))
+    containers = documents[1]["spec"]["template"]["spec"]["containers"]
+    assert containers[0]["env"] == [{"name": "KEEP", "value": "tendermint"}]
+    assert containers[1]["env"] == [
+        {"name": "SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_MAX_TRADES", "value": "1"},
+        {"name": "KEEP", "value": "agent"},
+        {"name": "MAX_TRADES", "value": "1"},
+    ]
+    assert containers[1]["image"] == "agent-image"
+    assert list(path.parent.glob("*.bak-*"))[0].read_text() == original
+    after = path.read_bytes()
+    run(tmp_path)
+    assert path.read_bytes() == after
+    assert len(list(path.parent.glob("*.bak-*"))) == 1
+
+
+@pytest.mark.parametrize("released", [False, True])
+def test_release_sync_survives_saved_input_reload(tmp_path, released):
+    """Release must sync the inputs that operate uses to rebuild the cache."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for relative in [
+        "release_service.sh",
+        "scripts/migrate_trader_config.py",
+        "packages/packages.json",
+        "packages/valory/services/trader_pearl/service.yaml",
+    ]:
+        target = repo / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(SCRIPT.parents[1] / relative, target)
+    binaries = repo / ".venv/bin"
+    binaries.mkdir(parents=True)
+    for command in ["autonomy", "aea", "docker", "curl"]:
+        target = binaries / command
+        target.write_text("#!/bin/sh\nexit 0\n")
+        target.chmod(0o755)
+    qs = tmp_path / "quickstart"
+    paths = fixture(qs)
+    cid = json.loads((repo / "packages/packages.json").read_text())["dev"][
+        "service/valory/trader_pearl/0.1.0"
+    ]
+    paths[0].write_text(
+        json.dumps(
+            {
+                "hash": cid if released else "old-service",
+                "agent_release": {"repository": {"owner": "dagacha"}},
+                "env_variables": {"MAX_TRADES": entry("1")},
+            }
+        )
+    )
+    saved = qs / ".operate/Trader Agent-quickstart-config.json"
+    saved.write_text(json.dumps({"user_provided_args": {"MAX_TRADES": "2"}}))
+    env = dict(os.environ, PATH=str(binaries) + os.pathsep + os.environ["PATH"])
+    subprocess.run(
+        [
+            "bash",
+            str(repo / "release_service.sh"),
+            "--skip-publish",
+            "--quickstart",
+            str(qs),
+        ],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    # Operate applies saved user inputs to the template before it builds envs.
+    value = json.loads(saved.read_text())["user_provided_args"]["MAX_TRADES"]
+    assert value == "1"
+    for path in paths[1:]:
+        assert (
+            json.loads(path.read_text())["env_variables"]["MAX_TRADES"]["value"]
+            == value
+        )
+    assert json.loads(paths[0].read_text())["hash"] == cid
