@@ -142,7 +142,7 @@ models:
       review_period_seconds: 86400
       activity_target: ${ACTIVITY_TARGET:int:8}
       default_activity_goal: 8
-      max_trades: 0
+      max_trades: 3
       store_path: /data/
       is_running_on_polymarket: false
     class_name: CheckStopTradingParams

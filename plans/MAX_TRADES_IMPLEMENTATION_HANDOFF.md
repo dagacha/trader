@@ -102,7 +102,7 @@ The `DONE_NO_SELL` reuse is also a live bug: `DONE_NO_SELL -> FinishedDecisionMa
 
 ### Parameter plumbing (keep)
 
-`max_trades` defaults to `0` (disabled), is validated as non-negative by `DecisionMakerParams`, and is wired through:
+`max_trades` defaults to `3` for Omen and the shared agent and skills. The Polymarket service overrides it to `0` (disabled). `DecisionMakerParams` validates it as non-negative. It is wired through:
 
 ```text
 packages/valory/agents/trader/aea-config.yaml

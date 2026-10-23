@@ -15,7 +15,7 @@ fingerprint:
   handlers.py: bafybeiausytnqsngbh7qlr5tzyzxmdp33e7cfo6kkgxnccbfvu3hecyyiq
   models.py: bafybeidqxl26hxm7g3mk3j642hv5r62o27j35rqj5zec2pfo6ouoaozhty
   tests/__init__.py: bafybeiadatapyjh3e7ucg2ehz77oms3ihrbutwb2cs2tkjehy54utwvuyi
-  tests/test_agent_config_resolution.py: bafybeiazdyante67pns3uilnj3smkwakch33aexiw5pofrg2hkb65b5o7m
+  tests/test_agent_config_resolution.py: bafybeiggznsh6nrgcln7q4d3rvlnx2dd44rzfuw3c4ayrihkzzgp7z6jdu
   tests/test_behaviours.py: bafybeicovtjruufnh2yd5lhfvc6pgcletuyj2s3jaz5sz55wsdo2w22xle
   tests/test_composition.py: bafybeifcamlkymoezzds63r5difknyc5te6ifxqv3xhgglbbtcgenlv45e
   tests/test_dialogues.py: bafybeibatogwoj6ieapcbiwonij6vskhogc65vfv53tyauqzeyiwmnd2im
@@ -61,10 +61,10 @@ skills:
 - valory/transaction_settlement_abci:0.1.0:bafybeidmmhjcgp7chozxovensq3zplkufvaityd2w3zladtssu4ijvqbzm
 - valory/termination_abci:0.1.0:bafybeig5lk6agmjpctxh4smrqvtbylynda7a5kwgtdlss2sjnnabedzuem
 - valory/market_manager_abci:0.1.0:bafybeicle4v4hbzfitrndz4iezmpzqft7q26eijmzpqpfs7o4ccv7pkfcu
-- valory/decision_maker_abci:0.1.0:bafybeiasbucceiy2uydk3r3ohdg4ln5closnzb5f7d6cb24gerx3rpk23u
-- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeifrrto43wdbaqmux4b7qbqdk4ljri4rth5pmfv34iomrr47alxoly
+- valory/decision_maker_abci:0.1.0:bafybeigmbofgg2bamgmgrlfnawa34kfadmmajogum5djwr4bln34gzlax4
+- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeigikpvbqfaqh52xa7jejnnyjzldxbng35qnepeyczukbhua6vpl54
 - valory/staking_abci:0.1.0:bafybeiab5fq6b7nd5nmedsxtfd452ufwtnd7gdsm5qi7sqhbey6nl2h3u4
-- valory/check_stop_trading_abci:0.1.0:bafybeiemkyhr23glgzge2xoyfbaxepaoz76wze5vfgxn3hohddhytejydy
+- valory/check_stop_trading_abci:0.1.0:bafybeig34p6uwz7fvtsuwrn6l73utgjb36hyefztxxtqqrfaap253csg6q
 - valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m
 - valory/chatui_abci:0.1.0:bafybeic7z5bjhftdrhdte3e7xnr463jaa5rkijysgxy7rpb3dwon7bordm
 - valory/agent_performance_summary_abci:0.1.0:bafybeihgbgzdywpimq4k2w7qqi4motc76bzkzj3szytm3wo4jrmlm6fa4y
@@ -244,7 +244,7 @@ models:
       mech_wrapped_native_token_address: '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d'
       sample_bets_closing_days: 10
       irrelevant_tools: []
-      max_trades: 0
+      max_trades: 3
       max_mech_requests_per_cycle: 10
       polymarket_spread_min: 0.0
       polymarket_spread_max: 1.0

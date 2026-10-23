@@ -105,6 +105,16 @@ export STRATEGIES_KWARGS='{"floor_balance":0,"default_max_bet_size":200000000000
 export CREATOR_PER_SUBGRAPH='{"omen_subgraph":["0xFfc8029154ECD55ABED15BD428bA596E7D23f557"]}'
 ```
 
+#### Default MAX_TRADES=3 (Omen)
+
+Omenstrat defaults to `MAX_TRADES=3` per staking epoch. With the default activity
+goal of `8`, the effective goal is `min(8, 3) = 3`. Standby also needs the staking
+activity target met. Set `MAX_TRADES=0` to disable the cap.
+
+Explicit quickstart values stay in effect. The release migration copies
+`MAX_TRADES` into the cache only when quickstart sets it. For example, trader 24's
+user-set value of `1` stays `1`.
+
 ### Polystrat (`polymarket_trader`) — Polygon / Polymarket CLOB v2
 
 > **Local-dev gotcha.** The agent-level [`aea-config.yaml`](./packages/valory/agents/trader/aea-config.yaml) defaults are **Omen-flavored** (`is_running_on_polymarket=false`, `mech_chain_id=gnosis`, `default_chain_id=gnosis`, Omen-scaled `strategies_kwargs`, Omen `tools_accuracy_hash`, `use_multi_bets_mode=true`, etc.). Service-level overrides only apply when you run via `autonomy deploy` against `valory/polymarket_trader`. If you run the agent directly with `make run-agent` / `aea-helpers run-agent`, you **must** pass the full Polystrat override set below — otherwise the agent will start in Omenstrat mode against Polygon RPCs and behave incorrectly.
@@ -133,6 +143,9 @@ export TOOLS_ACCURACY_HASH=QmaLiU5Pf9MadAA8nhuYRpNXUc1tkq1w8BhAHdGmeEMmA9
 
 # Polystrat's default per-epoch activity goal (trades placed)
 export DEFAULT_ACTIVITY_GOAL=1
+
+# Polystrat's service default disables the trade cap
+export MAX_TRADES=0
 ```
 
 The full set of Polystrat overrides lives in [`polymarket_trader/service.yaml`](./packages/valory/services/polymarket_trader/service.yaml) — diff it against [`aea-config.yaml`](./packages/valory/agents/trader/aea-config.yaml) if you suspect drift.
@@ -153,6 +166,7 @@ The v2 collateral is **pUSD** (`0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB`). Th
 | `FILE_HASH_TO_STRATEGIES` | Maps the IPFS hash of a `customs/` package to the strategy names it provides. Defaulted; only override if you ship a new strategy. |
 | `CREATOR_PER_SUBGRAPH` | Dict mapping market-spec subgraph name to creator addresses to track (Omen-only by default). |
 | `DEFAULT_ACTIVITY_GOAL` | Trades the agent places per staking epoch before standing by, unless the user sets their own goal in the chat. Standby also needs the staking target met. `8` for Omenstrat, `1` for Polystrat; `aea-config.yaml` defaults to `8`. |
+| `MAX_TRADES` | Trade cap per staking epoch. `3` for Omenstrat and the shared agent config; `0` (disabled) for the Polystrat service. A positive cap limits the effective activity goal. Explicit user values override these defaults. |
 | `PROMPT_TEMPLATE` | Single-line prompt for the prediction Mech, with `@{question}`, `@{yes}`, `@{no}` placeholders. |
 
 `POLYGON_LEDGER_CHAIN_ID` / `GNOSIS_LEDGER_CHAIN_ID` exist too but default to the right values (137 / 100), so you don't normally need to set them.
