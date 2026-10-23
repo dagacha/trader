@@ -1705,3 +1705,81 @@ class TestAsyncActSplitsTheSelectedKey:
         assert payload.mech_identities is None
         assert payload.policy is None
         behaviour._store_all.assert_not_called()  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    "tools",
+    [{"valory::factual_research"}, {"valory::factual_research", "valory::prediction"}],
+)
+def test_irrelevant_tool_cannot_be_selected(tools: set) -> None:
+    """The denylist applies to policy keys and cannot fall back to excluded tools."""
+    behaviour = _make_behaviour(_make_policy(*sorted(tools)), tools)
+    behaviour.params.irrelevant_tools = frozenset({"factual_research"})  # type: ignore[attr-defined]
+    with patch.object(
+        ToolSelectionBehaviour, "_setup_policy_and_tools", _mock_setup(True)
+    ):
+        selected = _run_select_tool(behaviour)
+    assert selected == ("valory::prediction" if len(tools) > 1 else None)
+
+
+def test_excluded_tools_cannot_return_through_classifier_fallback() -> None:
+    """Even a manifest outage cannot restore an excluded candidate."""
+    behaviour = _make_behaviour(
+        _make_policy("valory::factual_research"), {"valory::factual_research"}
+    )
+    behaviour.params.irrelevant_tools = frozenset({"factual_research"})  # type: ignore[attr-defined]
+    behaviour._tool_metadata = {"valory::factual_research": {"description": "research"}}
+    assert behaviour._candidate_tools()[0] == set()
+
+
+@pytest.mark.parametrize("selected_mechs", [None, ["0xmech"]])
+def test_denylist_exhaustion_warns_operator(
+    selected_mechs: Optional[List[str]],
+) -> None:
+    """Name the operator setting when it excludes all served tools."""
+    behaviour = _make_behaviour(
+        _make_policy("valory::factual_research"),
+        {"valory::factual_research"},
+        selected_mechs=selected_mechs,
+    )
+    behaviour.params.irrelevant_tools = frozenset({"factual_research"})  # type: ignore[attr-defined]
+    with patch.object(
+        ToolSelectionBehaviour, "_setup_policy_and_tools", _mock_setup(True)
+    ):
+        assert _run_select_tool(behaviour) is None
+    behaviour.context.logger.warning.assert_any_call(  # type: ignore[attr-defined]
+        "IRRELEVANT_TOOLS excludes all served tools; "
+        "skipping this round. Adjust the denylist to allow a tool."
+    )
+    assert behaviour._candidate_tools() == (set(), "irrelevant_tools")
+
+
+def test_no_served_tools_does_not_blame_restrictions() -> None:
+    """An empty discovery result must not warn about an operator setting."""
+    behaviour = _make_behaviour(_make_policy("stale"), set())
+    with patch.object(
+        ToolSelectionBehaviour, "_setup_policy_and_tools", _mock_setup(True)
+    ):
+        assert _run_select_tool(behaviour) is None
+    behaviour.context.logger.warning.assert_not_called()  # type: ignore[attr-defined]
+
+
+def test_restricted_policy_can_decline_selection() -> None:
+    """A policy with no usable restricted tool must return no selection."""
+    behaviour = _make_behaviour(_make_policy("excluded", "prediction"), {"prediction"})
+    with (
+        patch.object(
+            ToolSelectionBehaviour, "_setup_policy_and_tools", _mock_setup(True)
+        ),
+        patch.object(EGreedyPolicy, "select_tool", return_value=None),
+    ):
+        assert _run_select_tool(behaviour) is None
+
+
+def test_v2_without_manifests_keeps_empty_metadata() -> None:
+    """No discovered manifest must leave the classifier cache empty."""
+    behaviour = _make_behaviour(_make_policy("prediction"), {"prediction"})
+    behaviour.synchronized_data.is_marketplace_v2 = True  # type: ignore[attr-defined]
+    behaviour.synchronized_data.mechs_info = []  # type: ignore[attr-defined]
+    _drive_fetch(behaviour)
+    assert behaviour._tool_metadata == {}

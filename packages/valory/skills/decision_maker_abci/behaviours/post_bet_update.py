@@ -132,7 +132,7 @@ class PostBetUpdateBehaviour(DecisionMakerBaseBehaviour):
                 self.context.logger.info(
                     "Running post-bet bookkeeping after BetPlacementRound."
                 )
-                self.update_bet_transaction_information()
+                self.update_bet_transaction_information(record_ledger=False)
                 self.context.state.post_bet_update_applied_tx_hash = settled_tx_hash
             elif (
                 did_transact and tx_submitter == SellOutcomeTokensRound.auto_round_id()

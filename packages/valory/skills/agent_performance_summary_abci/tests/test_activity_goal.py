@@ -28,10 +28,13 @@ import pytest
 
 from packages.valory.skills.agent_performance_summary_abci.activity_goal import (
     ACTIVITY_GOAL_TRADES_FILE,
+    TRADE_COUNT_FILENAME,
+    activity_goal_progress,
     build_activity_goal,
     count_trades_since,
     effective_activity_goal,
     is_valid_activity_goal,
+    read_successful_trade_count_state,
     read_trades,
     record_trade,
     retarget_activity_goal,
@@ -350,3 +353,50 @@ class TestUpdateActivityGoal:
         """Without an epoch on record there is nothing to retarget."""
         assert retarget_activity_goal(tmp_path, 3, PERIOD_START) is None
         assert not (tmp_path / AGENT_PERFORMANCE_SUMMARY_FILE).exists()
+
+
+@pytest.mark.parametrize(
+    "state", [True, -1, "2", [], {}, {"count": False}, {"count": -1}, {"count": 2}]
+)
+def test_invalid_durable_counter_keeps_ledger_progress(
+    tmp_path: Path, state: Any
+) -> None:
+    """Invalid counter values cannot complete the activity goal."""
+    (tmp_path / TRADE_COUNT_FILENAME).write_text(json.dumps(state))
+    assert activity_goal_progress(tmp_path, PERIOD_START, 1) == 1
+
+
+@pytest.mark.parametrize("state", [2, {"count": 2, "placement_keys": ["old"]}])
+def test_legacy_counter_binds_to_first_known_checkpoint(
+    tmp_path: Path, state: Any
+) -> None:
+    """Keep the legacy count now, but discard it at the next checkpoint."""
+    counter = tmp_path / TRADE_COUNT_FILENAME
+    counter.write_text(json.dumps(state))
+    keys = {"old"} if isinstance(state, dict) else set()
+
+    assert read_successful_trade_count_state(tmp_path, None) == (2, keys)
+    assert json.loads(counter.read_text()) == state
+    assert read_successful_trade_count_state(tmp_path, PERIOD_START) == (2, keys)
+    assert json.loads(counter.read_text()) == {
+        "count": 2,
+        "placement_keys": sorted(keys),
+        "period_start": PERIOD_START,
+    }
+    assert read_successful_trade_count_state(tmp_path, None) == (2, keys)
+    assert read_successful_trade_count_state(tmp_path, PERIOD_START + 1) == (0, set())
+
+
+def test_legacy_counter_write_failure_preserves_count(tmp_path: Path) -> None:
+    """A failed migration keeps the valid count and retries on the next read."""
+    counter = tmp_path / TRADE_COUNT_FILENAME
+    counter.write_text("2")
+    with patch(
+        "packages.valory.skills.agent_performance_summary_abci.activity_goal.write_json_atomically",
+        side_effect=OSError("disk full"),
+    ) as write:
+        assert read_successful_trade_count_state(tmp_path, PERIOD_START) == (2, set())
+        write.assert_called_once()
+    assert counter.read_text() == "2"
+    assert read_successful_trade_count_state(tmp_path, PERIOD_START) == (2, set())
+    assert read_successful_trade_count_state(tmp_path, PERIOD_START + 1) == (0, set())

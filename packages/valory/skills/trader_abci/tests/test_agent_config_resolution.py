@@ -298,3 +298,74 @@ def test_polymarket_default_min_expected_profit_is_unset() -> None:
         "strategies_kwargs"
     ]
     assert "min_expected_profit" not in kwargs
+
+
+@pytest.mark.parametrize(
+    "config_path",
+    [AEA_CONFIG_PATH, _VALORY_DIR / "services" / "trader_pearl" / "service.yaml"],
+)
+def test_omen_default_max_trades(config_path: Path) -> None:
+    """Resolve the Omen trade cap to three placements per staking epoch.
+
+    :param config_path: the agent or service config to resolve.
+    """
+    docs = list(yaml_load_all(io.StringIO(config_path.read_text(encoding="utf-8"))))
+    resolved = apply_env_variables_on_agent_config(docs, {})
+    args = _override(resolved, "trader_abci")["models"]["params"]["args"]
+    assert args["max_trades"] == 3
+
+
+@pytest.mark.parametrize(
+    "skill_name", ["decision_maker_abci", "trader_abci", "check_stop_trading_abci"]
+)
+def test_omen_skill_default_max_trades(skill_name: str) -> None:
+    """Keep the skill trade cap defaults consistent with the Omen agent.
+
+    :param skill_name: the skill whose default to check.
+    """
+    config_path = _VALORY_DIR / "skills" / skill_name / "skill.yaml"
+    docs = yaml_load_all(io.StringIO(config_path.read_text(encoding="utf-8")))
+    assert docs[0]["models"]["params"]["args"]["max_trades"] == 3
+
+
+@pytest.mark.parametrize(
+    "service_name, default_cap", [("trader_pearl", 3), ("polymarket_trader", 0)]
+)
+@pytest.mark.parametrize("env", [{}, {"MAX_TRADES": "1"}])
+def test_service_max_trades_overrides_agent_default(
+    service_name: str, default_cap: int, env: Dict[str, str]
+) -> None:
+    """Apply the service cap to the agent and preserve explicit user values.
+
+    :param service_name: the service whose overrides to export.
+    :param default_cap: the expected cap without a user override.
+    :param env: the user environment to apply to the service.
+    """
+    from autonomy.configurations.loader import load_service_config
+
+    with mock.patch.dict("os.environ", env, clear=True):
+        service = load_service_config(_VALORY_DIR / "services" / service_name)
+        exported = {}
+        for override in service.overrides:
+            exported.update(service.process_component_overrides(0, override))
+    exported = {key: str(value) for key, value in exported.items() if value is not None}
+    args = _override(_resolve(exported), "trader_abci")["models"]["params"]["args"]
+    assert args["max_trades"] == int(env.get("MAX_TRADES", default_cap))
+
+
+@pytest.mark.parametrize("service_name", ["trader_pearl", "polymarket_trader"])
+def test_service_exports_irrelevant_tools(service_name: str) -> None:
+    """The service must pass the denylist into the fetched agent config."""
+    from autonomy.configurations.loader import load_service_config
+
+    denylist = ["factual_research", "propose-question"]
+    with mock.patch.dict(
+        "os.environ", {"IRRELEVANT_TOOLS": json.dumps(denylist)}, clear=True
+    ):
+        service = load_service_config(_VALORY_DIR / "services" / service_name)
+        exported = {}
+        for override in service.overrides:
+            exported.update(service.process_component_overrides(0, override))
+    exported = {key: str(value) for key, value in exported.items() if value is not None}
+    args = _override(_resolve(exported), "trader_abci")["models"]["params"]["args"]
+    assert args["irrelevant_tools"] == denylist

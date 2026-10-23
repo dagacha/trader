@@ -974,3 +974,136 @@ def test_marketplace_and_strategy_migrate_together(tmp_path, style):
     run(tmp_path)
     assert all(path.read_bytes() == after[path] for path in paths)
     assert len(list(tmp_path.rglob("*.bak-*"))) == len(paths)
+
+
+@pytest.mark.parametrize("style", ["env", "mapping", "list", "kubernetes"])
+def test_quickstart_controls_replace_stale_operate_cache(tmp_path, style):
+    """Sync explicit quickstart controls to cached config and deployment envs."""
+    import yaml
+
+    quickstart = tmp_path / "configs/config_predict_trader.json"
+    quickstart.parent.mkdir()
+    desired = {
+        "MAX_TRADES": "1",
+        "IRRELEVANT_TOOLS": '["factual_research","propose-question"]',
+        "DEFAULT_ACTIVITY_GOAL": "8",
+    }
+    quickstart.write_text(
+        json.dumps(
+            {"env_variables": {key: entry(value) for key, value in desired.items()}}
+        )
+    )
+    service = tmp_path / ".operate/services/sc-one"
+    service.mkdir(parents=True)
+    config = service / "config.json"
+    config.write_text(
+        json.dumps(
+            {
+                "env_variables": {"MAX_TRADES": entry("2")},
+                "user_params": {"max_trades": 2},
+                "keep": "value",
+            }
+        )
+    )
+    env = {
+        "MAX_TRADES": "2",
+        "SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_MAX_TRADES": "2",
+        "KEEP": "unchanged",
+    }
+    path = service / ("agent_0.env" if style == "env" else "build.yaml")
+    if style == "env":
+        path.write_text("".join(key + "=" + value + "\n" for key, value in env.items()))
+    else:
+        values = (
+            list(key + "=" + value for key, value in env.items())
+            if style == "list"
+            else (
+                [{"name": key, "value": value} for key, value in env.items()]
+                if style == "kubernetes"
+                else env
+            )
+        )
+        path.write_text(
+            yaml.safe_dump(
+                {
+                    "services": {
+                        "agent": {"environment": values},
+                        "tendermint": {"environment": {"KEEP": "other"}},
+                    }
+                }
+            )
+        )
+    originals = {p: p.read_bytes() for p in [quickstart, config, path]}
+    for flag in ["--dry-run", "--warn-only"]:
+        run(tmp_path, flag)
+        assert all(p.read_bytes() == original for p, original in originals.items())
+    assert not list(tmp_path.rglob("*.bak-*"))
+    run(tmp_path)
+    cached = json.loads(config.read_text())
+    assert cached["env_variables"]["MAX_TRADES"]["value"] == "1"
+    assert (
+        cached["env_variables"]["IRRELEVANT_TOOLS"]["value"]
+        == desired["IRRELEVANT_TOOLS"]
+    )
+    assert cached["user_params"]["max_trades"] == 1
+    if style == "env":
+        actual = dict(line.split("=", 1) for line in path.read_text().splitlines())
+    else:
+        services = yaml.safe_load(path.read_text())["services"]
+        assert services["tendermint"]["environment"] == {"KEEP": "other"}
+        actual = services["agent"]["environment"]
+        if style == "list":
+            actual = dict(value.split("=", 1) for value in actual)
+        elif style == "kubernetes":
+            actual = {value["name"]: value["value"] for value in actual}
+    for key, value in desired.items():
+        assert actual[key] == value
+    assert actual["SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_MAX_TRADES"] == "1"
+    assert actual["KEEP"] == "unchanged"
+    assert quickstart.read_bytes() == originals[quickstart]
+    backups = list(tmp_path.rglob("*.bak-*"))
+    assert len(backups) == 2
+    for p in [config, path]:
+        assert list(p.parent.glob(p.name + ".bak-*"))[0].read_bytes() == originals[p]
+    after = {p: p.read_bytes() for p in originals}
+    run(tmp_path)
+    assert all(p.read_bytes() == value for p, value in after.items())
+    assert list(tmp_path.rglob("*.bak-*")) == backups
+
+
+@pytest.mark.parametrize("current", ["1", "2"])
+def test_sync_plain_cached_controls(tmp_path, current):
+    """Plain cached values and stored string args must follow quickstart."""
+    paths = fixture(tmp_path)
+    source = {"MAX_TRADES": entry("1")}
+    paths[0].write_text(json.dumps({"env_variables": source}))
+    for path in paths[1:]:
+        path.write_text(
+            json.dumps(
+                {
+                    "env_variables": {"MAX_TRADES": current},
+                    "user_params": {"max_trades": current},
+                }
+            )
+        )
+    run(tmp_path)
+    for path in paths[1:]:
+        assert json.loads(path.read_text()) == {
+            "env_variables": {"MAX_TRADES": "1"},
+            "user_params": {"max_trades": "1"},
+        }
+
+
+def test_sync_rejects_kubernetes_control_without_value(tmp_path):
+    """A malformed env entry must fail before the cache is written."""
+    source = tmp_path / "configs/config_predict_trader.json"
+    source.parent.mkdir()
+    source.write_text(json.dumps({"env_variables": {"MAX_TRADES": entry("1")}}))
+    path = tmp_path / ".operate/services/sc-one/build.yaml"
+    path.parent.mkdir(parents=True)
+    text = "env:\n- name: MAX_TRADES\n  broken: true\n"
+    path.write_text(text)
+    with pytest.raises(ValueError, match="Missing value for MAX_TRADES"):
+        run(tmp_path)
+    assert path.read_text() == text
+    assert not list(tmp_path.rglob("*.bak-*"))

@@ -70,15 +70,15 @@ skills:
 - valory/reset_pause_abci:0.1.0:bafybeibhpzbwspwbe6xiltrvmdhgks5cn6ybxl4rgs7tvgljurfs742i6u
 - valory/termination_abci:0.1.0:bafybeig5lk6agmjpctxh4smrqvtbylynda7a5kwgtdlss2sjnnabedzuem
 - valory/transaction_settlement_abci:0.1.0:bafybeidmmhjcgp7chozxovensq3zplkufvaityd2w3zladtssu4ijvqbzm
-- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeiayotczcw2a6gjofz7yelduc4m3fh4s6m3ysrkiz6bu5vzrstesbq
+- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeie4tkvthh3be6jmlbysd2bghdqqgytl3qoy27euosmnqw3ytypy7u
 - valory/market_manager_abci:0.1.0:bafybeicle4v4hbzfitrndz4iezmpzqft7q26eijmzpqpfs7o4ccv7pkfcu
-- valory/decision_maker_abci:0.1.0:bafybeigjiklvkgqd2glx3ix7gulr6r5hqg6dhat5h2palfqo4jk5fc7l7q
-- valory/trader_abci:0.1.0:bafybeifmptzvc5jdu3emm5h3kstfzrfwnj5dwd53fltiqcf526j24xkg3a
+- valory/decision_maker_abci:0.1.0:bafybeiacc46rjajh3hvcifil3j25k6tr5og7rzwlef5operh5kk26d6k5e
+- valory/trader_abci:0.1.0:bafybeie3qudkzj32ndnpavpdubfdql2ghua6hkxmcl4mt2cpgbjqbqjy6m
 - valory/staking_abci:0.1.0:bafybeiab5fq6b7nd5nmedsxtfd452ufwtnd7gdsm5qi7sqhbey6nl2h3u4
-- valory/check_stop_trading_abci:0.1.0:bafybeicscvayibb732jlle2nm2qfr2c5m7qqdqkdr2ynfb5atqbwct3eeu
+- valory/check_stop_trading_abci:0.1.0:bafybeibbq7xvo7mcbchqiey4rxijtmv3ga7vc6tgpxlolhoraua7ieqslm
 - valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m
-- valory/chatui_abci:0.1.0:bafybeielvplz7nin3smkh3jolvdkv7mqy2fn2a2dx2jk5xq3kcottchx2m
-- valory/agent_performance_summary_abci:0.1.0:bafybeihqelp7sckax5vncee3ezks4fip4i7u54jmxks3wqe3wavbe42sbq
+- valory/chatui_abci:0.1.0:bafybeianhfooj7ncojnpd3b5d6wmuyxcsyqrsis4xxweafycsjd3gccp2q
+- valory/agent_performance_summary_abci:0.1.0:bafybeiet4cq3ata4ny7e5edfuyaupimltzzb2drefxxue2tmni5c64gvae
 - valory/funds_manager:0.1.0:bafybeigiaepsk7t2dqmbwgk2iesxuttlsmypadfvku5sp4mucckzpdgssi
 customs:
 - valory/kelly_criterion:0.1.0:bafybeig6rcv7pnasuwky52evelry7dxwpkxda5jzfe2evtc323c6e3qlsi
@@ -215,7 +215,8 @@ models:
       mech_activity_checker_contract: ${str:0x0000000000000000000000000000000000000000}
       mech_wrapped_native_token_address: ${MECH_WRAPPED_NATIVE_TOKEN_ADDRESS:str:0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d}
       sample_bets_closing_days: ${int:10}
-      max_trades: ${MAX_TRADES:int:0}
+      irrelevant_tools: ${IRRELEVANT_TOOLS:list:[]}
+      max_trades: ${MAX_TRADES:int:3}
       max_mech_requests_per_cycle: ${MAX_MECH_REQUESTS_PER_CYCLE:int:10}
       polymarket_spread_min: ${float:0.0}
       polymarket_spread_max: ${float:1.0}

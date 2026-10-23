@@ -21,6 +21,9 @@
 
 from typing import Generator
 
+from packages.valory.skills.agent_performance_summary_abci.activity_goal import (
+    record_trade,
+)
 from packages.valory.skills.decision_maker_abci.behaviours.base import (
     DecisionMakerBaseBehaviour,
 )
@@ -38,10 +41,19 @@ class TradeCountBehaviour(DecisionMakerBaseBehaviour):
     def async_act(self) -> Generator:
         """Increment and persist the durable trade counter after a settled placement."""
         with self.context.benchmark_tool.measure(self.behaviour_id).local():
-            # Increment the durable file-backed counter so the count survives
-            # agent restarts, which reset the ABCI database to its setup state.
-            new_count = self.durable_trade_count() + 1
-            self.store_trade_count(new_count)
+            placement_key = f"omen:{self.synchronized_data.final_tx_hash}"
+            try:
+                record_trade(
+                    self.params.store_path,
+                    self.synced_timestamp,
+                    self.sampled_bet.id,
+                    placement_key,
+                )
+            except (OSError, ValueError) as exc:
+                self.context.logger.error(f"Could not record settled trade: {exc}")
+            new_count = self.record_successful_placement(placement_key)
+            if new_count is None:
+                new_count = self.durable_trade_count()
             self.context.logger.info(
                 f"Recorded successful Omen placement; "
                 f"successful_trade_count is now {new_count}."

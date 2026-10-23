@@ -582,6 +582,7 @@ def _build_decision_maker_params_kwargs() -> dict:
         "mech_marketplace_v1_suitable_tools": [],
         "sample_bets_closing_days": 7,
         "max_trades": 0,
+        "irrelevant_tools": [],
         "max_mech_requests_per_cycle": 10,
         "polymarket_spread_min": 0.0,
         "polymarket_spread_max": 1.0,

@@ -90,7 +90,7 @@ class TestPostBetUpdateBehaviour:
             mock_sd.return_value = mock_synced
             _exhaust(behaviour.async_act())
 
-        update_bet_calls.assert_called_once_with()
+        update_bet_calls.assert_called_once_with(record_ledger=False)
         update_sell_calls.assert_not_called()
         assert len(payloads_sent) == 1
         payload = payloads_sent[0]
@@ -200,7 +200,7 @@ class TestPostBetUpdateBehaviour:
             _exhaust(behaviour.async_act())
             _exhaust(behaviour.async_act())
 
-        update_bet_calls.assert_called_once_with()
+        update_bet_calls.assert_called_once_with(record_ledger=False)
         update_sell_calls.assert_not_called()
         assert len(payloads_sent) == 2
 

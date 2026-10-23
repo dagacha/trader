@@ -19,6 +19,7 @@
 
 """This module contains the tests for valory/decision_maker_abci's base behaviour."""
 
+import json
 import re
 import tempfile
 from copy import deepcopy
@@ -2839,3 +2840,44 @@ class TestDecisionMakerBaseBehaviour(FSMBehaviourBaseCase):
             next(gen)
         except StopIteration as e:
             assert e.value == 50
+
+
+@pytest.mark.parametrize(
+    "marketplace,expected", [(True, "0xpriority"), (False, "0xlegacy")]
+)
+def test_v1_lookup_uses_request_mech(marketplace: bool, expected: str) -> None:
+    """V1 metadata lookup must use the same mech as the request path."""
+    behaviour = TestPlacementCountIdempotency._behaviour(Path("/unused"))
+    behaviour.params.use_mech_marketplace = marketplace
+    behaviour.params.mech_contract_address = "0xlegacy"
+    behaviour.context.params.mech_marketplace_config = MagicMock(
+        priority_mech_address="0xpriority"
+    )
+
+    def interact(**kwargs: Any) -> Generator[None, None, bool]:
+        assert kwargs["contract_address"] == expected
+        return True
+        yield
+
+    behaviour.contract_interact = interact  # type: ignore[method-assign, assignment]
+    with pytest.raises(StopIteration) as result:
+        next(behaviour._mech_contract_interact("get_mech_id", "id", "mech_id"))
+    assert result.value.value is True
+
+
+def test_durable_counter_is_scoped_to_checkpoint(tmp_path: Path) -> None:
+    """A restart after a checkpoint must discard the old cap and placement keys."""
+    behaviour = TestPlacementCountIdempotency._behaviour(tmp_path)
+    with patch.object(
+        type(behaviour), "synchronized_data", new_callable=PropertyMock
+    ) as sd:
+        sd.return_value.previous_checkpoint = 1000
+        behaviour.store_trade_count_state(2, {"old"})
+        assert (
+            json.loads(behaviour.trade_count_filepath.read_text())["period_start"]
+            == 1000
+        )
+        sd.return_value.previous_checkpoint = None
+        assert behaviour.read_trade_count_state() == (2, {"old"})
+        sd.return_value.previous_checkpoint = 2000
+        assert behaviour.read_trade_count_state() == (0, set())

@@ -29,6 +29,7 @@ from packages.valory.skills.abstract_round_abci.base import get_name
 from packages.valory.skills.abstract_round_abci.behaviour_utils import BaseBehaviour
 from packages.valory.skills.abstract_round_abci.behaviours import AbstractRoundBehaviour
 from packages.valory.skills.agent_performance_summary_abci.activity_goal import (
+    activity_goal_progress,
     count_trades_since,
     effective_activity_goal,
     is_valid_activity_goal,
@@ -255,10 +256,12 @@ class CheckStopTradingBehaviour(StakingInteractBaseBehaviour):
         try:
             progress = count_trades_since(store_path, period_start, self.context.logger)
         except (OSError, ValueError) as e:
-            self.context.logger.error(
-                f"Unusable trades ledger, treating the activity goal as not met: {e}"
-            )
-            return None
+            self.context.logger.error(f"Unusable trades ledger: {e}")
+            progress = activity_goal_progress(store_path, period_start, 0)
+            if self.params.max_trades <= 0 or progress < self.params.max_trades:
+                return None
+        else:
+            progress = activity_goal_progress(store_path, period_start, progress)
         return update_activity_goal(
             store_path,
             target,

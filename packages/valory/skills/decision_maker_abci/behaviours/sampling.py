@@ -25,6 +25,7 @@ from functools import cached_property
 from typing import Any, Dict, Generator, List, Optional, Tuple
 
 from packages.valory.skills.agent_performance_summary_abci.activity_goal import (
+    activity_goal_progress,
     effective_activity_goal,
 )
 from packages.valory.skills.agent_performance_summary_abci.models import (
@@ -64,21 +65,21 @@ class SamplingBehaviour(DecisionMakerBaseBehaviour, QueryingBehaviour):
     def activity_goal_met(self) -> bool:
         """Whether the persisted activity goal is met for the current epoch.
 
-        :return: whether the block exists, is valid and is met in this epoch.
+        :return: whether the activity ledger or durable cap completes this goal.
         """
+        period_start = self.synchronized_data.previous_checkpoint
         goal = read_activity_goal(self.params.store_path)
-        if (
-            goal is None
-            or goal.period_start != self.synchronized_data.previous_checkpoint
-        ):
+        progress = 0
+        target = self.params.max_trades
+        if goal is not None and goal.period_start == period_start:
+            progress = goal.progress
+            target = effective_activity_goal(None, goal.target, self.params.max_trades)
+        elif target <= 0:
             return False
-        target = effective_activity_goal(None, goal.target, self.params.max_trades)
-        if target != goal.target:
-            self.context.logger.info(
-                f"Activity goal capped: target={target}, goal={goal.target}, "
-                f"max_trades={self.params.max_trades}"
-            )
-        return goal.progress >= target
+        progress = activity_goal_progress(
+            self.params.store_path, period_start, progress
+        )
+        return progress >= target
 
     @property
     def kpi_is_met(self) -> bool:

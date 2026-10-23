@@ -20,8 +20,12 @@
 """Tests for TradeCountBehaviour."""
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, PropertyMock, patch
 
+from packages.valory.skills.agent_performance_summary_abci.activity_goal import (
+    read_trades,
+)
 from packages.valory.skills.decision_maker_abci.behaviours.base import (
     TRADE_COUNT_FILENAME,
 )
@@ -44,6 +48,9 @@ def _make_behaviour(store_path):  # type: ignore[no-untyped-def]
     context = MagicMock()
     context.agent_address = "test_agent"
     context.params.store_path = store_path
+    context.state.round_sequence.last_round_transition_timestamp.timestamp.return_value = (
+        1001
+    )
     # `benchmark_tool.measure(...).local()` is used as a context manager
     measure_cm = MagicMock()
     measure_cm.local.return_value.__enter__.return_value = None
@@ -63,11 +70,18 @@ def _run_async_act(behaviour, current_count):  # type: ignore[no-untyped-def]
 
     behaviour.finish_behaviour = mock_finish  # type: ignore[method-assign]
 
-    with patch.object(
-        type(behaviour), "synchronized_data", new_callable=PropertyMock
-    ) as mock_sd:
+    with (
+        patch.object(
+            type(behaviour), "synchronized_data", new_callable=PropertyMock
+        ) as mock_sd,
+        patch.object(type(behaviour), "sampled_bet", new_callable=PropertyMock) as bet,
+    ):
+        bet.return_value.id = "market"
         sd = MagicMock()
         sd.successful_trade_count = current_count
+        sd.final_tx_hash = "0xsettled"
+        sd.sampled_bet_index = 0
+        sd.previous_checkpoint = None
         mock_sd.return_value = sd
 
         gen = behaviour.async_act()
@@ -102,7 +116,7 @@ class TestTradeCountBehaviour:
         # The new count is persisted to the durable file.
         assert json.loads((tmp_path / TRADE_COUNT_FILENAME).read_text()) == {
             "count": 1,
-            "placement_keys": [],
+            "placement_keys": ["omen:0xsettled"],
         }
 
     def test_increments_counter_from_positive(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -113,7 +127,7 @@ class TestTradeCountBehaviour:
         assert payload.successful_trade_count == 5
         assert json.loads((tmp_path / TRADE_COUNT_FILENAME).read_text()) == {
             "count": 5,
-            "placement_keys": [],
+            "placement_keys": ["omen:0xsettled"],
         }
 
     def test_increments_from_durable_file_after_restart(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -130,7 +144,7 @@ class TestTradeCountBehaviour:
         assert payload.successful_trade_count == 3
         assert json.loads((tmp_path / TRADE_COUNT_FILENAME).read_text()) == {
             "count": 3,
-            "placement_keys": [],
+            "placement_keys": ["omen:0xsettled"],
         }
 
     def test_payload_sender_is_agent_address(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -145,5 +159,48 @@ class TestTradeCountBehaviour:
         behaviour = _make_behaviour(store_path=tmp_path / "missing_dir")
         payload = _run_async_act(behaviour, 0)
         assert isinstance(payload, TradeCountPayload)
-        assert payload.successful_trade_count == 1
-        behaviour.context.logger.error.assert_called_once()
+        assert payload.successful_trade_count == 0
+        behaviour.context.logger.info.assert_called_with(
+            "Recorded successful Omen placement; successful_trade_count is now 0."
+        )
+        errors = [
+            call.args[0] for call in behaviour.context.logger.error.call_args_list
+        ]
+        assert len(errors) == 2
+        assert any("Could not record settled trade" in error for error in errors)
+        assert any(
+            "Failed to persist successful-trade state" in error for error in errors
+        )
+
+    def test_failed_write_keeps_durable_count(self, tmp_path: Path) -> None:
+        """A failed increment must not report a count absent from the file."""
+        counter = tmp_path / TRADE_COUNT_FILENAME
+        counter.write_text("2")
+        behaviour = _make_behaviour(tmp_path)
+        with patch.object(Path, "write_text", side_effect=OSError("disk full")):
+            payload = _run_async_act(behaviour, 0)
+        assert payload.successful_trade_count == 2
+        assert counter.read_text() == "2"
+        behaviour.context.logger.info.assert_called_with(
+            "Recorded successful Omen placement; successful_trade_count is now 2."
+        )
+
+
+def test_settled_omen_trade_updates_both_counters(tmp_path: Path) -> None:
+    """A settled Omen placement must update the cap and the activity ledger once."""
+    behaviour = _make_behaviour(tmp_path)
+    with (
+        patch.object(type(behaviour), "sampled_bet", new_callable=PropertyMock) as bet,
+        patch.object(
+            type(behaviour), "synced_timestamp", new_callable=PropertyMock
+        ) as timestamp,
+    ):
+        bet.return_value.id = "market"
+        timestamp.return_value = 1001
+        first = _run_async_act(behaviour, 0)
+        timestamp.return_value = 1002
+        retry = _run_async_act(behaviour, 1)
+    assert first.successful_trade_count == retry.successful_trade_count == 1
+    assert read_trades(tmp_path) == [
+        {"timestamp": 1001, "bet_id": "market", "placement_key": "omen:0xsettled"}
+    ]

@@ -2208,3 +2208,43 @@ class TestAddOfferedTools:
 
         assert policy.serialize() == before
         behaviour.context.logger.info.assert_not_called()
+
+
+def test_v1_empty_allowlist_intersection_does_not_expose_tools() -> None:
+    """An allowlist with no served tool must fail the tools read."""
+    behaviour = _make_behaviour()
+    api = MagicMock()
+    api.process_response.return_value = ["excluded"]
+    api.is_retries_exceeded.return_value = False
+    behaviour._check_hash = MagicMock()  # type: ignore[method-assign]
+    behaviour.set_mech_agent_specs = MagicMock()  # type: ignore[method-assign]
+    behaviour.get_http_response = MagicMock(return_value=_return_gen(MagicMock()))  # type: ignore[method-assign]
+    with (
+        patch.object(
+            type(behaviour),
+            "mech_tools_api",
+            new_callable=PropertyMock,
+            return_value=api,
+        ),
+        patch.object(
+            type(behaviour),
+            "synchronized_data",
+            new_callable=PropertyMock,
+            return_value=MagicMock(is_marketplace_v2=False),
+        ),
+        patch.object(
+            type(behaviour),
+            "params",
+            new_callable=PropertyMock,
+            return_value=MagicMock(
+                mech_marketplace_v1_suitable_tools=frozenset({"prediction"}),
+                use_mech_marketplace=False,
+                mech_contract_address=V1_MECH,
+            ),
+        ),
+    ):
+        gen = behaviour._get_mech_tools()
+        next(gen)
+        with pytest.raises(StopIteration) as result:
+            next(gen)
+    assert result.value.value is False

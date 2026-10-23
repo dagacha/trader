@@ -2066,3 +2066,20 @@ class TestAsyncAct:
         assert isinstance(payload, SamplingPayload)
         assert payload.benchmarking_finished is True
         assert payload.day_increased is True
+
+
+@pytest.mark.parametrize("block", [None, _goal_block(1000, progress=0)])
+def test_activity_goal_met_from_durable_cap(tmp_path: Path, block: Any) -> None:
+    """A missing or stale ledger cannot hide a reached durable cap."""
+    _write_goal_block(tmp_path, block)
+    (tmp_path / "successful_trade_count.txt").write_text("2")
+    behaviour = _make_behaviour()
+    with (
+        patch.object(
+            type(behaviour), "synchronized_data", new_callable=PropertyMock
+        ) as sd,
+        patch.object(type(behaviour), "params", new_callable=PropertyMock) as params,
+    ):
+        sd.return_value = MagicMock(previous_checkpoint=1000)
+        params.return_value = MagicMock(store_path=tmp_path, max_trades=2)
+        assert behaviour.activity_goal_met

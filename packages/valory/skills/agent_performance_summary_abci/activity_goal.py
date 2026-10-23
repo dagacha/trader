@@ -23,7 +23,7 @@ import json
 from dataclasses import asdict
 from logging import Logger
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from packages.valory.skills.agent_performance_summary_abci.models import (
     ActivityGoal,
@@ -36,6 +36,8 @@ from packages.valory.skills.agent_performance_summary_abci.models import (
 ACTIVITY_GOAL_KEY = "activity_goal"
 ACTIVITY_GOAL_TRADES_FILE = "activity_goal_trades.json"
 ACTIVITY_GOAL_UNIT = "trades"
+# Keep the counter in the data directory so it survives an agent restart.
+TRADE_COUNT_FILENAME = "successful_trade_count.txt"
 
 
 def is_valid_activity_goal(value: Any) -> bool:
@@ -59,6 +61,67 @@ def effective_activity_goal(
     """
     goal = default_goal if stored_goal is None else stored_goal
     return min(goal, max_trades) if max_trades > 0 else goal
+
+
+def activity_goal_progress(
+    store_path: Path, period_start: Optional[int], ledger_progress: int
+) -> int:
+    """Include the durable cap counter for the same activity period.
+
+    Legacy counters bind to the first known checkpoint when read.
+    A missing or invalid counter leaves the ledger progress unchanged.
+
+    :param store_path: directory containing the durable counter.
+    :param period_start: the current staking checkpoint.
+    :param ledger_progress: trades counted from the activity ledger.
+    :return: the progress shared by the activity goal and trade cap.
+    """
+    count, _ = read_successful_trade_count_state(store_path, period_start)
+    return max(ledger_progress, count if count is not None else 0)
+
+
+def read_successful_trade_count_state(
+    store_path: Path, period_start: Optional[int]
+) -> Tuple[Optional[int], Set[str]]:
+    """Read the durable counter and placement keys for the activity period.
+
+    Bind an undated counter to the first known checkpoint. Keep its count if
+    that write fails, and retry on the next read.
+
+    :param store_path: directory containing the durable counter.
+    :param period_start: the current staking checkpoint, or unknown after restart.
+    :return: the count and placement keys, or an unavailable count and no keys.
+    """
+    try:
+        state = json.loads((store_path / TRADE_COUNT_FILENAME).read_text())
+        if is_plain_int(state) and state >= 0:
+            state = {"count": state, "placement_keys": []}
+        if not isinstance(state, dict):
+            return None, set()
+        if (
+            period_start is not None
+            and state.get("period_start", period_start) != period_start
+        ):
+            return 0, set()
+        count = state["count"]
+        keys = state["placement_keys"]
+        if (
+            not is_plain_int(count)
+            or count < 0
+            or not isinstance(keys, list)
+            or not all(isinstance(key, str) for key in keys)
+        ):
+            return None, set()
+        if period_start is not None and "period_start" not in state:
+            state["period_start"] = period_start
+            try:
+                write_json_atomically(store_path / TRADE_COUNT_FILENAME, state)
+            except OSError:
+                # Keep the valid count if the checkpoint cannot be saved yet.
+                pass
+        return count, set(keys)
+    except (OSError, KeyError, ValueError):
+        return None, set()
 
 
 def _is_trade_entry(entry: Any) -> bool:
@@ -93,15 +156,22 @@ def read_trades(store_path: Path) -> List[Dict[str, Any]]:
     return [entry for entry in trades if _is_trade_entry(entry)]
 
 
-def record_trade(store_path: Path, timestamp: int, bet_id: str) -> None:
+def record_trade(
+    store_path: Path, timestamp: int, bet_id: str, placement_key: Optional[str] = None
+) -> None:
     """Append one placed trade to the ledger, once.
 
     :param store_path: directory containing the ledger.
     :param timestamp: when the trade was placed.
     :param bet_id: the id of the bet traded.
+    :param placement_key: stable placement id, when available.
     """
     trades = read_trades(store_path)
     entry = {"timestamp": timestamp, "bet_id": bet_id}
+    if placement_key is not None:
+        if any(trade.get("placement_key") == placement_key for trade in trades):
+            return
+        entry["placement_key"] = placement_key
     # One placement per round, so a repeat of the same pair is a retried write.
     if entry in trades:
         return

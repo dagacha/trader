@@ -31,6 +31,7 @@ from dataclasses import asdict
 from typing import Any, Dict, Generator, List, Optional, Set
 from uuid import uuid4
 
+from packages.valory.skills.chatui_abci.tool_keys import split_tool_key, tool_names
 from packages.valory.skills.decision_maker_abci.behaviours.base import (
     DecisionMakerBaseBehaviour,
 )
@@ -122,7 +123,9 @@ class MechOnlySelectionBehaviour(DecisionMakerBaseBehaviour):
         :return: a Mech tool id, or ``None`` when no tool is on offer.
         """
         if self.synchronized_data.has_tool_selection_run:
-            return self.synchronized_data.mech_tool
+            selected = self.synchronized_data.mech_tool
+            if self.eligible_tools({selected}):
+                return selected
 
         def safe_tools(accessor: Any) -> Set[str]:  # pragma: no cover
             """Resolve a tool-set accessor, tolerating an unset synced key."""
@@ -131,8 +134,14 @@ class MechOnlySelectionBehaviour(DecisionMakerBaseBehaviour):
             except (TypeError, ValueError):
                 return set()
 
-        available = safe_tools(lambda: self.synchronized_data.available_mech_tools)
-        served = safe_tools(lambda: self.synchronized_data.mech_tools)
+        available = tool_names(
+            self.eligible_tools(
+                safe_tools(lambda: self.synchronized_data.available_mech_tools)
+            )
+        )
+        served = tool_names(
+            self.eligible_tools(safe_tools(lambda: self.synchronized_data.mech_tools))
+        )
 
         # Prefer tools both curated and served; otherwise prefer the served
         # set (guarantees the chosen tool has at least one mech to route to),
@@ -150,6 +159,8 @@ class MechOnlySelectionBehaviour(DecisionMakerBaseBehaviour):
 
         if policy is not None and policy.weighted_accuracy:
             best = policy.best_tool
+            if best is not None:
+                best = split_tool_key(best)[1]
             if best is not None and best in candidates:
                 return best
 
@@ -181,6 +192,17 @@ class MechOnlySelectionBehaviour(DecisionMakerBaseBehaviour):
 
     def async_act(self) -> Generator:
         """Select the next batch and prepare the Mech request payload."""
+        if (
+            self.synchronized_data.is_activity_target_met
+            or self.synchronized_data.activity_target == 0
+        ):
+            # The cap completes the trade goal. Mech-only requests can finish a
+            # positive staking target. Skip requests when it is met or absent.
+            payload = MechOnlySelectionPayload(
+                self.context.agent_address, None, json.dumps([]), None
+            )
+            yield from self.finish_behaviour(payload)
+            return
         with self.context.benchmark_tool.measure(self.behaviour_id).local():
             self.read_bets()
 

@@ -45,6 +45,7 @@ def _make_behaviour(store_path):  # type: ignore[no-untyped-def]
     context = MagicMock()
     context.agent_address = "test_agent"
     context.params.store_path = store_path
+    context.state.synchronized_data.db.get.return_value = None
     measure_cm = MagicMock()
     measure_cm.local.return_value.__enter__.return_value = None
     measure_cm.local.return_value.__exit__.return_value = False
@@ -69,6 +70,7 @@ def _run_async_act(behaviour, is_checkpoint, current_count, current_queue):  # t
         sd = MagicMock()
         sd.is_checkpoint_reached = is_checkpoint
         sd.successful_trade_count = current_count
+        sd.previous_checkpoint = None
         sd.mech_only_queue = current_queue
         mock_sd.return_value = sd
 
