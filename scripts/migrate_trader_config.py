@@ -19,6 +19,7 @@
 
 """Migrate off-chain settings, marketplace addresses, and Omen strategy defaults.
 
+Sync saved quickstart inputs and cached service, agent, and Kubernetes envs.
 Use only with an Omen quickstart and Omen cached services. The profit threshold
 uses 18-decimal xDAI units. Do not run against Polymarket or mixed-service caches.
 """
