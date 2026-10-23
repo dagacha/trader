@@ -50,6 +50,8 @@ DECODER = json.JSONDecoder()
 CONTROL_ENV = (
     "PRIORITY_MECH_ADDRESS",
     "PRIORITY_MECH_SERVICE_ID",
+    "PRIORITIZE_FRESH_MARKETS",
+    "USE_OFFCHAIN",
     "IRRELEVANT_TOOLS",
     "MAX_TRADES",
     "MAX_MECH_REQUESTS_PER_CYCLE",
@@ -565,6 +567,8 @@ def sync_cached_env(text, desired, env_file=False):
             else:
                 additions.append(indent + key + ": " + json.dumps(value) + "\n")
             changes.append(f"add {key} from quickstart")
+        if additions and end > start and not lines[end - 1].endswith(("\n", "\r")):
+            lines[end - 1] += "\n"
         lines[end:end] = additions
     return "".join(lines), changes
 
