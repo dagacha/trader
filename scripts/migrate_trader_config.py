@@ -19,6 +19,7 @@
 
 """Migrate off-chain settings, marketplace addresses, and Omen strategy defaults.
 
+Sync saved quickstart inputs and cached service, agent, and Kubernetes envs.
 Use only with an Omen quickstart and Omen cached services. The profit threshold
 uses 18-decimal xDAI units. Do not run against Polymarket or mixed-service caches.
 """
@@ -383,6 +384,18 @@ def sync_cached_json(text, desired):
     data = json.loads(text)
     changes = []
     for obj in list(objects(data)):
+        saved = obj.get("user_provided_args")
+        if isinstance(saved, dict):
+            for key, source in desired.items():
+                value = source["value"]
+                if key not in saved:
+                    saved[key] = value
+                    text = edit_json(text, data, addition=(key, value))
+                    changes.append(f"add saved input {key} from quickstart")
+                elif saved[key] != value:
+                    saved[key] = value
+                    text = edit_json(text, data, value)
+                    changes.append(f"sync saved input {key} from quickstart")
         env = obj.get("env_variables")
         if isinstance(env, dict):
             for key, source in desired.items():
@@ -421,10 +434,10 @@ def sync_cached_env(text, desired, env_file=False):
     blocks = [(0, len(lines), None)] if env_file else []
     if not env_file:
         for index, line in enumerate(lines):
-            match = re.match(r"(\s*)(?:environment|env):\s*$", line)
+            match = re.match(r"(\s*)(- )?(?:environment|env):\s*$", line)
             if not match:
                 continue
-            level = len(match[1])
+            level = len(match[1]) + len(match[2] or "")
             end = index + 1
             while end < len(lines):
                 entry = lines[end]
@@ -526,6 +539,10 @@ def migrate(quickstart, dry_run=False, warn_only=False):
         for name in ("kelly_criterion", "fixed_bet")
     }
     paths = [quickstart / "configs/config_predict_trader.json"]
+    paths.extend(sorted((quickstart / ".operate").glob("*-quickstart-config.json")))
+    legacy = quickstart / ".operate/local_config.json"
+    if legacy.is_file():
+        paths.append(legacy)
     services = sorted((quickstart / ".operate/services").glob("sc-*"))
     if not services:
         print(f">> {quickstart}: no operate services; skipping cache")
@@ -543,9 +560,13 @@ def migrate(quickstart, dry_run=False, warn_only=False):
             text = source.read()
         priorities = []
         warnings = []
-        updated, changes = (migrate_json if path.suffix == ".json" else migrate_env)(
-            text, priorities, hashes, warnings
-        )
+        # Saved inputs use plain values. Only sync explicit controls there.
+        if path.parent == quickstart / ".operate":
+            updated, changes = text, []
+        else:
+            updated, changes = (
+                migrate_json if path.suffix == ".json" else migrate_env
+            )(text, priorities, hashes, warnings)
         if path == paths[0]:
             env = json.loads(updated).get("env_variables", {})
             desired = {

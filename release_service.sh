@@ -424,6 +424,8 @@ for qs in "${QUICKSTARTS[@]+"${QUICKSTARTS[@]}"}"; do
       continue 2
     fi
   done
+  # Sync saved quickstart inputs as well as service caches before operate can
+  # rebuild them. Keep this before the unchanged-hash shortcut below.
   if [ "$DRY_RUN" -eq 1 ]; then
     python3 "$REPO/scripts/migrate_trader_config.py" "$qs" --dry-run
   else

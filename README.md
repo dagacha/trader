@@ -115,6 +115,40 @@ Explicit quickstart values stay in effect. The release migration copies
 `MAX_TRADES` into the cache only when quickstart sets it. For example, trader 24's
 user-set value of `1` stays `1`.
 
+For Omen quickstart deployments, run the migration before each call to
+`run_service.sh`. This includes cron runs and runs after a quickstart update:
+
+```bash
+python3 /path/to/trader/scripts/migrate_trader_config.py /path/to/quickstart --dry-run
+python3 /path/to/trader/scripts/migrate_trader_config.py /path/to/quickstart
+```
+
+The migration syncs explicit controls to `.operate/*-quickstart-config.json`
+(`user_provided_args`), the legacy `.operate/local_config.json`, saved service
+configs, and generated env files. Operate reads saved user inputs before it
+builds the service. Those inputs must match too, or a redeploy can restore a
+stale value. `release_service.sh` runs this migration even when the service hash
+has not changed. It builds and publishes artifacts; the separate quickstart
+repo starts the service.
+
+To cover manual and cron deployments, add the migration to the Omen quickstart's
+`run_service.sh`, after `set -e` and before container cleanup. For trader 24 on
+DG's server, the exact command is:
+
+```bash
+python3 /home/ubuntu/trader/scripts/migrate_trader_config.py /home/ubuntu/24-trader/quickstart
+```
+
+Keep this hook in the quickstart fork so updates preserve it. If a cron generator
+also calls operate directly, add the same hook before that call and stop the run
+if migration fails. Do not use this Omen migration for Polymarket caches.
+
+Keep per-trader config edits in local commits, or keep overrides outside the
+tracked config and apply them before migration. Review config files for secrets
+before any commit. A script that runs `git stash` without restoring the stash
+removes local settings from the next deployment. Restore and check those settings
+before migration and deployment.
+
 ### Polystrat (`polymarket_trader`) — Polygon / Polymarket CLOB v2
 
 > **Local-dev gotcha.** The agent-level [`aea-config.yaml`](./packages/valory/agents/trader/aea-config.yaml) defaults are **Omen-flavored** (`is_running_on_polymarket=false`, `mech_chain_id=gnosis`, `default_chain_id=gnosis`, Omen-scaled `strategies_kwargs`, Omen `tools_accuracy_hash`, `use_multi_bets_mode=true`, etc.). Service-level overrides only apply when you run via `autonomy deploy` against `valory/polymarket_trader`. If you run the agent directly with `make run-agent` / `aea-helpers run-agent`, you **must** pass the full Polystrat override set below — otherwise the agent will start in Omenstrat mode against Polygon RPCs and behave incorrectly.
