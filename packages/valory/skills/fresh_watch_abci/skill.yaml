@@ -8,17 +8,17 @@ aea_version: '>=2.0.0, <3.0.0'
 fingerprint:
   README.md: bafybeieurwex74dtimmmndedzrhznyfivsuaf27lteomz4cz23upjtv2pq
   __init__.py: bafybeihyphnywie3dyf7f7mmwm7yvcwekkgsa4mq5273ojuzbjsznvorv4
-  behaviours.py: bafybeieb6hcdranmiedow5fpo2cqkcdushsxmdwe6zdet5yhtrf5f5wmfu
+  behaviours.py: bafybeihohtqjveosmiviv62zzkunu5l6ixalug5iauzcwkbgx3dhyy4z5e
   dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
   fsm_specification.yaml: bafybeieiislbmdq6mfm4fscuui5aalhiknowuq3sym7k5b3erfabsf3xe4
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
   models.py: bafybeid4g2263qa64vbpqkpr2fitowf3vlb5hrc2eyiilhvib3w6wt225y
   rounds.py: bafybeibmqa62zmp26f7egxsuq6pb3wpbrw5yxbzpgg4hedwszwtag2k3wi
-  strategy.py: bafybeiap2rvmfvgkei2fy3gxzjqmkigqweub7mm5obkmgxppbjrzowbyd4
+  strategy.py: bafybeif3jhlo3ybeej6sf6dromxxfstoj45jig6fw2ckmrwowzgk6d7tf4
   tests/__init__.py: bafybeiebuokdlpgmmm6orggvfnnm537acc3eogkkrn6jyjaxzqyb7t7yzy
-  tests/test_behaviours.py: bafybeignsnnhm6ear5zxrgygwnfbkysgym3xx34xkqpuu6nhzwacy7my7e
+  tests/test_behaviours.py: bafybeibr6ya3r76xnlrwbb62wxcqg2pke6fgxmxlnworoa6ihumc6kkmaa
   tests/test_rounds.py: bafybeihmy4lrkxqveq2pxhqldedspfeeeo3xrydkzms246exc2kmjagvky
-  tests/test_strategy.py: bafybeifaggxzgl33leou4tsnytw6ebz2ja4hqrxl4tplz7f4gy6ovwhpem
+  tests/test_strategy.py: bafybeiftmolkrbumn7arsbu2y67qc234mhlbloqlau2yg3jy2vg2cxmvra
 fingerprint_ignore_patterns: []
 connections: []
 contracts: []
@@ -344,6 +344,7 @@ models:
       - '0x89c5cc945dd550bcffb72fe42bff002429f46fec'
       - '0xffc8029154ecd55abed15bd428ba596e7d23f557'
       fresh_max_age_s: 600
+      overlap_s: 120
       poll_s: 15
       active_window_utc: 00:00-05:30
       housekeeping_interval_s: 600

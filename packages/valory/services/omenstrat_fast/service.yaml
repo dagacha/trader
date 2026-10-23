@@ -6,9 +6,9 @@ description: A single-agent service (sovereign agent) placing bets on Omen, used
 aea_version: '>=2.0.0, <3.0.0'
 license: Apache-2.0
 fingerprint:
-  README.md: bafybeihppmqhh6x7u3ilqe4mmmqesznsj6dhknkbdv4kbxezaqfrxmg2ie
+  README.md: bafybeibowgi4q6s5rrzqtxqihm7l65bu5l64n4q65vezc47s3iwy7wmak4
 fingerprint_ignore_patterns: []
-agent: valory/omenstrat_fast:0.1.0:bafybeia6opxmx3nczsn6xhyzey6cav2xbnu4wuqfnpajypnmggjpilnrpq
+agent: valory/omenstrat_fast:0.1.0:bafybeichbx5zykpi4zlx2vanzcguf6zd575f7vhmuxm23bf3lyapnxu7z4
 number_of_agents: 1
 deployment:
   agent:
@@ -192,6 +192,7 @@ models:
       marketplace_api_url: ${MARKETPLACE_API_URL:str:https://marketplace.olas.network/api/erc8004}
       creators: ${CREATORS:list:["0x89c5cc945dd550bcffb72fe42bff002429f46fec","0xffc8029154ecd55abed15bd428ba596e7d23f557"]}
       fresh_max_age_s: ${FRESH_MAX_AGE_S:int:600}
+      overlap_s: ${OVERLAP_S:int:120}
       poll_s: ${POLL_S:int:15}
       active_window_utc: ${ACTIVE_WINDOW_UTC:str:00:00-05:30}
       housekeeping_interval_s: ${HOUSEKEEPING_INTERVAL_S:int:600}

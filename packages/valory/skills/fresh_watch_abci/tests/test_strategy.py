@@ -19,6 +19,7 @@
 
 """Test the fast strategy and durable fresh-market queue."""
 
+import json
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
@@ -142,7 +143,7 @@ def test_queue(tmp_path: Any) -> None:
     queue.save()
     assert (FreshQueue(path).pop() or {})["id"] == "a"
     queue = FreshQueue(path)
-    assert queue.asked == {"a"}
+    assert queue.asked == {"a": 940}
     queue.ingest(
         [market("a", 999), market("b", 950), market("e", 1000)], 1000, ["allowed"], 600
     )
@@ -153,7 +154,7 @@ def test_queue(tmp_path: Any) -> None:
 
 
 def test_age_boundary(tmp_path: Any) -> None:
-    """Accept the maximum age and exclude the cursor timestamp."""
+    """Accept the maximum age and reject expired markets."""
     queue = FreshQueue(tmp_path / "fresh.json")
     queue.last_seen = 1
     queue.ingest([market("old", 1), market("edge", 400)], 1000, ["allowed"], 600)
@@ -174,3 +175,71 @@ def test_housekeeping() -> None:
         datetime(2026, 10, 23, 5, 30, tzinfo=timezone.utc).timestamp()
     )
     assert replace(cfg, active_window_utc="23:00-01:00").in_window(inside - 1800)
+
+
+@pytest.mark.parametrize("created", [1000, 999, 880])
+def test_late_market_once(tmp_path: Any, created: int) -> None:
+    """Queue a late result once, including at the overlap boundary."""
+    path = tmp_path / "fresh.json"
+    queue = FreshQueue(path)
+    queue.last_seen = 1000
+    late = market("late", created)
+    queue.ingest([late, late], 1050, ["allowed"], 600)
+    assert queue.pending == [late]
+    queue.save()
+    queue = FreshQueue(path)
+    queue.ingest([late], 1060, ["allowed"], 600)
+    assert queue.pending == [late]
+    assert queue.pop() == late
+    queue = FreshQueue(path)
+    queue.ingest([late], 1070, ["allowed"], 600)
+    assert queue.pending == []
+    assert "late" in queue.asked
+
+
+@pytest.mark.parametrize("overlap", [120, 300])
+def test_prune_asked(tmp_path: Any, overlap: int) -> None:
+    """Prune only beyond the age plus margin, with restart deduplication."""
+    path = tmp_path / "fresh.json"
+    queue = FreshQueue(path)
+    cutoff = 1000 - 600 - overlap
+    rows = [
+        market("expired", cutoff - 1),
+        market("boundary", cutoff),
+        market("fresh", 400),
+    ]
+    queue.ingest(rows, 400, ["allowed"], 600)
+    for row in rows:
+        assert queue.pop() == row
+    queue = FreshQueue(path)
+    queue.ingest([], 1000, ["allowed"], 600, overlap_s=overlap)
+    assert set(queue.asked) == {"boundary", "fresh"}
+    queue.save()
+    queue = FreshQueue(path)
+    queue.ingest(
+        rows + [market("late", 990)], 1000, ["allowed"], 600, overlap_s=overlap
+    )
+    assert [row["id"] for row in queue.pending] == ["late"]
+    assert (queue.pop() or {})["id"] == "late"
+    queue = FreshQueue(path)
+    queue.ingest(
+        rows + [market("late", 990)], 1001, ["allowed"], 600, overlap_s=overlap
+    )
+    assert queue.pending == []
+    assert set(queue.asked) == {"fresh", "late"}
+
+
+def test_legacy_asked_state(tmp_path: Any) -> None:
+    """Load old asked lists and retain IDs until their watermark expires."""
+    path = tmp_path / "fresh.json"
+    path.write_text(json.dumps(dict(asked=["asked"], last_seen=1000)))
+    queue = FreshQueue(path)
+    queue.ingest([market("asked", 990)], 1050, ["allowed"], 600)
+    assert queue.pending == []
+    queue.save()
+    queue = FreshQueue(path)
+    queue.ingest([], 1720, ["allowed"], 600)
+    assert "asked" in queue.asked
+    queue.ingest([market("asked", 990)], 1721, ["allowed"], 600)
+    assert not queue.asked
+    assert queue.pending == []

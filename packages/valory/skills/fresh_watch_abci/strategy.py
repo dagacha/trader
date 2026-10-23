@@ -38,6 +38,7 @@ class FastConfig:
         ]
     )
     fresh_max_age_s: int = 600
+    overlap_s: int = 120
     poll_s: int = 15
     active_window_utc: str = "00:00-05:30"
     housekeeping_interval_s: int = 600
@@ -167,12 +168,23 @@ class FreshQueue:
         self.path = path
         data = json.loads(path.read_text()) if path.exists() else {}
         self.pending: List[Dict[str, Any]] = data.get("pending", [])
-        self.asked = set(data.get("asked", []))
         self.last_seen: int = data.get("last_seen", 0)
+        asked = data.get("asked", {})
+        # Old files lack timestamps. The watermark bounds their creation times.
+        self.asked: Dict[str, int] = (
+            {market_id: self.last_seen for market_id in asked}
+            if isinstance(asked, list)
+            else asked
+        )
         self.last_housekeeping: float = data.get("last_housekeeping", 0.0)
 
     def ingest(
-        self, rows: List[Dict[str, Any]], now: float, creators: List[str], max_age: int
+        self,
+        rows: List[Dict[str, Any]],
+        now: float,
+        creators: List[str],
+        max_age: int,
+        overlap_s: int = 120,
     ) -> None:
         """Add fresh allowed markets in creation order.
 
@@ -180,18 +192,25 @@ class FreshQueue:
         :param now: current timestamp.
         :param creators: allowed creator addresses.
         :param max_age: maximum age at discovery.
+        :param overlap_s: query overlap and extra asked-ID retention margin.
         """
+        # Retain the age boundary plus a margin of at least the query overlap.
+        # Pruned markets are too old for both the query and discovery filter.
+        cutoff = now - max_age - max(0, overlap_s)
+        self.asked = {
+            market_id: created
+            for market_id, created in self.asked.items()
+            if created >= cutoff
+        }
         allowed = {creator.lower() for creator in creators}
         pending = {row["id"]: row for row in self.pending}
-        cursor = self.last_seen
         for row in rows:
             created = int(row["creationTimestamp"])
             if created > now:
                 continue
             self.last_seen = max(self.last_seen, created)
             if (
-                created > cursor
-                and now - created <= max_age
+                now - created <= max_age
                 and row["creator"].lower() in allowed
                 and row["id"] not in self.asked
             ):
@@ -207,7 +226,7 @@ class FreshQueue:
             json.dumps(
                 dict(
                     pending=self.pending,
-                    asked=sorted(self.asked),
+                    asked=self.asked,
                     last_seen=self.last_seen,
                     last_housekeeping=self.last_housekeeping,
                 )
@@ -223,6 +242,6 @@ class FreshQueue:
         if not self.pending:
             return None
         row = self.pending.pop(0)
-        self.asked.add(row["id"])
+        self.asked[row["id"]] = int(row["creationTimestamp"])
         self.save()
         return row

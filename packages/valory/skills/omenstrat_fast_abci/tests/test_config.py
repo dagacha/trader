@@ -71,6 +71,7 @@ def test_dependencies_and_params() -> None:
         )
         args = override["models"]["params"]["args"]
         assert set(args) <= set(skill["models"]["params"]["args"])
+        assert args["overlap_s"] == "${OVERLAP_S:int:120}"
         assert "USE_OFFCHAIN:bool:true" in args["use_offchain"]
         assert (
             "STOP_TRADING_IF_STAKING_KPI_MET:bool:false"
@@ -100,6 +101,7 @@ def test_params_and_state(tmp_path: Any) -> None:
     args = config["models"]["params"]["args"]
     args["store_path"] = str(tmp_path)
     params = FastParams(name="params", skill_context=context, **args)
+    assert params.fast.overlap_s == 120
     assert params.fast.cap == 4
     assert params.use_offchain is True
     assert params.mech_marketplace_config.offchain_poll_interval_seconds == 1.5
@@ -198,3 +200,16 @@ def test_discovery_lifecycle(tmp_path: Any) -> None:
         del b.discovery
         b.teardown()
     assert context.state.fast_background_running is False
+
+
+def test_overlap_defaults() -> None:
+    """Declare the overlap in both skills and the quickstart template."""
+    import json
+
+    for name in ("fresh_watch_abci", "omenstrat_fast_abci"):
+        config = yaml.safe_load(
+            (ROOT / "packages/valory/skills" / name / "skill.yaml").read_text()
+        )
+        assert config["models"]["params"]["args"]["overlap_s"] == 120
+    config = json.loads((ROOT / "configs/config_omenstrat_fast.json").read_text())
+    assert config["env_variables"]["OVERLAP_S"]["value"] == "120"

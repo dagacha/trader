@@ -1,6 +1,6 @@
 {
     "name": "omenstrat_fast",
-    "hash": "bafybeifp5je65v5bvs6cjej7wj3fdngstf5paoq2mc3wmba5itexj43num",
+    "hash": "bafybeicghrrznqjw2ocwq3yiqf7uhkiznezt6urpt5yx2eof5j4rzszhvy",
     "description": "Fresh-watch Omen agent with the fixed fast strategy.",
     "image": "https://operate.olas.network/_next/image?url=%2Fimages%2Fprediction-agent.png&w=3840&q=75",
     "service_version": "feat/omenstrat-fast",
@@ -218,6 +218,12 @@
             "name": "Fresh max age s",
             "description": "",
             "value": "600",
+            "provision_type": "user"
+        },
+        "OVERLAP_S": {
+            "name": "Overlap in seconds",
+            "description": "Query overlap for late-indexed markets.",
+            "value": "120",
             "provision_type": "user"
         },
         "POLL_S": {

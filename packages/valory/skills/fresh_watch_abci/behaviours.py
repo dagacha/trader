@@ -85,7 +85,7 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour):
     ) -> Generator[None, None, Optional[List[Dict[str, Any]]]]:
         """Read all pages before advancing the cursor.
 
-        :param cursor: exclusive creation timestamp watermark.
+        :param cursor: inclusive creation timestamp lower bound.
         :param now: fixed upper timestamp bound for this poll.
         :yield: control during HTTP I/O.
         :return: complete market rows or None on failure.
@@ -100,7 +100,7 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour):
                 "{ fixedProductMarketMakers(first: 1000, skip: "
                 + str(len(rows))
                 + ", orderBy: creationTimestamp, orderDirection: asc, where: {"
-                + f'creator_in: {creators}, creationTimestamp_gt: "{cursor}", '
+                + f'creator_in: {creators}, creationTimestamp_gte: "{cursor}", '
                 + f'creationTimestamp_lte: "{now}", openingTimestamp_gt: "{now}", '
                 + "outcomeSlotCount: 2, isPendingArbitration: false}) {"
                 + _FIELDS
@@ -135,11 +135,16 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour):
                     return {"lane": "wait"}
             elif now - last_poll >= cfg.poll_s:
                 rows = yield from self._fetch_fresh(
-                    max(queue.last_seen, int(now) - cfg.fresh_max_age_s - 1), int(now)
+                    max(
+                        queue.last_seen - cfg.overlap_s, int(now) - cfg.fresh_max_age_s
+                    ),
+                    int(now),
                 )
                 self.context.state.fast_last_poll = now
                 if rows is not None:
-                    queue.ingest(rows, now, cfg.creators, cfg.fresh_max_age_s)
+                    queue.ingest(
+                        rows, now, cfg.creators, cfg.fresh_max_age_s, cfg.overlap_s
+                    )
                     queue.save()
         if not queue.pending:
             if housekeeping_due(now, queue.last_housekeeping, False, cfg):
@@ -249,12 +254,17 @@ class FreshMarketPoller(FreshWatchBehaviour):
             state.fast_polling = True
             try:
                 rows = yield from self._fetch_fresh(
-                    max(queue.last_seen, int(now) - cfg.fresh_max_age_s - 1), int(now)
+                    max(
+                        queue.last_seen - cfg.overlap_s, int(now) - cfg.fresh_max_age_s
+                    ),
+                    int(now),
                 )
                 if rows is not None:
                     # The foreground can pop a market while the HTTP request waits.
                     queue = FreshQueue(queue.path)
-                    queue.ingest(rows, now, cfg.creators, cfg.fresh_max_age_s)
+                    queue.ingest(
+                        rows, now, cfg.creators, cfg.fresh_max_age_s, cfg.overlap_s
+                    )
                     queue.save()
             except TimeoutException:
                 self.context.logger.warning(

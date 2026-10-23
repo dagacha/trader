@@ -29,6 +29,7 @@ import pytest
 from packages.valory.skills.fresh_watch_abci.behaviours import (
     FastBetPlacementBehaviour,
     FastDecisionBehaviour,
+    FreshMarketPoller,
     FreshWatchBehaviour,
 )
 from packages.valory.skills.fresh_watch_abci.strategy import FastConfig, FreshQueue
@@ -95,9 +96,9 @@ def test_select_and_restart(tmp_path: Any) -> None:
         assert selection["lane"] == "market"
         assert selection["mech_tool"] == "superforcaster"
         assert selection["request_prices"] == [0.5, 0.5]
-        assert json.loads((tmp_path / "fresh_watch.json").read_text())["asked"] == [
-            "market"
-        ]
+        assert json.loads((tmp_path / "fresh_watch.json").read_text())["asked"] == {
+            "market": 1000
+        }
         assert (
             json.loads((tmp_path / "multi_bets.json").read_text())[0]["id"] == "market"
         )
@@ -205,7 +206,7 @@ def test_query_pages(tmp_path: Any, pages: Any) -> None:
     b.get_http_response = request
     result = run(b._fetch_fresh(900, 1100))
     assert len(calls) == len(pages)
-    assert 'creationTimestamp_gt: "900"' in calls[0]
+    assert 'creationTimestamp_gte: "900"' in calls[0]
     assert 'creationTimestamp_lte: "1100"' in calls[0]
     assert 'openingTimestamp_gt: "1100"' in calls[0]
     if pages[0] is None:
@@ -429,7 +430,7 @@ def test_discovery_runs_during_request(tmp_path: Any) -> None:
         assert (FreshQueue(queue.path).pop() or {})["id"] == "market"
         run(generator)
     reloaded = FreshQueue(queue.path)
-    assert reloaded.asked == {"market"}
+    assert reloaded.asked == {"market": 1000}
     assert [row["id"] for row in reloaded.pending] == ["next"]
     assert poller.context.state.fast_polling is False
 
@@ -529,3 +530,35 @@ def test_background_queue_has_priority(tmp_path: Any) -> None:
             return_value=1050,
         ):
             assert run(b.select())["lane"] == "market"
+
+
+@pytest.mark.parametrize("cls", [FreshWatchBehaviour, FreshMarketPoller])
+@pytest.mark.parametrize(
+    "last_seen,overlap,expected", [(1000, 120, 880), (0, 120, 450), (1000, 60, 940)]
+)
+def test_overlap_query_bound(
+    tmp_path: Any, cls: Any, last_seen: int, overlap: int, expected: int
+) -> None:
+    """Both discovery paths include the overlap and bound the query by age."""
+    from dataclasses import replace
+
+    b = make(cls, tmp_path)
+    b.context.params.fast = replace(b.context.params.fast, overlap_s=overlap)
+    b.sleep = lambda *args: done(None)
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    queue.last_seen = last_seen
+    queue.last_housekeeping = 1050
+    queue.save()
+    calls = []
+
+    def fetch(cursor: int, now: int) -> Any:
+        calls.append((cursor, now))
+        return done([])
+
+    b._fetch_fresh = fetch
+    with patch(
+        "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+        return_value=1050,
+    ):
+        run(b.async_act() if cls is FreshMarketPoller else b.select())
+    assert calls == [(expected, 1050)]

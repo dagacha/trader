@@ -18,7 +18,10 @@ The trading lane is:
 `FreshWatch -> DecisionRequest -> MechRequest -> MechResponse -> FastDecision -> BetPlacement -> settlement -> PostBetUpdate -> FreshWatch`
 
 FreshWatch uses a timestamp-bounded, paginated query. It polls only the selected
-creators and only new binary markets. It queues fresh markets in creation order.
+creators and binary markets. It includes `creationTimestamp >= last_seen -
+OVERLAP_S`, bounded below by the oldest fresh timestamp. The default overlap is
+120 seconds. It queues fresh markets in creation order and deduplicates IDs
+against both the queue and the persisted asked set.
 A cooperative poller keeps discovery on the 15-second cadence while the FSM
 waits for a Mech response or transaction settlement. It only collects markets;
 requests and bets stay serial. It reloads the queue after each HTTP reply, so
@@ -29,6 +32,15 @@ asked before a paid request. A crash in that gap can lose an opportunity, but
 cannot ask that market twice. Do not share this file between agent instances.
 Keep the store volume on restart. A corrupt file stops selection instead of
 silently discarding the asked set.
+
+Asked IDs store their market creation timestamps. Each successful poll removes
+only entries older than `FRESH_MAX_AGE_S + max(0, OVERLAP_S)` seconds. With the
+defaults, this retains 720 seconds of creation history. An ID stays at the
+cutoff itself. A removed market is already outside both the query and the
+fresh-age filter, so it cannot be queued again. This bounds the asked set by the markets in that time interval,
+plus old queued markets processed since the last poll. Old saved asked lists
+use the saved watermark as a conservative upper bound on their creation times;
+they become eligible for pruning only after that watermark expires.
 
 Queued work takes priority, including after the active window ends. When the
 queue is empty, housekeeping can start once every 600 seconds inside the window.
@@ -62,6 +74,7 @@ that its transaction settled; use the existing settlement logs for that result.
 | --- | --- |
 | `CREATORS` | `0x89c5cc945dd550bcffb72fe42bff002429f46fec`, `0xffc8029154ecd55abed15bd428ba596e7d23f557` |
 | `FRESH_MAX_AGE_S` | `600` |
+| `OVERLAP_S` | `120` |
 | `POLL_S` | `15` |
 | `ACTIVE_WINDOW_UTC` | `00:00-05:30` (start included, end excluded) |
 | `HOUSEKEEPING_INTERVAL_S` | `600` |
@@ -118,6 +131,6 @@ change reduces agent-side delay and does not remove that tool runtime. Measure
 it during the pilot. No live paid request or trade was made for validation.
 
 Housekeeping can delay a queued market until the current housekeeping pass ends.
-Discovery continues during that pass. The watermark follows subgraph creation timestamps;
-markets indexed late with a timestamp at or below the saved watermark are not
-recovered. This follows the requested `creationTimestamp > last_seen` rule.
+Discovery continues during that pass. The overlap recovers late-indexed markets
+at or up to `OVERLAP_S` seconds below the saved watermark, while they are still
+fresh. Markets indexed after that overlap or the fresh-age limit can be missed.
