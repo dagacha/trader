@@ -10,7 +10,7 @@ fingerprint:
   achievements_checker/__init__.py: bafybeih7da3glbp2ljghlw4ign2dxotwwkzrrnj4m5yq27zb6osyfutva4
   achievements_checker/base.py: bafybeiegrcxb3d3ivpzm4lsud7kcypphl54yukjuecqlffrkzwdjawrth4
   achievements_checker/bet_payout_checker.py: bafybeiahyu3zepvnuk45e6elxso63lfmoxgk3vfpnp6mr4mjsebsr44nqq
-  activity_goal.py: bafybeic2vwrhe6dacx2lq5ajftwcsyv67r5n3xc4m4qqa3n3qpal75sscu
+  activity_goal.py: bafybeid4fslfk3mcaqr32uhdl3zqgkv3nkrk6nydcu3b3sbj4lulizqcsm
   behaviours.py: bafybeicwtmeadnowahds43kf67gjspgjkfqnlcul2djf2vsnvpylsrpvcm
   dialogues.py: bafybeignoeakzaf7nmdnsjhnjoga3ks6z424qcwmzkol3kikawhnxf6zju
   fsm_specification.yaml: bafybeibjgjldm26nwmidx75ylvr5q7oe4kthiphvceuerkacxd3chj6vuu
@@ -38,7 +38,7 @@ fingerprint:
   tests/graph_tooling/test_predictions_helper.py: bafybeihigcnqai6ig24k7vq4wjag3nyftjhrlantcuqsalv7r3a4vg7kme
   tests/graph_tooling/test_queries.py: bafybeiegoy6ypyehq5alc3xlfy4moqhuu5iyk2iqadglrdlt24zbzt3rty
   tests/graph_tooling/test_requests.py: bafybeibz2vpd4rf7akxgw6s2j6k4ltxt23elxr6li6tai6l7pwhzice4xu
-  tests/test_activity_goal.py: bafybeihdqe5k2gw2y7fmm6jpoypju4wnulgvk3g3572g3jyj2ewqsy6w3a
+  tests/test_activity_goal.py: bafybeicoaynjuerfnk6efkl3gtdoweq7ajlambiuk3rvean7osb7ya7d4q
   tests/test_behaviours.py: bafybeidpkjqobx7pnanhtvg3vdfhc7dbe34n6o7nzk3tcyfc5pp7mmfz3m
   tests/test_dialogues.py: bafybeigezi53b2jukm5ju6z6zvecfjkjtzxcge3ehnzxryuhpambzknc3y
   tests/test_handlers.py: bafybeibftkrexgzidwp5imcmkpogweilsxtkoau3324ucmkk6vgnv2c5li

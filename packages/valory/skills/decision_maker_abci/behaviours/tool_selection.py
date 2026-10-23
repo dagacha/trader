@@ -54,10 +54,12 @@ class ToolSelectionBehaviour(StorageManagerBehaviour):
         classifier and the tool pin look at the tool name, and the mech pin
         keeps a key when any discovered mech behind it is pinned.
 
-        :return: the candidate keys and, when they are empty, the pin to blame.
+        :return: the candidate keys and, when empty, the restriction that caused it.
         """
         candidate = self.eligible_tools(set(self.mech_tools))
-        cause: Optional[str] = None
+        cause: Optional[str] = (
+            "irrelevant_tools" if self.mech_tools and not candidate else None
+        )
 
         if self._tool_metadata:
             suitable = {
@@ -103,8 +105,8 @@ class ToolSelectionBehaviour(StorageManagerBehaviour):
         # ``candidate`` here is the suitability-filtered universe with the
         # raw-set fallback already applied above, so a manifest outage degrades
         # to the full set rather than blocking the user from pinning anything.
-        # It is only ever empty if ``mech_tools`` itself is empty (no tools
-        # discovered); the ``None`` default on the shared field instead means
+        # It is empty if no tools were discovered or all were excluded by the
+        # denylist; the ``None`` default on the shared field instead means
         # "not published yet, fall back to ``available_mech_tools``".
         # Publishing pre-pin is deliberate: the user pins applied below do not
         # mutate the main policy object — only an ephemeral deepcopy is
@@ -113,7 +115,7 @@ class ToolSelectionBehaviour(StorageManagerBehaviour):
         self.shared_state.available_prediction_tools = frozenset(tool_names(candidate))
 
         selected_mechs = self.shared_state.chatui_config.selected_mechs
-        if selected_mechs and not self.benchmarking_mode.enabled:
+        if selected_mechs and candidate and not self.benchmarking_mode.enabled:
             selected_lower = {m.lower() for m in selected_mechs}
             mechs_by_key = self._mechs_by_key()
             serving = {mech for mechs in mechs_by_key.values() for mech in mechs}
@@ -211,7 +213,12 @@ class ToolSelectionBehaviour(StorageManagerBehaviour):
 
         candidate_tools, cause = self._candidate_tools()
         if not candidate_tools:
-            if cause is not None:
+            if cause == "irrelevant_tools":
+                self.context.logger.warning(
+                    "IRRELEVANT_TOOLS excludes all served tools; "
+                    "skipping this round. Adjust the denylist to allow a tool."
+                )
+            elif cause is not None:
                 self.context.logger.warning(
                     f"ChatUI {cause!r} restriction left no candidate tools; "
                     "skipping this round so the user can adjust the pin."

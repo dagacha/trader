@@ -1732,6 +1732,38 @@ def test_excluded_tools_cannot_return_through_classifier_fallback() -> None:
     assert behaviour._candidate_tools()[0] == set()
 
 
+@pytest.mark.parametrize("selected_mechs", [None, ["0xmech"]])
+def test_denylist_exhaustion_warns_operator(
+    selected_mechs: Optional[List[str]],
+) -> None:
+    """Name the operator setting when it excludes all served tools."""
+    behaviour = _make_behaviour(
+        _make_policy("valory::factual_research"),
+        {"valory::factual_research"},
+        selected_mechs=selected_mechs,
+    )
+    behaviour.params.irrelevant_tools = frozenset({"factual_research"})  # type: ignore[attr-defined]
+    with patch.object(
+        ToolSelectionBehaviour, "_setup_policy_and_tools", _mock_setup(True)
+    ):
+        assert _run_select_tool(behaviour) is None
+    behaviour.context.logger.warning.assert_any_call(  # type: ignore[attr-defined]
+        "IRRELEVANT_TOOLS excludes all served tools; "
+        "skipping this round. Adjust the denylist to allow a tool."
+    )
+    assert behaviour._candidate_tools() == (set(), "irrelevant_tools")
+
+
+def test_no_served_tools_does_not_blame_restrictions() -> None:
+    """An empty discovery result must not warn about an operator setting."""
+    behaviour = _make_behaviour(_make_policy("stale"), set())
+    with patch.object(
+        ToolSelectionBehaviour, "_setup_policy_and_tools", _mock_setup(True)
+    ):
+        assert _run_select_tool(behaviour) is None
+    behaviour.context.logger.warning.assert_not_called()  # type: ignore[attr-defined]
+
+
 def test_restricted_policy_can_decline_selection() -> None:
     """A policy with no usable restricted tool must return no selection."""
     behaviour = _make_behaviour(_make_policy("excluded", "prediction"), {"prediction"})

@@ -880,3 +880,16 @@ def test_durable_cap_stops_with_unreadable_ledger(tmp_path: Path) -> None:
     (tmp_path / ACTIVITY_GOAL_TRADES_FILE).write_text("invalid")
     result = TestActivityGoalGate._run(tmp_path, completed=8, max_trades=2)
     assert result.stop
+
+
+def test_unreadable_ledger_uses_one_counter_snapshot(tmp_path: Path) -> None:
+    """Publish the same counter snapshot that passed the cap check."""
+    (tmp_path / ACTIVITY_GOAL_TRADES_FILE).write_text("invalid")
+    with patch(
+        "packages.valory.skills.check_stop_trading_abci.behaviours.activity_goal_progress",
+        side_effect=[2, 0],
+    ) as progress:
+        result = TestActivityGoalGate._run(tmp_path, completed=8, max_trades=2)
+    assert result.stop
+    assert TestActivityGoalGate._block(tmp_path)["progress"] == 2
+    progress.assert_called_once_with(tmp_path, PERIOD_START, 0)

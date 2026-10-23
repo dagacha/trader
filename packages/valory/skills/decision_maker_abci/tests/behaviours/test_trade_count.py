@@ -159,7 +159,10 @@ class TestTradeCountBehaviour:
         behaviour = _make_behaviour(store_path=tmp_path / "missing_dir")
         payload = _run_async_act(behaviour, 0)
         assert isinstance(payload, TradeCountPayload)
-        assert payload.successful_trade_count == 1
+        assert payload.successful_trade_count == 0
+        behaviour.context.logger.info.assert_called_with(
+            "Recorded successful Omen placement; successful_trade_count is now 0."
+        )
         errors = [
             call.args[0] for call in behaviour.context.logger.error.call_args_list
         ]
@@ -167,6 +170,19 @@ class TestTradeCountBehaviour:
         assert any("Could not record settled trade" in error for error in errors)
         assert any(
             "Failed to persist successful-trade state" in error for error in errors
+        )
+
+    def test_failed_write_keeps_durable_count(self, tmp_path: Path) -> None:
+        """A failed increment must not report a count absent from the file."""
+        counter = tmp_path / TRADE_COUNT_FILENAME
+        counter.write_text("2")
+        behaviour = _make_behaviour(tmp_path)
+        with patch.object(Path, "write_text", side_effect=OSError("disk full")):
+            payload = _run_async_act(behaviour, 0)
+        assert payload.successful_trade_count == 2
+        assert counter.read_text() == "2"
+        behaviour.context.logger.info.assert_called_with(
+            "Recorded successful Omen placement; successful_trade_count is now 2."
         )
 
 

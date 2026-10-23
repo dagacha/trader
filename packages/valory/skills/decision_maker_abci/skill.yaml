@@ -20,7 +20,7 @@ fingerprint:
   behaviours/decision_request.py: bafybeicqygaiieqnjgawlrm7qo65sgncpuujw2zolmgvjjupnchtoua35q
   behaviours/epoch_reset.py: bafybeibw4yhoq4lmv2bpxlspfb36qkjr5ax3umoaawx7r72xpklmqbqyt4
   behaviours/handle_failed_tx.py: bafybeifqpndbjz27gsduznsrsnft3iqcw6nyekrxirglgpszzqvpheh65m
-  behaviours/mech_only.py: bafybeidih2ydzwzaryto4ipdvzd4h5bakqskmwdvwxwimu77vj5w6gfyka
+  behaviours/mech_only.py: bafybeihabqjb5dd24vbguumuopohnixhn7q7cfkxrkoxsa6z23tky6oqpi
   behaviours/omen_withdraw.py: bafybeibim6jrtush6pznwuugds6dytkeiffkmia2vizx3tzeeovfbd2m4m
   behaviours/omen_withdrawal_store.py: bafybeifn2hclvfvoqmpexize4iam4ue4vq7pozxahwf44tagsrukp2atly
   behaviours/polymarket_bet_placement.py: bafybeiddpzcnbp3pubvju2uefc2s36dznv5pb2s3mrpal3slukhnotomzy
@@ -43,9 +43,9 @@ fingerprint:
   behaviours/sampling.py: bafybeiduwhifofaq3zzp2drrbxezxarrbeb45zwoszcrzhxtpin5a7syy4
   behaviours/sell_outcome_tokens.py: bafybeih6xtmqtuasnm63b5u3qau6ssj7dvvgvmwmepll6ydwo3aqc7tzv4
   behaviours/storage_manager.py: bafybeidfxt2wdhtocoiim2pkj6kcwd2m5yfikzlqtrw22lqliyyrxt3vam
-  behaviours/tool_selection.py: bafybeidbguqg2loaj7nkxwd5zwvt5kuchc2be7fbm5g6ajwnnp4bfzhaua
+  behaviours/tool_selection.py: bafybeib7azpyqho6ynyfsgql5ublly6wgtxcgkwogz2lwmyymtp536flgm
   behaviours/trade_cap.py: bafybeic7ae3hvgxbo7e3mwjmhslumq5fstf6xduc7356w6zglq72vbavuq
-  behaviours/trade_count.py: bafybeihuu5kaaocoxiygdmfwa5vsu6m2zn6djhypqtybfovu3lqnehjfce
+  behaviours/trade_count.py: bafybeidolblo3wvfbusv34hhnfzo4mv3dmcw4uiijqhdgtmd6odnfdxsi4
   dialogues.py: bafybeieyicxgks5it6a5llkwithftdv32dosfmwg3zbxgaleltr7yn47ku
   fsm_specification.yaml: bafybeiadi5lod3iucahnttkn2zk652ryhr4td4qdznwzqberjpsq6otz3q
   handlers.py: bafybeiclcz4uz7xnmhipvdwpekmqvgliuprgwcyuzg2sredaaxaugdarpq
@@ -126,9 +126,9 @@ fingerprint:
   tests/behaviours/test_sampling_fresh.py: bafybeih7p2eaibiu3vgmfkbcyw32vo453j74kfyfhdkfcjd4aytkqmaq7y
   tests/behaviours/test_sell_outcome_tokens.py: bafybeiej3ci4irissz45kk5ooy4notxcjl2dtbxioljqlzqtwex3elrqqq
   tests/behaviours/test_storage_manager.py: bafybeiakiazltjfnucvg5k5kochrmsyum5je7fzgjgsxdo2mew3bnsgt5m
-  tests/behaviours/test_tool_selection.py: bafybeicr2lfacfb4l3ng7w3f2vqonk5rng4tglgqn5njgfgynx66wsh2ym
-  tests/behaviours/test_trade_cap.py: bafybeibsoz263orgyrwqe2amvwyrbfi7dduxa5qkdauaz4cmvaqvqu4imy
-  tests/behaviours/test_trade_count.py: bafybeiepaaw5jrneqi6dbvfdc5vaxh6lygzyhxgkpm76duxnygexalxtnu
+  tests/behaviours/test_tool_selection.py: bafybeieaspiro5sd4atfv25zbry4o2zsp7abrtzkw2dxe4lvajv2r74zce
+  tests/behaviours/test_trade_cap.py: bafybeihhmgreif2aqjljdxrtsavelwesxm2jen2tkit4pjzeyaukuwgaqm
+  tests/behaviours/test_trade_count.py: bafybeia4sehdztq4ruhsu7737womcz3sshuca2vl4uk7bsz72gh5tsixi4
   tests/conftest.py: bafybeifhufbb2izwbomfa5tjpspmc6iwpeulzmqkaxaye23gktnnuz7xmm
   tests/io_/__init__.py: bafybeieix5jroitmrjfpwakoywslzq3b3cwsfnx6z2ij7ahy4plmntzgqm
   tests/io_/test_loader.py: bafybeidd2zyzrhhxv75ijofg7mqzobmf4yu32lsscqdi3zd3hwlrwe2kne
@@ -198,8 +198,8 @@ skills:
 - valory/transaction_settlement_abci:0.1.0:bafybeidmmhjcgp7chozxovensq3zplkufvaityd2w3zladtssu4ijvqbzm
 - valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m
 - valory/staking_abci:0.1.0:bafybeiab5fq6b7nd5nmedsxtfd452ufwtnd7gdsm5qi7sqhbey6nl2h3u4
-- valory/agent_performance_summary_abci:0.1.0:bafybeihgbgzdywpimq4k2w7qqi4motc76bzkzj3szytm3wo4jrmlm6fa4y
-- valory/chatui_abci:0.1.0:bafybeic7z5bjhftdrhdte3e7xnr463jaa5rkijysgxy7rpb3dwon7bordm
+- valory/agent_performance_summary_abci:0.1.0:bafybeiet4cq3ata4ny7e5edfuyaupimltzzb2drefxxue2tmni5c64gvae
+- valory/chatui_abci:0.1.0:bafybeianhfooj7ncojnpd3b5d6wmuyxcsyqrsis4xxweafycsjd3gccp2q
 behaviours:
   main:
     args: {}

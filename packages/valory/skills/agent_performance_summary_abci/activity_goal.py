@@ -68,7 +68,7 @@ def activity_goal_progress(
 ) -> int:
     """Include the durable cap counter for the same activity period.
 
-    Legacy counters have no period and apply until the next checkpoint reset.
+    Legacy counters bind to the first known checkpoint when read.
     A missing or invalid counter leaves the ledger progress unchanged.
 
     :param store_path: directory containing the durable counter.
@@ -85,6 +85,9 @@ def read_successful_trade_count_state(
 ) -> Tuple[Optional[int], Set[str]]:
     """Read the durable counter and placement keys for the activity period.
 
+    Bind an undated counter to the first known checkpoint. Keep its count if
+    that write fails, and retry on the next read.
+
     :param store_path: directory containing the durable counter.
     :param period_start: the current staking checkpoint, or unknown after restart.
     :return: the count and placement keys, or an unavailable count and no keys.
@@ -92,7 +95,7 @@ def read_successful_trade_count_state(
     try:
         state = json.loads((store_path / TRADE_COUNT_FILENAME).read_text())
         if is_plain_int(state) and state >= 0:
-            return state, set()
+            state = {"count": state, "placement_keys": []}
         if not isinstance(state, dict):
             return None, set()
         if (
@@ -109,6 +112,13 @@ def read_successful_trade_count_state(
             or not all(isinstance(key, str) for key in keys)
         ):
             return None, set()
+        if period_start is not None and "period_start" not in state:
+            state["period_start"] = period_start
+            try:
+                write_json_atomically(store_path / TRADE_COUNT_FILENAME, state)
+            except OSError:
+                # Keep the valid count if the checkpoint cannot be saved yet.
+                pass
         return count, set(keys)
     except (OSError, KeyError, ValueError):
         return None, set()

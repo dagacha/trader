@@ -167,6 +167,7 @@ The v2 collateral is **pUSD** (`0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB`). Th
 | `CREATOR_PER_SUBGRAPH` | Dict mapping market-spec subgraph name to creator addresses to track (Omen-only by default). |
 | `DEFAULT_ACTIVITY_GOAL` | Trades the agent places per staking epoch before standing by, unless the user sets their own goal in the chat. Standby also needs the staking target met. `8` for Omenstrat, `1` for Polystrat; `aea-config.yaml` defaults to `8`. |
 | `MAX_TRADES` | Trade cap per staking epoch. `3` for Omenstrat and the shared agent config; `0` (disabled) for the Polystrat service. A positive cap limits the effective activity goal. Explicit user values override these defaults. |
+| `IRRELEVANT_TOOLS` | Tool denylist as a JSON list of bare tool names, for example `["factual_research", "propose-question", "resolve-market-jury-v1"]`. Matches are case-insensitive and use the tool part of an `identity::tool` policy key. Applies to normal and mech-only selection. |
 | `PROMPT_TEMPLATE` | Single-line prompt for the prediction Mech, with `@{question}`, `@{yes}`, `@{no}` placeholders. |
 
 `POLYGON_LEDGER_CHAIN_ID` / `GNOSIS_LEDGER_CHAIN_ID` exist too but default to the right values (137 / 100), so you don't normally need to set them.

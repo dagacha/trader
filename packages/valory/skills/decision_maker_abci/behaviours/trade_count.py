@@ -51,10 +51,9 @@ class TradeCountBehaviour(DecisionMakerBaseBehaviour):
                 )
             except (OSError, ValueError) as exc:
                 self.context.logger.error(f"Could not record settled trade: {exc}")
-            new_count = self.durable_trade_count()
-            if placement_key not in self.read_counted_placement_keys():
-                new_count += 1
-            self.record_successful_placement(placement_key)
+            new_count = self.record_successful_placement(placement_key)
+            if new_count is None:
+                new_count = self.durable_trade_count()
             self.context.logger.info(
                 f"Recorded successful Omen placement; "
                 f"successful_trade_count is now {new_count}."

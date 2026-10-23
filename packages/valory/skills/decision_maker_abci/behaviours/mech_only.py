@@ -31,7 +31,7 @@ from dataclasses import asdict
 from typing import Any, Dict, Generator, List, Optional, Set
 from uuid import uuid4
 
-from packages.valory.skills.chatui_abci.tool_keys import tool_names
+from packages.valory.skills.chatui_abci.tool_keys import split_tool_key, tool_names
 from packages.valory.skills.decision_maker_abci.behaviours.base import (
     DecisionMakerBaseBehaviour,
 )
@@ -160,7 +160,7 @@ class MechOnlySelectionBehaviour(DecisionMakerBaseBehaviour):
         if policy is not None and policy.weighted_accuracy:
             best = policy.best_tool
             if best is not None:
-                best = next(iter(tool_names({best})))
+                best = split_tool_key(best)[1]
             if best is not None and best in candidates:
                 return best
 

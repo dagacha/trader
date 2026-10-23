@@ -61,6 +61,7 @@ def _run_async_act(behaviour, successful_trade_count):  # type: ignore[no-untype
     ) as mock_sd:
         sd = MagicMock()
         sd.successful_trade_count = successful_trade_count
+        sd.previous_checkpoint = None
         mock_sd.return_value = sd
 
         gen = behaviour.async_act()

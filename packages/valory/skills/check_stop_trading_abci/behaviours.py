@@ -260,7 +260,8 @@ class CheckStopTradingBehaviour(StakingInteractBaseBehaviour):
             progress = activity_goal_progress(store_path, period_start, 0)
             if self.params.max_trades <= 0 or progress < self.params.max_trades:
                 return None
-        progress = activity_goal_progress(store_path, period_start, progress)
+        else:
+            progress = activity_goal_progress(store_path, period_start, progress)
         return update_activity_goal(
             store_path,
             target,
