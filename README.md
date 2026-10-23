@@ -131,6 +131,14 @@ stale value. `release_service.sh` runs this migration even when the service hash
 has not changed. It builds and publishes artifacts; the separate quickstart
 repo starts the service.
 
+The sync includes `PRIORITY_MECH_ADDRESS` and `PRIORITY_MECH_SERVICE_ID`.
+Explicit quickstart values also set `priority_mech_address` and
+`priority_mech_service_id` inside existing `MECH_MARKETPLACE_CONFIG` dicts.
+The agent reads that dict, so the separate inputs and the dict must agree.
+Other marketplace fields stay intact. If a priority input is absent or empty,
+the sync keeps that field. Dry runs and warning-only runs report stored priority
+mismatches without writing files. A real sync reports only mismatches that remain.
+
 To cover manual and cron deployments, add the migration to the Omen quickstart's
 `run_service.sh`, after `set -e` and before container cleanup. For trader 24 on
 DG's server, the exact command is:

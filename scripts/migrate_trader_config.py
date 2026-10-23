@@ -46,8 +46,10 @@ V1_MARKETPLACE = "0x4554fE75c1f5576c1d7F765B2A036c199Adae329"
 V2_MARKETPLACE = "0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB"
 ZERO_ADDRESS = "0x" + "0" * 40
 DECODER = json.JSONDecoder()
-# These controls are operator settings, not service-specific runtime addresses.
+# These controls are operator settings. Keep service runtime addresses intact.
 CONTROL_ENV = (
+    "PRIORITY_MECH_ADDRESS",
+    "PRIORITY_MECH_SERVICE_ID",
     "IRRELEVANT_TOOLS",
     "MAX_TRADES",
     "MAX_MECH_REQUESTS_PER_CYCLE",
@@ -57,6 +59,10 @@ CONTROL_ENV = (
     "DISABLE_TRADING",
 )
 PARAM_PREFIX = "SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_"
+PRIORITY_ENV = {
+    "PRIORITY_MECH_ADDRESS": "priority_mech_address",
+    "PRIORITY_MECH_SERVICE_ID": "priority_mech_service_id",
+}
 
 
 def scalar(value):
@@ -236,20 +242,22 @@ def decode_env(raw):
     return json.loads(value) if isinstance(value, str) else value
 
 
-def migrate_env(text, priorities, hashes, warnings):
+def migrate_env(text, priorities, hashes, warnings, desired=None):
     """Edit env assignments, compose mappings, and Kubernetes env pairs."""
     lines = text.splitlines(keepends=True)
     changes = []
     for index in range(len(lines) - 1, -1, -1):
         line = lines[index]
         match = re.match(
-            r"(\s*(?:-\s*)?)(MECH_MARKETPLACE_CONFIG|STRATEGIES_KWARGS|"
+            r"(\s*(?:-\s*)?)((?:SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_)?"
+            r"MECH_MARKETPLACE_CONFIG|STRATEGIES_KWARGS|"
             r"FILE_HASH_TO_STRATEGIES)"
             r"(=|:\s*)(.*?)(\r?\n)?$",
             line,
         )
         pair = re.match(
-            r"(\s*)- name: (MECH_MARKETPLACE_CONFIG|STRATEGIES_KWARGS|"
+            r"(\s*)- name: ((?:SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_)?"
+            r"MECH_MARKETPLACE_CONFIG|STRATEGIES_KWARGS|"
             r"FILE_HASH_TO_STRATEGIES)\s*$",
             line,
         )
@@ -264,11 +272,12 @@ def migrate_env(text, priorities, hashes, warnings):
             value_index = index
         else:
             continue
+        bare = variable.removeprefix(PARAM_PREFIX)
         if pair:
             prefix, separator, raw, newline = match.groups()
         else:
             prefix, _, separator, raw, newline = match.groups()
-        if variable in (STRATEGIES, STRATEGY_HASHES) and raw.strip() in (
+        if bare in (STRATEGIES, STRATEGY_HASHES) and raw.strip() in (
             "",
             "''",
             '""',
@@ -309,14 +318,14 @@ def migrate_env(text, priorities, hashes, warnings):
             end += 1
         block = "".join(lines[start:end])
         removed = {}
-        if variable == STRATEGIES:
+        if bare == STRATEGIES:
             if not add_min_expected_profit(mech, changes):
                 continue
-        elif variable == STRATEGY_HASHES:
+        elif bare == STRATEGY_HASHES:
             if not update_strategy_hashes(mech, changes, hashes):
                 continue
         else:
-            priorities.append(mech)
+            priorities.append(dict(mech))
             enabled = re.search(
                 r"(?m)^\s*(?:-\s*)?USE_MECH_MARKETPLACE[=:]\s*['\"]?(true|false)"
                 r"|^\s*- name: USE_MECH_MARKETPLACE\s*\n\s*value:\s*['\"]?(true|false)",
@@ -329,6 +338,7 @@ def migrate_env(text, priorities, hashes, warnings):
                 changes,
                 warnings,
             )
+            changed = sync_priority(mech, desired or {}, changes) or changed
             removed = {key: mech.pop(key) for key in KEYS if key in mech}
             if not removed and not changed:
                 continue
@@ -344,7 +354,7 @@ def migrate_env(text, priorities, hashes, warnings):
         lines[value_index : scalar_end + 1] = [
             prefix + ("" if pair else variable) + separator + clean + (newline or "\n")
         ]
-        if variable != MARKETPLACE:
+        if bare != MARKETPLACE:
             continue
         additions = []
         for key, val in removed.items():
@@ -379,11 +389,41 @@ def migrate_env(text, priorities, hashes, warnings):
     return "".join(lines), changes
 
 
+def sync_priority(mech, desired, changes):
+    """Sync only explicit priority inputs inside a marketplace dict."""
+    changed = False
+    for key, field in PRIORITY_ENV.items():
+        if key not in desired:
+            continue
+        value = desired[key]["value"]
+        value = int(value) if field == "priority_mech_service_id" else value
+        if mech.get(field) != value:
+            mech[field] = value
+            changes.append(f"sync {MARKETPLACE}.{field} from quickstart")
+            changed = True
+    return changed
+
+
 def sync_cached_json(text, desired):
     """Sync explicit quickstart controls without changing cached runtime values."""
     data = json.loads(text)
     changes = []
     for obj in list(objects(data)):
+        for key in (MARKETPLACE, "mech_marketplace_config"):
+            if key not in obj:
+                continue
+            container = obj
+            field = key
+            if isinstance(obj[key], dict) and "value" in obj[key]:
+                container = obj[key]
+                field = "value"
+            value = container[field]
+            if not value:
+                continue
+            mech = json.loads(value) if isinstance(value, str) else value
+            if sync_priority(mech, desired, changes):
+                container[field] = json.dumps(mech) if isinstance(value, str) else mech
+                text = edit_json(text, data, container[field])
         saved = obj.get("user_provided_args")
         if isinstance(saved, dict):
             for key, source in desired.items():
@@ -576,13 +616,22 @@ def migrate(quickstart, dry_run=False, warn_only=False):
                 and isinstance(entry, dict)
                 and entry.get("value") not in (None, "")
             }
-        elif desired:
+        if desired:
             updated, synced = (
                 sync_cached_json(updated, desired)
                 if path.suffix == ".json"
                 else sync_cached_env(updated, desired, path.name == "agent_0.env")
             )
             changes.extend(synced)
+            if path.suffix != ".json":
+                updated, synced = migrate_env(updated, [], hashes, [], desired)
+                changes.extend(synced)
+            # Preview warnings use the old values. Real runs use the synced values.
+            if not dry_run and not warn_only and path.parent != quickstart / ".operate":
+                priorities = []
+                (migrate_json if path.suffix == ".json" else migrate_env)(
+                    updated, priorities, hashes, []
+                )
         for warning in warnings:
             print(f"WARNING: {path}: {warning}")
         for mech in priorities:

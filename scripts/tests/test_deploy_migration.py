@@ -1252,3 +1252,185 @@ def test_release_sync_survives_saved_input_reload(tmp_path, released):
             == value
         )
     assert json.loads(paths[0].read_text())["hash"] == cid
+
+
+@pytest.mark.parametrize("style", ["env", "mapping", "list", "kubernetes"])
+@pytest.mark.parametrize("mapping", [False, True])
+@pytest.mark.parametrize("stale", [False, True])
+def test_priority_inputs_sync_everywhere(tmp_path, style, mapping, stale):
+    """Sync saved priority inputs and the dict used by the agent."""
+    import yaml
+
+    desired = {"PRIORITY_MECH_ADDRESS": "0x552c", "PRIORITY_MECH_SERVICE_ID": "975"}
+    current = (
+        {"PRIORITY_MECH_ADDRESS": "0xC05e", "PRIORITY_MECH_SERVICE_ID": "2182"}
+        if stale
+        else desired
+    )
+    mech = {
+        "priority_mech_address": current["PRIORITY_MECH_ADDRESS"],
+        "priority_mech_service_id": int(current["PRIORITY_MECH_SERVICE_ID"]),
+        "response_timeout": 300,
+        "requester_staking_instance_address": "keep-requester",
+    }
+    expected = dict(mech, priority_mech_address="0x552c", priority_mech_service_id=975)
+    encoded = mech if mapping else json.dumps(mech)
+    source = tmp_path / "configs/config_predict_trader.json"
+    source.parent.mkdir()
+    source.write_text(
+        json.dumps(
+            {
+                "env_variables": {
+                    **{
+                        key: dict(entry(value), provision_type="user")
+                        for key, value in desired.items()
+                    },
+                    "MECH_MARKETPLACE_CONFIG": entry(json.dumps(expected)),
+                }
+            }
+        )
+    )
+    service = tmp_path / ".operate/services/sc-one"
+    service.mkdir(parents=True)
+    saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
+    saved.write_text(
+        json.dumps(
+            {
+                "user_provided_args": dict(
+                    current, MECH_MARKETPLACE_CONFIG=encoded, KEEP="saved"
+                )
+            }
+        )
+    )
+    config = service / "config.json"
+    config.write_text(
+        json.dumps(
+            {
+                "env_variables": {
+                    **{key: entry(value) for key, value in current.items()},
+                    "MECH_MARKETPLACE_CONFIG": entry(encoded),
+                },
+                "user_params": {"mech_marketplace_config": encoded},
+            }
+        )
+    )
+    env = dict(
+        current,
+        MECH_MARKETPLACE_CONFIG=json.dumps(mech, separators=(",", ":")),
+        KEEP="agent",
+    )
+    env.update(
+        {
+            "SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_" + key: value
+            for key, value in current.items()
+        }
+    )
+    env["SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_MECH_MARKETPLACE_CONFIG"] = env[
+        "MECH_MARKETPLACE_CONFIG"
+    ]
+    agent = service / "agent_0.env"
+    agent.write_text("".join(key + "=" + value + "\n" for key, value in env.items()))
+    build = service / "build.yaml"
+    values = (
+        [key + "=" + value for key, value in env.items()]
+        if style == "list"
+        else (
+            [{"name": key, "value": value} for key, value in env.items()]
+            if style == "kubernetes"
+            else env
+        )
+    )
+    build.write_text(
+        "environment:\n"
+        + "".join("  - " + key + "=" + value + "\n" for key, value in env.items())
+        if style == "env"
+        else yaml.safe_dump({"environment": values}, width=60)
+    )
+    paths = [source, saved, config, agent, build]
+    before = {path: path.read_bytes() for path in paths}
+    for flag in ["--dry-run", "--warn-only"]:
+        output = run(tmp_path, flag)
+        assert ("WARNING: priority mech differs" in output) == stale
+        assert all(path.read_bytes() == before[path] for path in paths)
+        assert not list(tmp_path.rglob("*.bak-*"))
+    assert "WARNING: priority mech differs" not in run(tmp_path)
+    actual_saved = json.loads(saved.read_text())["user_provided_args"]
+    assert actual_saved == dict(
+        desired,
+        MECH_MARKETPLACE_CONFIG=expected if mapping else json.dumps(expected),
+        KEEP="saved",
+    )
+    actual_config = json.loads(config.read_text())
+    for key, value in desired.items():
+        assert actual_config["env_variables"][key]["value"] == value
+    for value in [
+        actual_config["env_variables"]["MECH_MARKETPLACE_CONFIG"]["value"],
+        actual_config["user_params"]["mech_marketplace_config"],
+    ]:
+        assert (value if mapping else json.loads(value)) == expected
+    actual_env = dict(line.split("=", 1) for line in agent.read_text().splitlines())
+    actual_build = yaml.safe_load(build.read_text())["environment"]
+    if style in ("env", "list"):
+        actual_build = dict(value.split("=", 1) for value in actual_build)
+    elif style == "kubernetes":
+        actual_build = {item["name"]: item["value"] for item in actual_build}
+    for actual in [actual_env, actual_build]:
+        assert json.loads(actual["MECH_MARKETPLACE_CONFIG"]) == expected
+        assert (
+            json.loads(
+                actual["SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_MECH_MARKETPLACE_CONFIG"]
+            )
+            == expected
+        )
+        assert actual["KEEP"] == "agent"
+        for key, value in desired.items():
+            assert actual[key] == value
+            assert actual["SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_" + key] == value
+    after = {path: path.read_bytes() for path in paths}
+    backups = list(tmp_path.rglob("*.bak-*"))
+    assert len(backups) == (4 if stale else 0)
+    assert "WARNING: priority mech differs" not in run(tmp_path)
+    assert all(path.read_bytes() == after[path] for path in paths)
+    assert list(tmp_path.rglob("*.bak-*")) == backups
+    if not stale:
+        assert after == before
+
+
+@pytest.mark.parametrize("value", ["", None, {}])
+def test_priority_sync_preserves_empty_marketplace(tmp_path, value):
+    """Sync priority inputs without making a missing marketplace dict."""
+    source = fixture(tmp_path)[0]
+    source.write_text(
+        json.dumps({"env_variables": {"PRIORITY_MECH_SERVICE_ID": entry("975")}})
+    )
+    saved = tmp_path / ".operate/local_config.json"
+    saved.write_text(
+        json.dumps({"user_provided_args": {"MECH_MARKETPLACE_CONFIG": value}})
+    )
+    run(tmp_path)
+    assert json.loads(saved.read_text())["user_provided_args"] == {
+        "MECH_MARKETPLACE_CONFIG": value,
+        "PRIORITY_MECH_SERVICE_ID": "975",
+    }
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("PRIORITY_MECH_ADDRESS", "0x552c"), ("PRIORITY_MECH_SERVICE_ID", "975")],
+)
+def test_priority_sync_uses_only_explicit_inputs(tmp_path, key, value):
+    """Keep an unset priority field and add an explicit field when absent."""
+    paths = fixture(tmp_path)
+    paths[0].write_text(json.dumps({"env_variables": {key: entry(value)}}))
+    mech = {"response_timeout": 300}
+    paths[1].write_text(
+        json.dumps({"env_variables": {"MECH_MARKETPLACE_CONFIG": entry(mech)}})
+    )
+    run(tmp_path)
+    expected = dict(mech, **{key.lower(): int(value) if key.endswith("ID") else value})
+    assert (
+        json.loads(paths[1].read_text())["env_variables"]["MECH_MARKETPLACE_CONFIG"][
+            "value"
+        ]
+        == expected
+    )
