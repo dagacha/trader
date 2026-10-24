@@ -131,6 +131,14 @@ stale value. `release_service.sh` runs this migration even when the service hash
 has not changed. It builds and publishes artifacts; the separate quickstart
 repo starts the service.
 
+The migration skips Polymarket. If `configs/config_predict_trader.json` is
+missing, or if it or any saved quickstart input
+(`.operate/*-quickstart-config.json`, `.operate/local_config.json`) sets
+`IS_RUNNING_ON_POLYMARKET=true`, it prints one warning and exits without writing
+any files. In mixed caches, a Polymarket flag in a service's
+`config.json`, `agent_0.env`, or `build.yaml` skips all files for that service.
+Omen services still migrate. The Omen profit threshold uses 18-decimal xDAI units.
+
 The sync includes `PRIORITY_MECH_ADDRESS` and `PRIORITY_MECH_SERVICE_ID`.
 Explicit quickstart values also set `priority_mech_address` and
 `priority_mech_service_id` inside existing `MECH_MARKETPLACE_CONFIG` dicts.
@@ -149,7 +157,7 @@ python3 /home/ubuntu/trader/scripts/migrate_trader_config.py /home/ubuntu/24-tra
 
 Keep this hook in the quickstart fork so updates preserve it. If a cron generator
 also calls operate directly, add the same hook before that call and stop the run
-if migration fails. Do not use this Omen migration for Polymarket caches.
+if migration fails. Polymarket configs are skipped with a warning.
 
 Keep per-trader config edits in local commits, or keep overrides outside the
 tracked config and apply them before migration. Review config files for secrets
