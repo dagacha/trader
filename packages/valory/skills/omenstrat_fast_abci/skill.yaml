@@ -8,16 +8,16 @@ aea_version: '>=2.0.0, <3.0.0'
 fingerprint:
   README.md: bafybeihpik4c2q3n7gu236hnc6uzbgdgqst4xmrdloycr352cglbu2gtkq
   __init__.py: bafybeib3ysnyfp5g7wqqopddtqp3vrod5hlfhyjekrdasrbpexa6fc4eoq
-  behaviours.py: bafybeid6cayeudmhqpqoy7ehw2syttxynwtndlmtbuvw4ya4zfstwlg4s4
+  behaviours.py: bafybeidekktpzp57maqhumitkz5nruylxlz2ico23ogzpt5nm5yikrwcly
   composition.py: bafybeidqglprz3azjyuopcmwsmhgsxjdoq3cggg4n76tawvvwgykbpfg6a
   dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
   fsm_specification.yaml: bafybeibhmxlncynj53bw6p72qx3cisxeem4q3hlynpxxrgqnvybab7wbmq
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
   models.py: bafybeicihpfeq66ahhuboojdrf7f33xu6tmktmskzodh7oiqvxtggka4om
   tests/__init__.py: bafybeifx5qa3c7rsjbe4ujuif363osh23mvgprcd5jwv67t5kl3kgqrszu
-  tests/test_composition.py: bafybeif6hjjymm75u3az6aunyrtoetoxc6mjohaoltbwed2im7htmpx5ge
-  tests/test_config.py: bafybeiatc37eomlnoqadm4smde42wipiotbqqibzz5u7yzqypsnr4ktdhm
-  tests/test_requests.py: bafybeifplkqqhpcc73ebo4xrdwifcsthwaavnzuhebsrx6sbgcfgepwgna
+  tests/test_composition.py: bafybeidkzvekdxvjbtiyl2grvkhvr6aanzaalbikgeqyyvc7ojgshhefhi
+  tests/test_config.py: bafybeiftcg2lgfxvkuyb5bbkly2mp6373g6oo3sjjl5k2hp54cd4woe4w4
+  tests/test_requests.py: bafybeif6cpspom5h65ikwp5c4umixkh4umxy3kkj2ib7mizjw455kfxvly
 fingerprint_ignore_patterns: []
 connections: []
 contracts: []
@@ -33,8 +33,8 @@ skills:
 - valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m
 - valory/chatui_abci:0.1.0:bafybeihj5y6cecuw4iz2gshicoygghrgi5b6rzynnofx25ycsv56ehgdvq
 - valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
-- valory/trader_abci:0.1.0:bafybeiacb7bhwy267gw2paw27amwyadnnafzbnuilqxxqctiew2q2nkovi
-- valory/fresh_watch_abci:0.1.0:bafybeiez6xexoghawwubridot4zv2hry7vz6c4ljjbjiiwzljwyztgtnqa
+- valory/trader_abci:0.1.0:bafybeififhp3fto5tvw7nbr3qft2ejio6xfggove5cvizuc3fhqq6oa2m4
+- valory/fresh_watch_abci:0.1.0:bafybeifxte5vbwvdxbd65ljs7fxi3ygnw4f2px64n6256gtxruxlgqd5im
 behaviours:
   main:
     args: {}
@@ -280,12 +280,14 @@ models:
         priority_mech_staking_instance_address: '0x0000000000000000000000000000000000000000'
         priority_mech_service_id: 975
         requester_staking_instance_address: '0x0000000000000000000000000000000000000000'
+        use_dynamic_mech_selection: true
         response_timeout: 300
         offchain_url: null
         auto_deposit_cap_per_cycle: 5000000000000000000
         offchain_poll_interval_seconds: 1.5
         offchain_poll_timeout_seconds: 300.0
         offchain_failover_max_retries: 0
+      fast_dynamic_mech: true
       use_offchain: true
       offchain_deposit_target_calls: 10
       expected_mech_response_time: 300
@@ -334,6 +336,12 @@ models:
       polymarket_ctf_collateral_adapter_address: '0xAdA100Db00Ca00073811820692005400218FcE1f'
       polymarket_neg_risk_ctf_collateral_adapter_address: '0xadA2005600Dec949baf300f4C6120000bDB6eAab'
       valid_mechs:
+      - '0xc05e7412439bd7e91730a6880e18d5d5873f632c'
+      - '0x601024e27f1c67b28209e24272ced8a31fc8151f'
+      - '0xb3c6319962484602b00d5587e965946890b82101'
+      - '0xdb78159e9246ec738f51c2c9cb1169b5c0e45fee'
+      - '0x818df8dcd43d716a7263798c99a2fc8e27010711'
+      - '0x11c4389bf449991d69f89f941c3e79d5d828f1bc'
       - '0x552cEA7Bc33CbBEb9f1D90c1D11D2C6daefFd053'
       mech_marketplace_v1_suitable_tools: []
       penalize_mech_time_window: 1800

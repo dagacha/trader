@@ -186,6 +186,8 @@ class TraderParams(
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Initialize the parameters object."""
+        kwargs.setdefault("fast_dynamic_mech", False)
+        self.fast_dynamic_mech: bool = self._ensure("fast_dynamic_mech", kwargs, bool)
         self.mech_interact_round_timeout_seconds: int = self._ensure(
             "mech_interact_round_timeout_seconds", kwargs, type_=int
         )

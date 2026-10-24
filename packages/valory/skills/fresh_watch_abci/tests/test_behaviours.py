@@ -34,6 +34,7 @@ from packages.valory.skills.fresh_watch_abci.behaviours import (
 )
 from packages.valory.skills.fresh_watch_abci.strategy import FastConfig, FreshQueue
 from packages.valory.skills.market_manager_abci.bets import Bet
+from packages.valory.skills.trader_abci.mech_latency import request_timing
 
 
 def done(value: Any) -> Any:
@@ -107,6 +108,72 @@ def test_select_and_restart(tmp_path: Any) -> None:
 
 
 @pytest.mark.parametrize(
+    "dynamic,offchain", [(True, True), (False, True), (True, False)]
+)
+@pytest.mark.parametrize(
+    "http_url,penalized,eligible",
+    [
+        (None, {}, False),
+        ("", {}, False),
+        ("https://mech.test", {"0xABC": 1000}, False),
+        ("https://mech.test", {}, True),
+    ],
+)
+def test_select_requires_eligible_offchain_mech(
+    tmp_path: Any,
+    dynamic: bool,
+    offchain: bool,
+    http_url: Any,
+    penalized: Any,
+    eligible: bool,
+) -> None:
+    """Keep the market queued when its tool has no eligible dynamic endpoint."""
+    b = make(FreshWatchBehaviour, tmp_path)
+    b.context.params.fast_dynamic_mech = dynamic
+    b.context.params.use_offchain = offchain
+    b.context.state.penalized_mechs = penalized
+    b.context.state.fast_background_running = True
+    b.sleep = MagicMock(side_effect=lambda delay: done(None))
+    b._get_pool_balances = MagicMock(side_effect=lambda *args: done([100, 100]))
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    row = raw_market()
+    queue.pending = [row]
+    queue.save()
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+            return_value=1050,
+        ),
+    ):
+        sd.return_value.mechs_info = [
+            SimpleNamespace(
+                address="0xabc",
+                http_url=http_url,
+                relevant_tools={"superforcaster"},
+            ),
+            SimpleNamespace(
+                address="0xdef", http_url="https://other.test", relevant_tools=set()
+            ),
+        ]
+        selection = run(b.select())
+    selected = eligible or not (dynamic and offchain)
+    assert selection["lane"] == ("market" if selected else "wait")
+    reloaded = FreshQueue(queue.path)
+    assert reloaded.pending == ([] if selected else [row])
+    assert reloaded.asked == ({"market": 1000} if selected else {})
+    if selected:
+        assert selection["mech_tool"] == "superforcaster"
+        b.sleep.assert_not_called()
+    else:
+        b.context.logger.warning.assert_called_once_with(
+            "Neither fast prediction tool is available."
+        )
+        b.sleep.assert_called_once_with(FastConfig().poll_s)
+        b._get_pool_balances.assert_not_called()
+
+
+@pytest.mark.parametrize(
     "prediction,balances,reason,stake",
     [
         (0.9, [100, 100], "", 4),
@@ -120,6 +187,11 @@ def test_evaluate(
 ) -> None:
     """Evaluate a real sampled bet without policy setup or strategy loading."""
     b = make(FastDecisionBehaviour, tmp_path)
+    b.context.shared_state = {
+        "mech_latency": {
+            "uuid": {"market": "market", "mech": "0xselected", "latency_s": 31}
+        }
+    }
     raw = raw_market()
     raw.pop("condition")
     bet = Bet(**raw, market="omen_subgraph")
@@ -146,6 +218,40 @@ def test_evaluate(
     assert result["stake"] == stake
     assert result["age_at_request"] == 50
     assert result["age_at_answer"] == 100
+    assert result["mech"] == "0xselected"
+    assert result["latency_s"] == 31
+
+
+@pytest.mark.parametrize("completed", [False, True])
+@pytest.mark.parametrize("condition_id", [None, "condition"])
+def test_evaluate_matches_completed_market_timing(
+    tmp_path: Any, completed: bool, condition_id: Any
+) -> None:
+    """Use the bet's completed record after an earlier nonce is overwritten."""
+    b = make(FastDecisionBehaviour, tmp_path)
+    raw = raw_market()
+    raw.pop("condition")
+    bet = Bet(**raw, market="omen_subgraph", condition_id=condition_id)
+    metadata = {"tool": "superforcaster", "request_context": bet.to_request_context()}
+    timings = {
+        "uuid": dict(request_timing(metadata, 1000), mech="0xold", latency_s=99),
+        "other": {"market": "other_market", "mech": "0xother", "latency_s": 5},
+    }
+    timings["uuid"] = dict(request_timing(metadata, 1050), mech="0xselected")
+    if completed:
+        timings["uuid"]["latency_s"] = 31
+    b.context.shared_state = {"mech_latency": timings}
+    with (
+        patch.object(
+            type(b), "sampled_bet", new_callable=PropertyMock, return_value=bet
+        ),
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+    ):
+        sd.return_value.db.get_strict.return_value = 1050
+        b._get_decision_prediction = lambda: None
+        result = run(b.evaluate())
+    assert result["mech"] == ("0xselected" if completed else None)
+    assert result["latency_s"] == (31 if completed else None)
 
 
 def test_calibrated_placement_prediction(tmp_path: Any) -> None:

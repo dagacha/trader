@@ -50,9 +50,6 @@ from packages.valory.skills.fresh_watch_abci.tests.test_behaviours import (
 from packages.valory.skills.mech_interact_abci.behaviours.offchain_request import (
     OffchainRequestExecutor,
 )
-from packages.valory.skills.mech_interact_abci.behaviours.request import (
-    MechRequestBehaviour,
-)
 from packages.valory.skills.mech_interact_abci.payment_types import PaymentType
 from packages.valory.skills.mech_interact_abci.states.base import (
     Event,
@@ -60,6 +57,9 @@ from packages.valory.skills.mech_interact_abci.states.base import (
 )
 from packages.valory.skills.mech_interact_abci.states.request import MechRequestRound
 from packages.valory.skills.omenstrat_fast_abci.composition import OmenstratFastAbciApp
+from packages.valory.skills.trader_abci.mech_latency import (
+    TraderMechRequestBehaviour as MechRequestBehaviour,
+)
 
 MECH = "0x552cEA7Bc33CbBEb9f1D90c1D11D2C6daefFd053"
 SAFE = "0x" + "12" * 20
@@ -149,9 +149,10 @@ def test_priority_tool_reaches_request(
     assert watch.synchronized_data.mech_requests[0].tool == expected
 
 
+@pytest.mark.parametrize("dynamic", [False, True])
 @pytest.mark.parametrize("status", [200, 402, 503, None])
 def test_paid_request_retry_and_restart(
-    tmp_path: Any, monkeypatch: Any, status: Any
+    tmp_path: Any, monkeypatch: Any, status: Any, dynamic: bool
 ) -> None:
     """Keep one chargeable request per market after retry and disk reload."""
     with patch(
@@ -161,6 +162,13 @@ def test_paid_request_retry_and_restart(
         watch, _ = select_request(tmp_path, list(FastConfig().tools))
         context = watch.context
         context.shared_state = {}
+        selected = "0xdb78159e9246ec738f51c2c9cb1169b5c0e45fee" if dynamic else MECH
+        infos = json.loads(context.state.synchronized_data.db.get_strict("mechs_info"))
+        infos[0]["address"] = selected
+        infos[0]["http_url"] = "https://selected.test"
+        context.state.synchronized_data = context.state.synchronized_data.update(
+            mechs_info=json.dumps(infos), versioning_check_performed=True
+        )
         context.state.penalized_mechs = set()
         context.params.use_offchain = True
         context.params.mech_chain_id = "gnosis"
@@ -168,7 +176,7 @@ def test_paid_request_retry_and_restart(
         context.params.mech_marketplace_config = SimpleNamespace(
             mech_marketplace_address="0x" + "34" * 20,
             priority_mech_address=MECH,
-            use_dynamic_mech_selection=False,
+            use_dynamic_mech_selection=dynamic,
             offchain_url="https://mech.test",
             offchain_failover_max_retries=0,
             offchain_nonce_retry_max=1,
@@ -188,7 +196,11 @@ def test_paid_request_retry_and_restart(
         def http(**kwargs: Any) -> Any:
             form = parse_qs(kwargs["content"].decode())
             posts.append(form)
-            assert kwargs["url"] == "https://mech.test/send_signed_requests"
+            assert (
+                kwargs["url"]
+                == ("https://selected.test" if dynamic else "https://mech.test")
+                + "/send_signed_requests"
+            )
             assert json.loads(form["ipfs_data"][0])["tool"] == FastConfig().tools[0]
             # The asked marker must be on disk before even the first POST.
             assert FreshQueue(tmp_path / "fresh_watch.json").asked == {"market": 1000}
@@ -259,6 +271,10 @@ def test_paid_request_retry_and_restart(
         event = send()
         if status == 402:
             assert event == Event.OFFCHAIN_DEPOSIT_NEEDED
+            assert (
+                context.state.synchronized_data.offchain_pending_request["mech_address"]
+                == selected.lower()
+            )
             # Reload the pending request from serialized consensus state.
             saved = tmp_path / "consensus.json"
             saved.write_text(context.state.synchronized_data.db.serialize())
