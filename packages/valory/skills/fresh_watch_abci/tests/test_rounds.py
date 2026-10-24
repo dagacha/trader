@@ -39,6 +39,7 @@ from packages.valory.skills.fresh_watch_abci.rounds import (
     "lane,event",
     [
         ("market", Event.MARKET),
+        ("mech_only", Event.MECH_ONLY),
         ("housekeeping", Event.HOUSEKEEPING),
         ("wait", Event.WAIT),
     ],

@@ -1448,6 +1448,8 @@ def test_release_sync_survives_saved_input_reload(tmp_path, released):
             "bash",
             str(repo / "release_service.sh"),
             "--skip-publish",
+            "--service",
+            "trader_pearl",
             "--quickstart",
             str(qs),
         ],
@@ -1876,3 +1878,174 @@ def test_skip_fast_cache_next_to_omen_trader(tmp_path):
     assert f"{fast}: omenstrat_fast: skipping trader migration" in output
     assert fast.read_bytes() == before
     assert "updated" in output
+
+
+@pytest.mark.parametrize("cap", [None, "1", "0"])
+def test_fast_defaults_sync_all_copies(tmp_path, cap):
+    """Add missing fast inputs and retain identity and explicit user values."""
+    repo = SCRIPT.parents[1]
+    packages = json.loads((repo / "packages/packages.json").read_text())
+    paths = fixture(tmp_path)
+    cfg = json.loads(paths[0].read_text())
+    cfg.update(
+        hash=packages["dev"]["service/valory/omenstrat_fast/0.1.0"],
+        name="Trader Agent",
+        configurations={"gnosis": {"agent_id": 14, "staking": "keep"}},
+    )
+    cfg["env_variables"]["POLL_S"] = entry("7")
+    if cap is not None:
+        cfg["env_variables"]["MAX_TRADES"] = entry(cap)
+    paths[0].write_text(json.dumps(cfg))  # Trader 24 has no trailing newline.
+    saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
+    saved.write_text(json.dumps({"user_provided_args": {"POLL_S": "99"}}))
+    env = paths[1].parent / "agent_0.env"
+    env.write_text("SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_POLL_S=99")
+    build = paths[1].parent / "build.yaml"
+    build.write_text(
+        "services:\n  agent:\n    environment:\n      SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_POLL_S: '99'\n  tendermint:\n    environment:\n      KEEP: yes\n"
+    )
+    all_paths = [*paths, saved, env, build]
+    before = {p: p.read_bytes() for p in all_paths}
+    preview = run(tmp_path, "--dry-run")
+    assert "MAX_TRADES" in preview
+    assert all(p.read_bytes() == before[p] for p in all_paths)
+    run(tmp_path)
+    result = json.loads(paths[0].read_text())
+    assert result["name"] == cfg["name"]
+    assert result["configurations"] == cfg["configurations"]
+    assert not paths[0].read_bytes().endswith(b"\n")
+    desired = {
+        "MAX_TRADES": cap or "3",
+        "POLL_S": "7",
+        "FAST_DYNAMIC_MECH": "true",
+        "USE_OFFCHAIN": "true",
+    }
+    for p in paths:
+        actual = json.loads(p.read_text())["env_variables"]
+        for key, value in desired.items():
+            assert actual[key]["value"] == value
+    args = json.loads(saved.read_text())["user_provided_args"]
+    for key, value in desired.items():
+        assert args[key] == value
+        assert f"{key}={value}" in env.read_text()
+    assert "SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_POLL_S=7" in env.read_text()
+    assert (
+        'SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_POLL_S: "7"' in build.read_text()
+    )
+    after = {p: p.read_bytes() for p in all_paths}
+    run(tmp_path)
+    assert all(p.read_bytes() == after[p] for p in all_paths)
+    for p in all_paths:
+        assert len(list(p.parent.glob(p.name + ".bak-*"))) == 1
+    # Rolling back keeps the inputs and uses the normal migration.
+    result["hash"] = packages["dev"]["service/valory/trader_pearl/0.1.0"]
+    paths[0].write_text(json.dumps(result))
+    run(tmp_path)
+    assert json.loads(paths[0].read_text())["env_variables"]["MAX_TRADES"]["value"] == (
+        cap or "3"
+    )
+
+
+@pytest.mark.parametrize("service", ["omenstrat_fast", "trader_pearl"])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_release_selects_service_and_skips_polymarket(tmp_path, service, dry_run):
+    """Select the service agent image and change only Omen release fields."""
+    repo = tmp_path / "repo"
+    for relative in [
+        "release_service.sh",
+        "scripts/migrate_trader_config.py",
+        "configs/config_omenstrat_fast.json",
+        "packages/packages.json",
+        "packages/valory/services/omenstrat_fast/service.yaml",
+        "packages/valory/services/trader_pearl/service.yaml",
+    ]:
+        target = repo / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(SCRIPT.parents[1] / relative, target)
+    binaries = repo / ".venv/bin"
+    binaries.mkdir(parents=True)
+    for command in ["autonomy", "aea", "docker", "curl"]:
+        target = binaries / command
+        target.write_text("#!/bin/sh\nexit 0\n")
+        target.chmod(0o755)
+    builder = repo / "build_image_offline.sh"
+    builder.write_text('#!/bin/sh\nprintf \'%s\\n\' "$2" > "$1/build-agent.txt"\n')
+    builder.chmod(0o755)
+    omen, poly = tmp_path / "omen", tmp_path / "poly"
+    omen_paths, poly_paths = fixture(omen), fixture(poly)
+    for paths, is_poly in [(omen_paths, False), (poly_paths, True)]:
+        data = json.loads(paths[0].read_text())
+        data.update(
+            name="Trader Agent",
+            agent_release={"repository": {"owner": "valory-xyz"}},
+            configurations={"gnosis": {"agent_id": 14, "staking": "keep"}},
+        )
+        data["env_variables"]["IS_RUNNING_ON_POLYMARKET"] = entry(str(is_poly).lower())
+        paths[0].write_text(json.dumps(data))
+    before = {p: p.read_bytes() for p in [*omen_paths, *poly_paths]}
+    arguments = [] if service == "omenstrat_fast" else ["--service", service]
+    arguments.append("--force-build")
+    if dry_run:
+        arguments.append("--dry-run")
+    env = dict(
+        os.environ,
+        HOME=str(tmp_path),
+        PATH=str(binaries) + os.pathsep + os.environ["PATH"],
+    )
+    output = subprocess.run(
+        [
+            "bash",
+            str(repo / "release_service.sh"),
+            "--skip-publish",
+            "--quickstart",
+            f"{omen},{poly}",
+            *arguments,
+        ],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    packages = json.loads((repo / "packages/packages.json").read_text())
+    cid = packages["dev"][f"service/valory/{service}/0.1.0"]
+    agent = "omenstrat_fast" if service == "omenstrat_fast" else "trader"
+    assert f"valory/oar-{agent}:" in output
+    assert cid in output
+    assert "Polymarket" in output
+    assert all(p.read_bytes() == before[p] for p in poly_paths)
+    if dry_run:
+        assert all(p.read_bytes() == before[p] for p in omen_paths)
+    else:
+        assert (repo / "build-agent.txt").read_text().strip() == (
+            f"valory/{agent}:0.1.0:" + packages["dev"][f"agent/valory/{agent}/0.1.0"]
+        )
+        actual = json.loads(omen_paths[0].read_text())
+        old = json.loads(before[omen_paths[0]])
+        assert actual["hash"] == cid
+        assert actual["name"] == old["name"]
+        assert actual["configurations"] == old["configurations"]
+        if service == "omenstrat_fast":
+            assert actual["env_variables"]["MAX_TRADES"]["value"] == "3"
+
+
+def test_fast_defaults_without_env_mapping(tmp_path):
+    """Create the missing env mapping without replacing service identity."""
+    packages = json.loads((SCRIPT.parents[1] / "packages/packages.json").read_text())
+    config = tmp_path / "configs/config_predict_trader.json"
+    config.parent.mkdir()
+    config.write_text(
+        json.dumps(
+            {
+                "hash": packages["dev"]["service/valory/omenstrat_fast/0.1.0"],
+                "name": "Trader Agent",
+            }
+        )
+    )
+    run(tmp_path)
+    actual = json.loads(config.read_text())
+    assert actual["name"] == "Trader Agent"
+    assert actual["env_variables"]["MAX_TRADES"]["value"] == "3"
+    assert actual["env_variables"]["FAST_DYNAMIC_MECH"]["value"] == "true"
+    before = config.read_bytes()
+    run(tmp_path)
+    assert config.read_bytes() == before

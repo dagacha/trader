@@ -54,6 +54,13 @@ def test_fast_route() -> None:
     """A request and bet return to the watch without housekeeping."""
     transitions = OmenstratFastAbciApp.transition_function
     assert transitions[FreshWatchRound][Event.MARKET] == DecisionRequestRound
+    from packages.valory.skills.decision_maker_abci.states.mech_only import (
+        MechOnlySelectionRound,
+    )
+
+    assert transitions[FreshWatchRound][Event.MECH_ONLY] == MechOnlySelectionRound
+    assert transitions[MechOnlySelectionRound][D.DONE] == MechRequestRound
+    assert transitions[MechOnlySelectionRound][D.NO_MARKETS] == FreshWatchRound
     assert transitions[FreshWatchRound][Event.HOUSEKEEPING] == RedeemRound
     assert transitions[DecisionRequestRound][D.DONE] == MechRequestRound
     assert transitions[MechRequestRound][M.OFFCHAIN_DONE] == MechResponseRound

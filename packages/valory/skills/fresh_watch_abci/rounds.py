@@ -42,6 +42,9 @@ from packages.valory.skills.decision_maker_abci.states.bet_placement import (
 from packages.valory.skills.decision_maker_abci.states.decision_request import (
     DecisionRequestRound,
 )
+from packages.valory.skills.decision_maker_abci.states.mech_only import (
+    MechOnlySelectionRound,
+)
 from packages.valory.skills.decision_maker_abci.states.post_bet_update import (
     PostBetUpdateRound,
 )
@@ -53,6 +56,7 @@ class Event(Enum):
 
     DONE = "done"
     MARKET = "market"
+    MECH_ONLY = "mech_only"
     HOUSEKEEPING = "housekeeping"
     WAIT = "wait"
     BET = "bet"
@@ -103,6 +107,8 @@ class FreshWatchRound(CollectSameUntilThresholdRound):
         )
         if lane == "market":
             return data, Event.MARKET
+        if lane == "mech_only":
+            return data, Event.MECH_ONLY
         if lane == "housekeeping":
             return data, Event.HOUSEKEEPING
         return data, Event.WAIT
@@ -161,43 +167,49 @@ class FreshWatchAbciApp(AbciApp[Event]):
 
     Transition states:
         0. FreshWatchRound
-            - market: 1.
-            - housekeeping: 5.
+            - market: 2.
+            - mech only: 1.
+            - housekeeping: 6.
             - wait: 0.
             - no majority: 0.
             - round timeout: 0.
-        1. DecisionRequestRound
-            - done: 6.
-            - mock mech request: 2.
-            - slots unsupported error: 0.
+        1. MechOnlySelectionRound
+            - done: 7.
+            - no markets: 0.
             - no majority: 1.
-            - round timeout: 1.
-        2. FastDecisionRound
-            - bet: 3.
-            - skip: 0.
+            - round timeout: 0.
+        2. DecisionRequestRound
+            - done: 7.
+            - mock mech request: 3.
+            - slots unsupported error: 0.
             - no majority: 2.
             - round timeout: 2.
-        3. BetPlacementRound
-            - done: 7.
-            - mock tx: 4.
+        3. FastDecisionRound
+            - bet: 4.
+            - skip: 0.
+            - no majority: 3.
+            - round timeout: 3.
+        4. BetPlacementRound
+            - done: 8.
+            - mock tx: 5.
             - insufficient balance: 0.
             - calc buy amount failed: 0.
-            - no majority: 3.
-            - round timeout: 0.
-        4. PostBetUpdateRound
-            - done: 0.
-            - none: 4.
             - no majority: 4.
-            - round timeout: 4.
-        5. RedeemRound
-            - done: 7.
-            - mock tx: 8.
-            - no redeeming: 8.
+            - round timeout: 0.
+        5. PostBetUpdateRound
+            - done: 0.
+            - none: 5.
             - no majority: 5.
-            - redeem round timeout: 8.
-        6. FinishedRequestRound
-        7. FinishedFastTxRound
-        8. FinishedHousekeepingRound
+            - round timeout: 5.
+        6. RedeemRound
+            - done: 8.
+            - mock tx: 9.
+            - no redeeming: 9.
+            - no majority: 6.
+            - redeem round timeout: 9.
+        7. FinishedRequestRound
+        8. FinishedFastTxRound
+        9. FinishedHousekeepingRound
 
     Final states: {FinishedFastTxRound, FinishedHousekeepingRound, FinishedRequestRound}
 
@@ -212,10 +224,17 @@ class FreshWatchAbciApp(AbciApp[Event]):
     transition_function = {
         FreshWatchRound: {
             Event.MARKET: DecisionRequestRound,
+            Event.MECH_ONLY: MechOnlySelectionRound,
             Event.HOUSEKEEPING: RedeemRound,
             Event.WAIT: FreshWatchRound,
             Event.NO_MAJORITY: FreshWatchRound,
             Event.ROUND_TIMEOUT: FreshWatchRound,
+        },
+        MechOnlySelectionRound: {
+            D.DONE: FinishedRequestRound,
+            D.NO_MARKETS: FreshWatchRound,
+            D.NO_MAJORITY: MechOnlySelectionRound,
+            D.ROUND_TIMEOUT: FreshWatchRound,
         },
         DecisionRequestRound: {
             D.DONE: FinishedRequestRound,

@@ -8,22 +8,26 @@ aea_version: '>=2.0.0, <3.0.0'
 fingerprint:
   README.md: bafybeieurwex74dtimmmndedzrhznyfivsuaf27lteomz4cz23upjtv2pq
   __init__.py: bafybeihyphnywie3dyf7f7mmwm7yvcwekkgsa4mq5273ojuzbjsznvorv4
-  behaviours.py: bafybeidfim7l46vgqvylzysqtw6xpenhg2ip7evkoenyzlmjkk4oeuxgba
+  behaviours.py: bafybeife4xbnuwz7cg3lnf7tgw2qohyk5gqumxshn54ife5socwouf2qvm
   dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
-  fsm_specification.yaml: bafybeieiislbmdq6mfm4fscuui5aalhiknowuq3sym7k5b3erfabsf3xe4
+  fsm_specification.yaml: bafybeihujegz37fnd7b6j7rskzhsplv4h5kzmjq5iunwprap7hfztvlo4u
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
   models.py: bafybeichkkxkldg24ukw7sz5e3xcp3qp6qudx3mu5m6b437spiappdnds4
-  rounds.py: bafybeibmqa62zmp26f7egxsuq6pb3wpbrw5yxbzpgg4hedwszwtag2k3wi
+  rounds.py: bafybeidmla44osqozv3zkbgu5cwcho6sd6g37lnc3hyajufqk7xguvshaa
   strategy.py: bafybeig4yxuklttskr2e6f7zv4oo6wh3tclf7tgcqtskjiguv6vflle7ia
   tests/__init__.py: bafybeiebuokdlpgmmm6orggvfnnm537acc3eogkkrn6jyjaxzqyb7t7yzy
-  tests/test_behaviours.py: bafybeih4pjavztfyaq7h5uf7azv7pr5xk5753wwth26ugqfoj4dg67cbbe
-  tests/test_rounds.py: bafybeihmy4lrkxqveq2pxhqldedspfeeeo3xrydkzms246exc2kmjagvky
+  tests/test_behaviours.py: bafybeiazh4rmnjqr4vglkm2axa7qtxodnxtg2t3igxcwzbpxdqckpbp53q
+  tests/test_rounds.py: bafybeiethtm2rdws2ecocfiznx7mewmmxo4k6aro3nzteg6easjbu6hvqe
   tests/test_strategy.py: bafybeie4agoiqcsoi6zcwkbw4enpilzpyhdfwbbo7gptjmornxiira7zb4
 fingerprint_ignore_patterns: []
 connections: []
 contracts: []
-protocols: []
+protocols:
+- valory/contract_api:1.0.0:bafybeibld2xb5m7kyluiptkamp4nrt6oeomkohz7a3yppbv2oo7qw2e4la
 skills:
+- valory/staking_abci:0.1.0:bafybeihjsvg6qmpcvca24hlj34ppdgnhx6wnbi56ddcnnfdj2p7bg66mii
+- valory/check_stop_trading_abci:0.1.0:bafybeidwkfafnhkew4ylhqwg5pv3y2sakgkl6d6d2q7hjmfrag4xe6pfxq
+- valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
 - valory/abstract_round_abci:0.1.0:bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4
 - valory/market_manager_abci:0.1.0:bafybeicle4v4hbzfitrndz4iezmpzqft7q26eijmzpqpfs7o4ccv7pkfcu
 - valory/decision_maker_abci:0.1.0:bafybeigpgscs5zzar3ibwksb5arhna3azcid4yblvfq6tdlvc6xpihwdpa

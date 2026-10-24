@@ -63,6 +63,32 @@ CONTROL_ENV = (
     "DISABLE_TRADING",
 )
 PARAM_PREFIX = "SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_"
+FAST_PARAM_PREFIX = "SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_"
+FAST_ENV = (
+    "CREATORS",
+    "FRESH_MAX_AGE_S",
+    "OVERLAP_S",
+    "POLL_S",
+    "ACTIVE_WINDOW_UTC",
+    "HOUSEKEEPING_INTERVAL_S",
+    "TOOLS",
+    "PRIOR_WEIGHT",
+    "PRIORS",
+    "MIN_EDGE",
+    "MAX_PRICE",
+    "NO_MIN_P",
+    "CAP",
+    "KELLY_BANKROLL",
+    "MAX_SLIP",
+    "FAST_DYNAMIC_MECH",
+    "USE_OFFCHAIN",
+    "STOP_TRADING_IF_STAKING_KPI_MET",
+    "FINALIZE_TIMEOUT",
+    "TM_CHECK_SLEEP_DELAY",
+    "RETRY_TIMEOUT",
+    "VALID_MECHS",
+    "MAX_TRADES",
+)
 PRIORITY_ENV = {
     "PRIORITY_MECH_ADDRESS": "priority_mech_address",
     "PRIORITY_MECH_SERVICE_ID": "priority_mech_service_id",
@@ -303,7 +329,7 @@ def migrate_env(text, priorities, hashes, warnings, desired=None):
             value_index = index
         else:
             continue
-        bare = variable.removeprefix(PARAM_PREFIX)
+        bare = variable.removeprefix(PARAM_PREFIX).removeprefix(FAST_PARAM_PREFIX)
         if pair:
             prefix, separator, raw, newline = match.groups()
         else:
@@ -520,8 +546,13 @@ def sync_cached_env(text, desired, env_file=False):
                     break
                 end += 1
             block = "".join(lines[index + 1 : end])
-            if PARAM_PREFIX in block or any(
-                re.search(r"\b" + key + r"(?:=|:|\s*$)", block, re.M) for key in values
+            if (
+                PARAM_PREFIX in block
+                or FAST_PARAM_PREFIX in block
+                or any(
+                    re.search(r"\b" + key + r"(?:=|:|\s*$)", block, re.M)
+                    for key in values
+                )
             ):
                 blocks.append((index + 1, end, level))
     changes = []
@@ -544,7 +575,7 @@ def sync_cached_env(text, desired, env_file=False):
             else:
                 style = "env" if env_file else "list" if "-" in match[1] else "mapping"
                 indent = match[1]
-            bare = key.removeprefix(PARAM_PREFIX)
+            bare = key.removeprefix(PARAM_PREFIX).removeprefix(FAST_PARAM_PREFIX)
             if bare not in values:
                 continue
             present.add(key)
@@ -608,7 +639,7 @@ def sync_cached_env(text, desired, env_file=False):
     return "".join(lines), changes
 
 
-def migrate(quickstart, dry_run=False, warn_only=False):
+def migrate(quickstart, dry_run=False, warn_only=False, service=None):
     """Migrate an Omen quickstart and skip Polymarket cached services."""
     config = quickstart / "configs/config_predict_trader.json"
     fast = quickstart / "configs/config_omenstrat_fast.json"
@@ -623,6 +654,18 @@ def migrate(quickstart, dry_run=False, warn_only=False):
     packages = json.loads(
         (Path(__file__).resolve().parents[1] / "packages/packages.json").read_text()
     )
+    fast_mode = service == "omenstrat_fast" or (
+        service is None
+        and json.loads(config.read_text()).get("hash")
+        == packages["dev"].get("service/valory/omenstrat_fast/0.1.0", "")
+    )
+    defaults = {}
+    if fast_mode:
+        template = (
+            Path(__file__).resolve().parents[1] / "configs/config_omenstrat_fast.json"
+        )
+        env = json.loads(template.read_text())["env_variables"]
+        defaults = {key: env[key] for key in FAST_ENV}
     hashes = {
         name: packages["dev"][f"custom/valory/{name}/0.1.0"]
         for name in ("kelly_criterion", "fixed_bet")
@@ -660,24 +703,34 @@ def migrate(quickstart, dry_run=False, warn_only=False):
             continue
         with path.open(encoding="utf-8", newline="") as source:
             text = source.read()
-        if "omenstrat_fast" in text.lower():
+        if not fast_mode and "omenstrat_fast" in text.lower():
             print(f">> {path}: omenstrat_fast: skipping trader migration")
             continue
         priorities = []
         warnings = []
         # Saved inputs use plain values. Only sync explicit controls there.
-        if path.parent == quickstart / ".operate":
+        if fast_mode or path.parent == quickstart / ".operate":
             updated, changes = text, []
         else:
             updated, changes = (
                 migrate_json if path.suffix == ".json" else migrate_env
             )(text, priorities, hashes, warnings)
         if path == paths[0]:
+            if fast_mode:
+                data = json.loads(updated)
+                if "env_variables" not in data:
+                    data["env_variables"] = {}
+                    updated = edit_json(updated, data, addition=("env_variables", {}))
+                for key, source in defaults.items():
+                    if key not in data["env_variables"]:
+                        data["env_variables"][key] = dict(source)
+                        updated = edit_json(updated, data, addition=(key, source))
+                        changes.append(f"add fast default {key}={source['value']}")
             env = json.loads(updated).get("env_variables", {})
             desired = {
                 key: entry
                 for key, entry in env.items()
-                if key in CONTROL_ENV
+                if key in (*CONTROL_ENV, *defaults)
                 and isinstance(entry, dict)
                 and entry.get("value") not in (None, "")
             }
@@ -688,11 +741,16 @@ def migrate(quickstart, dry_run=False, warn_only=False):
                 else sync_cached_env(updated, desired, path.name == "agent_0.env")
             )
             changes.extend(synced)
-            if path.suffix != ".json":
+            if not fast_mode and path.suffix != ".json":
                 updated, synced = migrate_env(updated, [], hashes, [], desired)
                 changes.extend(synced)
             # Preview warnings use the old values. Real runs use the synced values.
-            if not dry_run and not warn_only and path.parent != quickstart / ".operate":
+            if (
+                not fast_mode
+                and not dry_run
+                and not warn_only
+                and path.parent != quickstart / ".operate"
+            ):
                 priorities = []
                 (migrate_json if path.suffix == ".json" else migrate_env)(
                     updated, priorities, hashes, []
@@ -742,5 +800,6 @@ if __name__ == "__main__":
     parser.add_argument("quickstart", type=Path)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--warn-only", action="store_true")
+    parser.add_argument("--service", choices=("omenstrat_fast", "trader_pearl"))
     args = parser.parse_args()
-    migrate(args.quickstart, args.dry_run, args.warn_only)
+    migrate(args.quickstart, args.dry_run, args.warn_only, args.service)

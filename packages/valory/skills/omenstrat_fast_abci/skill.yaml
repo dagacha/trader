@@ -11,11 +11,11 @@ fingerprint:
   behaviours.py: bafybeidekktpzp57maqhumitkz5nruylxlz2ico23ogzpt5nm5yikrwcly
   composition.py: bafybeidqglprz3azjyuopcmwsmhgsxjdoq3cggg4n76tawvvwgykbpfg6a
   dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
-  fsm_specification.yaml: bafybeibhmxlncynj53bw6p72qx3cisxeem4q3hlynpxxrgqnvybab7wbmq
+  fsm_specification.yaml: bafybeiddtg6iwkqsovxge5gchmhz73fufl2wvhbpkh6zqz35arcocpi7cu
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
   models.py: bafybeicihpfeq66ahhuboojdrf7f33xu6tmktmskzodh7oiqvxtggka4om
   tests/__init__.py: bafybeifx5qa3c7rsjbe4ujuif363osh23mvgprcd5jwv67t5kl3kgqrszu
-  tests/test_composition.py: bafybeidkzvekdxvjbtiyl2grvkhvr6aanzaalbikgeqyyvc7ojgshhefhi
+  tests/test_composition.py: bafybeigfm7zde6odpx6s5jmq3h4k5cxib4gjonyakfddcj3wgyiu7egy4a
   tests/test_config.py: bafybeiftcg2lgfxvkuyb5bbkly2mp6373g6oo3sjjl5k2hp54cd4woe4w4
   tests/test_requests.py: bafybeif6cpspom5h65ikwp5c4umixkh4umxy3kkj2ib7mizjw455kfxvly
 fingerprint_ignore_patterns: []
@@ -34,7 +34,7 @@ skills:
 - valory/chatui_abci:0.1.0:bafybeihj5y6cecuw4iz2gshicoygghrgi5b6rzynnofx25ycsv56ehgdvq
 - valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
 - valory/trader_abci:0.1.0:bafybeififhp3fto5tvw7nbr3qft2ejio6xfggove5cvizuc3fhqq6oa2m4
-- valory/fresh_watch_abci:0.1.0:bafybeifxte5vbwvdxbd65ljs7fxi3ygnw4f2px64n6256gtxruxlgqd5im
+- valory/fresh_watch_abci:0.1.0:bafybeidtshb4pgvb5w652qbskxkhjree4k3itesessnj7yylktewsj4nqy
 behaviours:
   main:
     args: {}

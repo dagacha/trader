@@ -10,13 +10,13 @@
 #   'manifest for valory/oar-trader:<hash> not found: manifest unknown'
 # because fork images are not published to Docker Hub).
 #
-#   artifact 1: agent image   valory/oar-trader:<agent-hash>  (built locally)
-#   artifact 2: service CID   packages.json service/valory/trader_pearl/0.1.0
+#   artifact 1: agent image   valory/oar-<agent-name>:<agent-hash> (built locally)
+#   artifact 2: service CID   packages.json service/valory/<selected-service>/0.1.0
 #                            (published via `autonomy push-all --remote`)
 #   artifact 3: quickstart    configs/config_predict_trader.json "hash"
 #
-# Quickstart "hash" must be the trader_pearl SERVICE CID, never the agent hash.
-# valory/oar-trader:<agent hash> is local-only; it is not on Docker Hub.
+# Quickstart "hash" must be the selected SERVICE CID, never the agent hash.
+# The selected agent image is local-only; it is not on Docker Hub.
 # Each host must run release_service.sh / build_image_offline.sh or load the image.
 #
 # Usage:
@@ -39,6 +39,7 @@
 #                      ID N (expands to ~/N-trader/quickstart) or a path.
 #                      Repeatable. Each clone's runtime cron script has a
 #                      preflight image gate that relies on this alignment.
+#   --service NAME     omenstrat_fast (default) or trader_pearl (rollback)
 #   --force-build      rebuild the image even if it exists locally
 #   --skip-publish     skip `autonomy push-all --remote` (service assumed published)
 #   --dry-run          report current state and what would be done; no changes
@@ -52,7 +53,7 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
-SERVICE_YAML="$REPO/packages/valory/services/trader_pearl/service.yaml"
+SERVICE="omenstrat_fast"
 PACKAGES_JSON="$REPO/packages/packages.json"
 GATEWAY="https://gateway.autonolas.tech/ipfs"
 
@@ -97,6 +98,11 @@ while [ $# -gt 0 ]; do
     --quickstart)
       [ $# -ge 2 ] || { echo "ERROR: --quickstart requires a value (trader ID, path, or comma list)" >&2; exit 1; }
       add_quickstart "$2"; shift 2;;
+    --service)
+      [ $# -ge 2 ] || { echo "ERROR: --service requires omenstrat_fast or trader_pearl" >&2; exit 1; }
+      case "$2" in omenstrat_fast|trader_pearl) SERVICE="$2";;
+        *) echo "ERROR: unsupported service: $2" >&2; exit 1;; esac
+      shift 2;;
     --force-build)   FORCE_BUILD=1; shift;;
     --skip-publish)  SKIP_PUBLISH=1; shift;;
     --dry-run)       DRY_RUN=1; shift;;
@@ -111,6 +117,7 @@ done
 # still on the official valory-xyz release are migrated to the fork in the
 # same pass rather than silently left behind.
 # ------------------------------------------------------------------
+SERVICE_YAML="$REPO/packages/valory/services/$SERVICE/service.yaml"
 FORK_OWNER="dagacha"
 if [ "${#QUICKSTARTS[@]}" -eq 0 ]; then
   echo ">> no --quickstart given; discovering every trader in $HOME ..."
@@ -157,6 +164,21 @@ if not isinstance(d, dict) or "hash" not in d or not isinstance(d["hash"], str) 
       exit 1
     fi
   else
+    if python3 - "$REPO/scripts/migrate_trader_config.py" "$qs" <<'PYCODE'
+import runpy, sys
+from pathlib import Path
+helpers = runpy.run_path(sys.argv[1])
+qs = Path(sys.argv[2])
+paths = [qs / "configs/config_predict_trader.json", *sorted((qs / ".operate").glob("*-quickstart-config.json"))]
+if (qs / ".operate/local_config.json").is_file():
+    paths.append(qs / ".operate/local_config.json")
+sys.exit(0 if any(helpers["is_polymarket"](path) for path in paths) else 1)
+PYCODE
+    then
+      echo ">> Polymarket quickstart $qs: skipping all files"
+      BROKEN_CONFIGS+=("$cfg")
+      continue
+    fi
     # Warn about stored priority mech differences before build or publish.
     python3 "$REPO/scripts/migrate_trader_config.py" "$qs" --warn-only
   fi
@@ -222,17 +244,20 @@ fi
 # ------------------------------------------------------------------
 # 3. resolve agent hash + service CID from the (verified) tree
 # ------------------------------------------------------------------
-AGENT_HASH="$(sed -n 's/^agent: valory\/trader:[0-9.]*:\(bafybei[a-z0-9]*\)[[:space:]]*$/\1/p' "$SERVICE_YAML")"
+AGENT_ID="$(sed -n 's/^agent: \(valory\/[a-z_]*:[0-9.]*:bafybei[a-z0-9]*\)[[:space:]]*$/\1/p' "$SERVICE_YAML")"
+AGENT_NAME="${AGENT_ID#valory/}"
+AGENT_NAME="${AGENT_NAME%%:*}"
+AGENT_HASH="${AGENT_ID##*:}"
 if [ -z "$AGENT_HASH" ]; then
   echo "ERROR: could not read agent hash from $SERVICE_YAML" >&2
   exit 1
 fi
-SVC_CID="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["dev"].get("service/valory/trader_pearl/0.1.0",""))' "$PACKAGES_JSON")"
+SVC_CID="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["dev"].get("service/valory/"+sys.argv[2]+"/0.1.0",""))' "$PACKAGES_JSON" "$SERVICE")"
 if [ -z "$SVC_CID" ]; then
   echo "ERROR: could not read service CID from $PACKAGES_JSON" >&2
   exit 1
 fi
-IMAGE="valory/oar-trader:$AGENT_HASH"
+IMAGE="valory/oar-$AGENT_NAME:$AGENT_HASH"
 
 echo
 echo "## Repo:         $REPO"
@@ -251,7 +276,7 @@ else
   if [ "$DRY_RUN" -eq 1 ]; then
     echo "   (dry-run: skipped)"
   else
-    BIO_SKIP_SYNC=1 "$REPO/build_image_offline.sh" "$REPO" "valory/trader:0.1.0:$AGENT_HASH"
+    BIO_SKIP_SYNC=1 "$REPO/build_image_offline.sh" "$REPO" "$AGENT_ID"
     docker image inspect "$IMAGE" >/dev/null 2>&1 \
       || { echo "ERROR: build did not produce $IMAGE" >&2; exit 1; }
   fi
@@ -420,16 +445,16 @@ for qs in "${QUICKSTARTS[@]+"${QUICKSTARTS[@]}"}"; do
   # (real run) or excluded (dry-run) any broken config, so no re-guards here.
   for _b in "${BROKEN_CONFIGS[@]+"${BROKEN_CONFIGS[@]}"}"; do
     if [ "$_b" = "$cfg" ]; then
-      echo ">> (dry-run) skipping flagged-broken config $cfg"
+      echo ">> (dry-run) skipping excluded config $cfg"
       continue 2
     fi
   done
   # Sync saved quickstart inputs as well as service caches before operate can
   # rebuild them. Keep this before the unchanged-hash shortcut below.
   if [ "$DRY_RUN" -eq 1 ]; then
-    python3 "$REPO/scripts/migrate_trader_config.py" "$qs" --dry-run
+    python3 "$REPO/scripts/migrate_trader_config.py" "$qs" --service "$SERVICE" --dry-run
   else
-    python3 "$REPO/scripts/migrate_trader_config.py" "$qs"
+    python3 "$REPO/scripts/migrate_trader_config.py" "$qs" --service "$SERVICE"
   fi
   old_hash="$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(d["hash"])' "$cfg")"
   old_owner="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("agent_release",{}).get("repository",{}).get("owner",""))' "$cfg")"
@@ -505,7 +530,7 @@ for qs in "${QUICKSTARTS[@]+"${QUICKSTARTS[@]}"}"; do
 done
 if [ "${#VALID_QS[@]}" -gt 0 ]; then
   echo "## Configs updated (targeted): ${VALID_QS[*]}"
-  [ "${#BROKEN_CONFIGS[@]}" -gt 0 ] && echo "## NOTE: excluded (broken) in dry-run: ${BROKEN_CONFIGS[*]}"
+  [ "${#BROKEN_CONFIGS[@]}" -gt 0 ] && echo "## NOTE: excluded (invalid or Polymarket): ${BROKEN_CONFIGS[*]}"
   echo "## Commit the config change(s) in each quickstart repo, e.g.:"
   echo "##   git add configs/config_predict_trader.json"
   echo "##   git commit -m \"fix(traderNN): point at service $SVC_CID (agent ${AGENT_HASH:0:16}...)\""

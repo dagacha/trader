@@ -24,8 +24,18 @@ import time
 from dataclasses import asdict
 from typing import Any, Callable, Dict, Generator, List, Optional
 
+from packages.valory.protocols.contract_api.message import ContractApiMessage
 from packages.valory.skills.abstract_round_abci.behaviour_utils import TimeoutException
 from packages.valory.skills.abstract_round_abci.behaviours import AbstractRoundBehaviour
+from packages.valory.skills.agent_performance_summary_abci.activity_goal import (
+    read_successful_trade_count_state,
+)
+from packages.valory.skills.agent_performance_summary_abci.models import (
+    write_json_atomically,
+)
+from packages.valory.skills.check_stop_trading_abci.behaviours import (
+    CheckStopTradingBehaviour,
+)
 from packages.valory.skills.decision_maker_abci.behaviours.base import (
     DecisionMakerBaseBehaviour,
 )
@@ -34,6 +44,9 @@ from packages.valory.skills.decision_maker_abci.behaviours.bet_placement import 
 )
 from packages.valory.skills.decision_maker_abci.behaviours.decision_request import (
     DecisionRequestBehaviour,
+)
+from packages.valory.skills.decision_maker_abci.behaviours.mech_only import (
+    MechOnlySelectionBehaviour,
 )
 from packages.valory.skills.decision_maker_abci.behaviours.post_bet_update import (
     PostBetUpdateBehaviour,
@@ -58,6 +71,7 @@ from packages.valory.skills.market_manager_abci.bets import (
     PredictionResponse,
     QueueStatus,
 )
+from packages.valory.skills.staking_abci.rounds import StakingState
 
 _FIELDS = """id title collateralToken condition { id } creator fee creationTimestamp
 openingTimestamp outcomeSlotCount outcomeTokenAmounts outcomeTokenMarginalPrices
@@ -77,10 +91,26 @@ def log_decision(behaviour: DecisionMakerBaseBehaviour, result: Dict[str, Any]) 
     )
 
 
-class FreshWatchBehaviour(DecisionMakerBaseBehaviour):
+class FreshWatchBehaviour(DecisionMakerBaseBehaviour, CheckStopTradingBehaviour):
     """Poll the fresh-market query and select one durable queue entry."""
 
-    matching_round = FreshWatchRound
+    matching_round = FreshWatchRound  # type: ignore[assignment]
+
+    def contract_interact(
+        self, *args: Any, **kwargs: Any
+    ) -> Generator[None, None, bool]:
+        """Use the decision reader with the staking reader's default performative.
+
+        :param args: positional contract arguments.
+        :param kwargs: contract inputs and result placeholder.
+        :yield: contract API I/O.
+        :return: whether the contract read succeeded.
+        """
+        if not args:
+            kwargs.setdefault(
+                "performative", ContractApiMessage.Performative.GET_RAW_TRANSACTION
+            )
+        return (yield from super().contract_interact(*args, **kwargs))
 
     def _fetch_fresh(
         self, cursor: int, now: int
@@ -124,9 +154,68 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour):
         :yield: control during polling, live quotes, and idle waits.
         :return: consensus inputs for the selected lane.
         """
+        kpi_met, target_met, target, completed = (
+            yield from self._compute_activity_status()
+        )
+        period = (
+            self.ts_checkpoint
+            if self.service_staking_state == StakingState.STAKED
+            else self.synchronized_data.previous_checkpoint
+        )
+        count, _ = read_successful_trade_count_state(self.params.store_path, period)
+        if count is None:
+            count = self.synchronized_data.successful_trade_count
+        capped = self.params.max_trades > 0 and count >= self.params.max_trades
+        if capped:
+            marker = self.params.store_path / "fast_trade_cap.json"
+            try:
+                logged = json.loads(marker.read_text()) == {"period_start": period}
+            except (OSError, ValueError):
+                logged = False
+            if not logged:
+                self.context.logger.info(
+                    "reason=trade_cap period_start=%s count=%s max_trades=%s",
+                    period,
+                    count,
+                    self.params.max_trades,
+                )
+                write_json_atomically(marker, {"period_start": period})
+        selection = yield from self._select(capped, target_met or target == 0)
+        return dict(
+            selection,
+            previous_checkpoint=period,
+            is_staking_kpi_met=kpi_met,
+            is_activity_target_met=target_met,
+            activity_target=target,
+            activity_completed=completed,
+            mech_only_mode=capped,
+        )
+
+    def _select(
+        self, capped: bool, target_met: bool
+    ) -> Generator[None, None, Dict[str, Any]]:
+        """Select a market, a capped request, or periodic housekeeping.
+
+        :param capped: whether the period trade cap is reached.
+        :param target_met: whether no more staking activity is needed.
+        :yield: polling and contract I/O.
+        :return: the selected lane and its inputs.
+        """
         cfg = self.params.fast
         queue = FreshQueue(self.params.store_path / "fresh_watch.json")
         now = time.time()
+        if capped:
+            if housekeeping_due(now, queue.last_housekeeping, False, cfg):
+                self.context.state.redeeming_progress = RedeemingProgress(
+                    event_filtering_batch_size=self.params.event_filtering_batch_size
+                )
+                queue.last_housekeeping = now
+                queue.save()
+                return {"lane": "housekeeping"}
+            yield from self.sleep(cfg.poll_s)
+            if not target_met and self.params.use_offchain:
+                return {"lane": "mech_only"}
+            return {"lane": "wait"}
         last_poll = self.context.state.fast_last_poll
         if cfg.in_window(now) or queue.pending:
             if self.context.state.fast_background_running is True:
@@ -319,6 +408,8 @@ class FastDecisionBehaviour(DecisionMakerBaseBehaviour):
         :yield: control during the live pool read.
         :return: decision fields and market ages.
         """
+        if self.synchronized_data.mech_only_mode is True:
+            return {"stake": 0.0, "side": None, "reason": "mech_only"}
         bet = self.sampled_bet
         db = self.synchronized_data.db
         now = time.time()
@@ -468,6 +559,7 @@ class FreshWatchRoundBehaviour(AbstractRoundBehaviour):
     abci_app_cls = FreshWatchAbciApp
     behaviours = {
         FreshWatchBehaviour,
+        MechOnlySelectionBehaviour,
         FastDecisionBehaviour,
         FastBetPlacementBehaviour,
         DecisionRequestBehaviour,

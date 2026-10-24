@@ -5,10 +5,12 @@ alphabet_in:
 - HOUSEKEEPING
 - INSUFFICIENT_BALANCE
 - MARKET
+- MECH_ONLY
 - MOCK_MECH_REQUEST
 - MOCK_TX
 - NONE
 - NO_MAJORITY
+- NO_MARKETS
 - NO_REDEEMING
 - REDEEM_ROUND_TIMEOUT
 - ROUND_TIMEOUT
@@ -33,6 +35,7 @@ states:
 - FinishedHousekeepingRound
 - FinishedRequestRound
 - FreshWatchRound
+- MechOnlySelectionRound
 - PostBetUpdateRound
 - RedeemRound
 transition_func:
@@ -53,9 +56,14 @@ transition_func:
     (FastDecisionRound, SKIP): FreshWatchRound
     (FreshWatchRound, HOUSEKEEPING): RedeemRound
     (FreshWatchRound, MARKET): DecisionRequestRound
+    (FreshWatchRound, MECH_ONLY): MechOnlySelectionRound
     (FreshWatchRound, NO_MAJORITY): FreshWatchRound
     (FreshWatchRound, ROUND_TIMEOUT): FreshWatchRound
     (FreshWatchRound, WAIT): FreshWatchRound
+    (MechOnlySelectionRound, DONE): FinishedRequestRound
+    (MechOnlySelectionRound, NO_MAJORITY): MechOnlySelectionRound
+    (MechOnlySelectionRound, NO_MARKETS): FreshWatchRound
+    (MechOnlySelectionRound, ROUND_TIMEOUT): FreshWatchRound
     (PostBetUpdateRound, DONE): FreshWatchRound
     (PostBetUpdateRound, NONE): PostBetUpdateRound
     (PostBetUpdateRound, NO_MAJORITY): PostBetUpdateRound
