@@ -16,14 +16,14 @@ fingerprint:
   models.py: bafybeidqxl26hxm7g3mk3j642hv5r62o27j35rqj5zec2pfo6ouoaozhty
   tests/__init__.py: bafybeiadatapyjh3e7ucg2ehz77oms3ihrbutwb2cs2tkjehy54utwvuyi
   tests/test_agent_config_resolution.py: bafybeiggznsh6nrgcln7q4d3rvlnx2dd44rzfuw3c4ayrihkzzgp7z6jdu
-  tests/test_behaviours.py: bafybeicdipmt3fd6zo3vz4axyqxg74rkqm7ihi6rvjjmwsemjwvw5s7ek4
+  tests/test_behaviours.py: bafybeife72nmoi363rv3kj2krzmlzdysxuubknke43glbf3fyh2ls4wy6u
   tests/test_composition.py: bafybeifcamlkymoezzds63r5difknyc5te6ifxqv3xhgglbbtcgenlv45e
   tests/test_dialogues.py: bafybeibatogwoj6ieapcbiwonij6vskhogc65vfv53tyauqzeyiwmnd2im
   tests/test_handlers.py: bafybeihl373oleiibafei4qknvszuu4c7axc6nfvn35qp32trvd35n2cea
   tests/test_ledger_receipt_dispatch.py: bafybeiaqkb4ijm2kmdruyu4s2lklksmdnuyjrjfjfiykzns6lvortqcbru
   tests/test_models.py: bafybeiewq4rcnbpukiur2vfdqysuaagdi2krswghz3ktv3l7gynaip43hq
   tests/test_skill_dependencies.py: bafybeifpwgwo3hubycvskqgtbqpzu2lg7f6dql5ijnmsz6qcodneju5lcu
-  tx_validation.py: bafybeid6yjqxiixy5ykdmcb2lsyh32g42ollq55qmz5bxnu6jn4xnfjx7e
+  tx_validation.py: bafybeiah5qi2si255hiv3rrmlic3k7bkwobctc63n27aer6clrxseboj5q
   ui-build/omenstrat/README.md: bafybeiccodprvjsh5ejknb7iixrmfvz7igogs57mbkwmeiyq34m2xw22py
   ui-build/omenstrat/assets/agentsfun-chat-CQO2MvlO.png: bafybeibm5nhmhfa54gimrsjt7pupvw3bkg2ayr6nul5o5krlj67ivh26oy
   ui-build/omenstrat/assets/basius-chat-BiDLb6xE.png: bafybeic2ujg6kdkhdpbcg43kouti5xaf7dpg7sfwdrugl4whw5epspkpcy

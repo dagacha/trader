@@ -178,22 +178,48 @@ def test_pending_receipt_waits_then_validates(
         assert raw.call_count == 2
 
 
-def test_missing_receipt_exhausts_retries_without_negative_vote(
-    validation: ValidateTransactionBehaviour,
+@pytest.mark.parametrize("rpc_error", [False, True])
+def test_missing_receipt_keeps_polling_without_vote(
+    validation: ValidateTransactionBehaviour, rpc_error: bool
 ) -> None:
-    """An incomplete receipt must not be reported as a mined revert."""
+    """Missing receipts must wait past the retry count without a payload."""
+    response = (
+        LedgerApiMessage(
+            performative=LedgerApiMessage.Performative.ERROR,  # type: ignore[arg-type]
+            code=500,
+            message="Transaction not found",
+            data=b"",
+        )
+        if rpc_error
+        else _receipt(None)
+    )
+
+    def wait(seconds: int) -> Generator[str, None, None]:
+        assert seconds == validation.params.retry_timeout
+        yield "waiting"
+
     with (
         patch.object(
             validation,
             "get_ledger_api_response",
-            side_effect=lambda **kwargs: _return(_receipt(None)),
+            side_effect=lambda **kwargs: _return(response),
         ) as raw,
-        patch.object(validation, "sleep", side_effect=lambda seconds: _return(None)),
+        patch.object(validation, "sleep", side_effect=wait),
         patch.object(validation, "_verify_tx") as verify,
+        patch.object(
+            validation, "send_a2a_transaction", return_value=_return(None)
+        ) as send,
+        patch.object(validation, "wait_until_round_end", return_value=_return(None)),
     ):
-        assert _result(validation.has_transaction_been_sent()) is None
-        assert raw.call_count == 2
-        verify.assert_not_called()
+        action = validation.async_act()
+        try:
+            for count in range(1, validation.params.retry_attempts + 4):
+                assert next(action) == "waiting"
+                assert raw.call_count == count
+                send.assert_not_called()
+                verify.assert_not_called()
+        finally:
+            action.close()
 
 
 def test_safe_verification_error_is_negative(

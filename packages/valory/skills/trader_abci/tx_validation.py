@@ -19,7 +19,7 @@
 
 """Read raw receipts before validating trader transactions."""
 
-from typing import Generator, Optional
+from typing import Generator
 
 from packages.valory.protocols.contract_api import ContractApiMessage
 from packages.valory.protocols.ledger_api import LedgerApiMessage
@@ -31,11 +31,12 @@ from packages.valory.skills.transaction_settlement_abci.behaviours import (
 class TraderValidateTransactionBehaviour(ValidateTransactionBehaviour):
     """Validate receipts without replaying reverted transactions."""
 
-    def has_transaction_been_sent(self) -> Generator[None, None, Optional[bool]]:
+    def has_transaction_been_sent(self) -> Generator[None, None, bool]:
         """Wait for a receipt, reject a revert, and verify a successful Safe call."""
         tx_hash = self.synchronized_data.to_be_validated_tx_hash
         chain_id = self.synchronized_data.get_chain_id(self.params.default_chain_id)
-        for _ in range(self.params.retry_attempts):
+        # Let the round timeout select the transaction-history check.
+        while True:
             # GET_STATE calls Web3 directly. The enriched receipt API can discard
             # a mined revert when its replay at the parent block succeeds.
             response = yield from self.get_ledger_api_response(
@@ -61,6 +62,3 @@ class TraderValidateTransactionBehaviour(ValidateTransactionBehaviour):
                         return False
                     return bool(verification.state.body["verified"])
             yield from self.sleep(self.params.retry_timeout)
-
-        self.context.logger.error(f"tx {tx_hash} receipt check timed out!")
-        return None
