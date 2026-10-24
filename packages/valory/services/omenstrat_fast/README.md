@@ -7,11 +7,16 @@ compositions are unchanged.
 
 ## Latency design
 
-At startup, registration loads the manifest and endpoint of the configured
-priority mech. This is a single discovery step. There is no version detection.
-The two permitted tools are checked in order against that manifest. The plain
-`superforcaster` is used only if the calibrated tool is absent. An unanswered
-request is not retried with another tool: each market can be asked at most once.
+At startup, registration loads the manifests and endpoints of the allowed Mechs.
+This is a single discovery step. There is no version detection. Dynamic selection
+is on by default. It uses the shared tool filter and Mech ranking. The priority
+Mech is used only when `FAST_DYNAMIC_MECH=false`.
+The two permitted tools are checked in order against the discovered tools.
+The plain `superforcaster` is used only if the calibrated tool is absent.
+A request is sent only to a Mech that lists the tool in `relevant_tools`.
+An unanswered request is not retried with another tool: each market can be asked
+at most once. A required deposit returns to the same selected Mech and reuses
+the signed request before response polling starts.
 
 The trading lane is:
 
@@ -65,7 +70,7 @@ is `1 - p_hat(YES)`. All bounds must pass. The stake is
 `min(CAP, KELLY_BANKROLL * (p_side - price) / (1 - price))` in xDAI.
 The final execution quote also checks the blended edge, maximum price, and slip
 bound. `[FAST_DECISION]` records one terminal preparation decision per market,
-including age at request, answer, and bet preparation. A prepared bet is not proof
+including age at request, answer, and bet preparation, plus `mech` and `latency_s`. A prepared bet is not proof
 that its transaction settled; use the existing settlement logs for that result.
 
 ## Parameters
@@ -88,7 +93,9 @@ that its transaction settled; use the existing settlement logs for that result.
 | `KELLY_BANKROLL` | `10.0` xDAI |
 | `MAX_SLIP` | `0.10` absolute price rise |
 | `USE_OFFCHAIN` | `true` |
-| `MECH_MARKETPLACE_CONFIG` | V2 marketplace `0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB`; priority mech `0x552cEA7Bc33CbBEb9f1D90c1D11D2C6daefFd053`, service `975`; poll interval `1.5` s; response timeout `300` s; no mech failover |
+| `FAST_DYNAMIC_MECH` | `true`; controls `use_dynamic_mech_selection` |
+| `VALID_MECHS` | Normal Omen allowlist plus Mech 975 |
+| `MECH_MARKETPLACE_CONFIG` | V2 marketplace `0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB`; dynamic selection; static priority `0x552cEA7Bc33CbBEb9f1D90c1D11D2C6daefFd053`, service `975`; poll interval `1.5` s; response timeout `300` s; no mech failover |
 | `FINALIZE_TIMEOUT` | `15.0` s, down from `60.0` |
 | `TM_CHECK_SLEEP_DELAY` | `1` s, down from `3` |
 | `RETRY_TIMEOUT` | `1` s, down from `3` |
@@ -116,8 +123,10 @@ publish, deploy, or change a server.
    quickstart instance and store volume for this pilot. Set the release version
    and CID to the approved artifact. Keep `configurations.gnosis.agent_id = 25`.
 4. Set the RPC, Safe, service, staking, and funding inputs in that instance.
-   Retain the V2 marketplace and priority mech 975. Confirm the runtime-computed
-   marketplace config still has the 1.5-second response poll interval.
+   Retain the V2 marketplace and dynamic selection. Confirm the runtime config
+   still has the 1.5-second response poll interval. For static selection, set
+   `FAST_DYNAMIC_MECH=false` and supply the priority Mech HTTP endpoint in
+   `MECH_MARKETPLACE_CONFIG.offchain_url`.
 5. In that quickstart instance, run
    `./run_service.sh configs/config_omenstrat_fast.json` only after deployment is
    authorized. The trader migration skips fast templates and caches cleanly.
@@ -126,11 +135,33 @@ publish, deploy, or change a server.
 
 ## Open items and limits
 
-Mech 975 off-chain latency is reported as 75–85 seconds in the task brief; this
-change reduces agent-side delay and does not remove that tool runtime. Measure
-it during the pilot. No live paid request or trade was made for validation.
+The task brief reports that trader 48 selected Mech
+`0xdb78159e9246ec738f51c2c9cb1169b5c0e45fee` on 24 October. Its off-chain
+`superforcaster_calibrated_full_search` requests took 22–62 seconds, with a median
+of about 31 seconds. Mech 975 took 75–85 seconds. These are prior observations,
+not a latency guarantee. No live paid request or trade was made for validation.
 
 Housekeeping can delay a queued market until the current housekeeping pass ends.
 Discovery continues during that pass. The overlap recovers late-indexed markets
 at or up to `OVERLAP_S` seconds below the saved watermark, while they are still
 fresh. Markets indexed after that overlap or the fresh-age limit can be missed.
+
+## Mech latency logs
+
+Both Omen compositions log each answer in the shared request and response path.
+Mech-only answers use the same path. The line format is:
+
+```text
+[MECH_LATENCY] tool=<tool> mech=<address> offchain=<bool> sent_ts=<unix> answered_ts=<unix> latency_s=<float> market=<id>
+```
+
+`sent_ts` is the actual off-chain POST time, including a re-POST after a deposit,
+or the time the agent observes on-chain request settlement. `answered_ts` is the
+response read time. A timeout does not count as an answer. `market=-` means that
+the request has no market context. Timing records are local to the agent process.
+
+Find median latency per tool in an agent log:
+
+```sh
+grep '\[MECH_LATENCY\]' agent.log | awk '{for(i=1;i<=NF;i++){split($i,a,"=");if(a[1]=="tool")t=a[2];if(a[1]=="latency_s")l=a[2]}print t,l}' | sort -k1,1 -k2,2n | awk 'function emit(){if(n) print tool,(v[int((n+1)/2)]+v[int((n+2)/2)])/2} $1!=tool{emit();tool=$1;n=0} {v[++n]=$2} END{emit()}'
+```

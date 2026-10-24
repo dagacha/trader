@@ -104,6 +104,8 @@ def test_params_and_state(tmp_path: Any) -> None:
     assert params.fast.overlap_s == 120
     assert params.fast.cap == 4
     assert params.use_offchain is True
+    assert params.fast_dynamic_mech is True
+    assert params.mech_marketplace_config.use_dynamic_mech_selection is True
     assert params.mech_marketplace_config.offchain_poll_interval_seconds == 1.5
     assert params.fast.tools == [
         "superforcaster_calibrated_full_search",
@@ -122,7 +124,8 @@ def test_params_and_state(tmp_path: Any) -> None:
     assert fresh.fast_last_poll == 0
 
 
-def test_priority_mech_only() -> None:
+@pytest.mark.parametrize("dynamic", [False, True])
+def test_priority_mech_only(dynamic: bool) -> None:
     """Ignore the broad allowlist and discover only the configured priority."""
     from unittest.mock import MagicMock
 
@@ -132,8 +135,11 @@ def test_priority_mech_only() -> None:
 
     context = MagicMock()
     context.params.mech_marketplace_config.priority_mech_address = "0xABC"
+    context.params.mech_marketplace_config.use_dynamic_mech_selection = dynamic
+    context.params.valid_mechs = ["0xselected"]
+    context.state.synchronized_data.approved_mechs = []
     behaviour = FastMechInformationBehaviour(name="info", skill_context=context)
-    assert behaviour.eligible_mechs == ["0xabc"]
+    assert behaviour.eligible_mechs == (["0xselected"] if dynamic else ["0xabc"])
 
 
 def test_only_fast_composition_is_active() -> None:
@@ -213,3 +219,53 @@ def test_overlap_defaults() -> None:
         assert config["models"]["params"]["args"]["overlap_s"] == 120
     config = json.loads((ROOT / "configs/config_omenstrat_fast.json").read_text())
     assert config["env_variables"]["OVERLAP_S"]["value"] == "120"
+
+
+def test_dynamic_defaults() -> None:
+    """Expose dynamic selection in both deployment entry points."""
+    import json
+
+    for relative in (
+        "agents/omenstrat_fast/aea-config.yaml",
+        "services/omenstrat_fast/service.yaml",
+    ):
+        docs = list(
+            yaml.safe_load_all((ROOT / "packages/valory" / relative).read_text())
+        )
+        args = next(
+            doc
+            for doc in docs[1:]
+            if doc["public_id"].startswith("valory/omenstrat_fast_abci:")
+        )["models"]["params"]["args"]
+        assert args["fast_dynamic_mech"] == "${FAST_DYNAMIC_MECH:bool:true}"
+        assert "0xdb78159e9246ec738f51c2c9cb1169b5c0e45fee" in args["valid_mechs"]
+    config = json.loads((ROOT / "configs/config_omenstrat_fast.json").read_text())
+    assert config["env_variables"]["FAST_DYNAMIC_MECH"]["value"] == "true"
+
+
+def test_fast_uses_shared_timing_behaviours() -> None:
+    """The fast composition keeps the shared request and answer logging."""
+    from packages.valory.skills.trader_abci.mech_latency import (
+        TraderMechRequestBehaviour,
+        TraderMechResponseBehaviour,
+        TraderPostTxSettlementBehaviour,
+    )
+
+    assert {
+        TraderMechRequestBehaviour,
+        TraderMechResponseBehaviour,
+        TraderPostTxSettlementBehaviour,
+    } <= OmenstratFastConsensusBehaviour.behaviours
+
+
+def test_dynamic_param_declared_in_overriding_skills() -> None:
+    """Declare the control in every composed parameter model."""
+    for skill, default in (
+        ("trader_abci", False),
+        ("fresh_watch_abci", True),
+        ("omenstrat_fast_abci", True),
+    ):
+        config = yaml.safe_load(
+            (ROOT / "packages/valory/skills" / skill / "skill.yaml").read_text()
+        )
+        assert config["models"]["params"]["args"]["fast_dynamic_mech"] is default

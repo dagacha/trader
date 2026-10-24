@@ -57,6 +57,14 @@ def test_fast_route() -> None:
     assert transitions[FreshWatchRound][Event.HOUSEKEEPING] == RedeemRound
     assert transitions[DecisionRequestRound][D.DONE] == MechRequestRound
     assert transitions[MechRequestRound][M.OFFCHAIN_DONE] == MechResponseRound
+    assert (
+        transitions[MechRequestRound][M.OFFCHAIN_DEPOSIT_NEEDED]
+        == FastPreTxSettlementRound
+    )
+    assert (
+        transitions[PostTxSettlementRound][T.OFFCHAIN_MECH_DEPOSIT_SETTLED]
+        == MechRequestRound
+    )
     assert transitions[MechRequestRound][M.OFFCHAIN_ALL_FAILED] == FastDecisionRound
     assert transitions[MechResponseRound][M.DONE] == FastDecisionRound
     assert transitions[FastDecisionRound][Event.BET] == BetPlacementRound

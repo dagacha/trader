@@ -54,6 +54,11 @@ from packages.valory.skills.termination_abci.behaviours import (
     TerminationAbciBehaviours,
 )
 from packages.valory.skills.trader_abci.composition import TraderAbciApp
+from packages.valory.skills.trader_abci.mech_latency import (
+    TraderMechRequestBehaviour,
+    TraderMechResponseBehaviour,
+    TraderPostTxSettlementBehaviour,
+)
 from packages.valory.skills.trader_abci.tx_validation import (
     TraderValidateTransactionBehaviour,
 )
@@ -88,4 +93,18 @@ class TraderConsensusBehaviour(AbstractRoundBehaviour):
         *AgentPerformanceSummaryRoundBehaviour.behaviours,
     }
     behaviours.remove(ValidateTransactionBehaviour)
+    behaviours = {
+        b
+        for b in behaviours
+        if b.matching_round
+        not in {
+            TraderMechRequestBehaviour.matching_round,
+            TraderMechResponseBehaviour.matching_round,
+            TraderPostTxSettlementBehaviour.matching_round,
+        }
+    } | {
+        TraderMechRequestBehaviour,
+        TraderMechResponseBehaviour,
+        TraderPostTxSettlementBehaviour,
+    }
     background_behaviours_cls = {BackgroundBehaviour}  # type: ignore
