@@ -121,3 +121,20 @@ def test_settlement_drops_previous_transaction_state(vote: bool) -> None:
     assert result.db.get("final_tx_hash") is None
     assert result.db.get("most_voted_tx_hash") == "new"
     assert result.db.get("tx_submitter") == "bet_placement_round"
+
+
+def test_fast_agent_validates_with_trader_receipt_check() -> None:
+    """Use the trader receipt check, not the upstream validation behaviour."""
+    from packages.valory.skills.omenstrat_fast_abci.behaviours import (
+        OmenstratFastConsensusBehaviour,
+    )
+    from packages.valory.skills.trader_abci.tx_validation import (
+        TraderValidateTransactionBehaviour,
+    )
+    from packages.valory.skills.transaction_settlement_abci.behaviours import (
+        ValidateTransactionBehaviour,
+    )
+
+    behaviours = OmenstratFastConsensusBehaviour.behaviours
+    assert TraderValidateTransactionBehaviour in behaviours
+    assert ValidateTransactionBehaviour not in behaviours

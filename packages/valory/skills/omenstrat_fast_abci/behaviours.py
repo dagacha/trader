@@ -34,6 +34,9 @@ from packages.valory.skills.omenstrat_fast_abci.composition import (
 )
 from packages.valory.skills.termination_abci.behaviours import TerminationAbciBehaviours
 from packages.valory.skills.trader_abci.behaviours import TraderConsensusBehaviour
+from packages.valory.skills.transaction_settlement_abci.behaviours import (
+    ValidateTransactionBehaviour,
+)
 from packages.valory.skills.tx_settlement_multiplexer_abci.behaviours import (
     PreTxSettlementBehaviour,
 )
@@ -77,6 +80,9 @@ class OmenstratFastConsensusBehaviour(TraderConsensusBehaviour):
         FastPreTxSettlementBehaviour,
         *TerminationAbciBehaviours.behaviours,
     }
+    # Termination also supplies the upstream validator; keep the trader's
+    # receipt check so a reverted transaction fails fast here too.
+    behaviours.discard(ValidateTransactionBehaviour)
 
     def setup(self) -> None:
         """Set up the foreground FSM and its cooperative market poller."""
