@@ -54,8 +54,12 @@ from packages.valory.skills.termination_abci.behaviours import (
     TerminationAbciBehaviours,
 )
 from packages.valory.skills.trader_abci.composition import TraderAbciApp
+from packages.valory.skills.trader_abci.tx_validation import (
+    TraderValidateTransactionBehaviour,
+)
 from packages.valory.skills.transaction_settlement_abci.behaviours import (
     TransactionSettlementRoundBehaviour,
+    ValidateTransactionBehaviour,
 )
 from packages.valory.skills.tx_settlement_multiplexer_abci.behaviours import (
     PostTxSettlementFullBehaviour,
@@ -76,10 +80,12 @@ class TraderConsensusBehaviour(AbstractRoundBehaviour):
         *ResetPauseABCIConsensusBehaviour.behaviours,
         *TerminationAbciBehaviours.behaviours,
         *TransactionSettlementRoundBehaviour.behaviours,
+        TraderValidateTransactionBehaviour,
         *PostTxSettlementFullBehaviour.behaviours,
         *StakingRoundBehaviour.behaviours,
         *CheckStopTradingRoundBehaviour.behaviours,
         *ChatuiRoundBehaviour.behaviours,
         *AgentPerformanceSummaryRoundBehaviour.behaviours,
     }
+    behaviours.remove(ValidateTransactionBehaviour)
     background_behaviours_cls = {BackgroundBehaviour}  # type: ignore
