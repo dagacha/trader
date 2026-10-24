@@ -307,24 +307,32 @@ def test_watch_paths(tmp_path: Any, case: str) -> None:
     "quoted_at,opening,retry",
     [(1600, 100000, True), (1601, 100000, False), (1050, 1050, False)],
 )
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("discover_during_quote", [False, True])
 def test_quote_failure_survives_restart(
-    tmp_path: Any, quoted_at: int, opening: int, retry: bool
+    tmp_path: Any,
+    quoted_at: int,
+    opening: int,
+    retry: bool,
+    restart: bool,
+    discover_during_quote: bool,
 ) -> None:
     """Restore only eligible rows and keep discovery made during a pool read."""
     b = make(FreshWatchBehaviour, tmp_path)
     b.context.state.fast_background_running = True
     queue = FreshQueue(tmp_path / "fresh_watch.json")
     row = {**raw_market(), "openingTimestamp": opening}
-    queue.pending = [row]
-    queue.save()
     another = {**raw_market(), "id": "next", "creationTimestamp": 1040}
+    queue.pending = [row] if discover_during_quote else [row, another]
+    queue.save()
 
     def quote(*args: Any) -> Any:
         yield None
         # The background poller can write while the foreground waits for RPC.
-        discovered = FreshQueue(queue.path)
-        discovered.ingest([another], quoted_at, FastConfig().creators, 600)
-        discovered.save()
+        if discover_during_quote:
+            discovered = FreshQueue(queue.path)
+            discovered.ingest([another], quoted_at, FastConfig().creators, 600)
+            discovered.save()
         return None
 
     b._get_pool_balances = quote
@@ -342,11 +350,18 @@ def test_quote_failure_survives_restart(
         assert run(b.select())["lane"] == "wait"
     reloaded = FreshQueue(queue.path)
     assert reloaded.asked == ({} if retry else {"market": 1000})
-    assert reloaded.pending == ([another, row] if retry else [another])
+    assert reloaded.pending == ([row, another] if retry else [another])
+    logged = json.loads(b.context.logger.info.call_args.args[1])
+    assert logged["reason"] == (
+        "request_price_unavailable_restored_for_retry"
+        if retry
+        else "request_closed_or_expired"
+    )
     if not retry:
+        b.sleep.assert_not_called()
         return
     b.sleep.assert_called_once_with(FastConfig().poll_s)
-    restarted = make(FreshWatchBehaviour, tmp_path)
+    restarted = make(FreshWatchBehaviour, tmp_path) if restart else b
     restarted.context.state.fast_background_running = True
     restarted._get_pool_balances = lambda *args: done([100, 100])
     with (
@@ -361,8 +376,10 @@ def test_quote_failure_survives_restart(
         sd.return_value.mechs_info = [
             SimpleNamespace(relevant_tools=set(FastConfig().tools))
         ]
-        assert run(restarted.select())["sampled_bet_index"] == 1
-        assert run(restarted.select())["sampled_bet_index"] == 0
+        for market_id in ("market", "next"):
+            selection = run(restarted.select())
+            assert selection["lane"] == "market"
+            assert restarted.bets[selection["sampled_bet_index"]].id == market_id
     assert FreshQueue(queue.path).asked == {"next": 1040, "market": 1000}
 
 

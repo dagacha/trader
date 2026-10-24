@@ -194,6 +194,20 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour):
             or bet.openingTimestamp <= requested_at
             or requested_at - bet.creationTimestamp > cfg.fresh_max_age_s
         ):
+            retry = (
+                balances is None
+                and bet.openingTimestamp > requested_at
+                and requested_at - bet.creationTimestamp <= cfg.fresh_max_age_s
+            )
+            if retry:
+                # Preserve markets found by the poller during the pool read.
+                queue = FreshQueue(queue.path)
+                queue.pending.append(raw)
+                queue.pending.sort(
+                    key=lambda row: (int(row["creationTimestamp"]), row["id"])
+                )
+                del queue.asked[bet.id]
+                queue.save()
             log_decision(
                 self,
                 dict(
@@ -208,19 +222,14 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour):
                     price=None,
                     edge=None,
                     stake=0,
-                    reason="request_price_unavailable_closed_or_expired",
+                    reason=(
+                        "request_price_unavailable_restored_for_retry"
+                        if retry
+                        else "request_closed_or_expired"
+                    ),
                 ),
             )
-            if (
-                balances is None
-                and bet.openingTimestamp > requested_at
-                and requested_at - bet.creationTimestamp <= cfg.fresh_max_age_s
-            ):
-                # Preserve markets found by the poller during the pool read.
-                queue = FreshQueue(queue.path)
-                queue.pending.append(raw)
-                del queue.asked[bet.id]
-                queue.save()
+            if retry:
                 yield from self.sleep(cfg.poll_s)
             return {"lane": "wait"}
         prices = [balances[1] / sum(balances), balances[0] / sum(balances)]
