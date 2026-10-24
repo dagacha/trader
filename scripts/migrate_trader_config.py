@@ -50,6 +50,7 @@ DECODER = json.JSONDecoder()
 CONTROL_ENV = (
     "PRIORITY_MECH_ADDRESS",
     "PRIORITY_MECH_SERVICE_ID",
+    "OFFCHAIN_DEPOSIT_TARGET_CALLS",
     "PRIORITIZE_FRESH_MARKETS",
     "USE_OFFCHAIN",
     "IRRELEVANT_TOOLS",
@@ -567,8 +568,14 @@ def sync_cached_env(text, desired, env_file=False):
             else:
                 additions.append(indent + key + ": " + json.dumps(value) + "\n")
             changes.append(f"add {key} from quickstart")
-        if additions and end > start and not lines[end - 1].endswith(("\n", "\r")):
-            lines[end - 1] += "\n"
+        if additions:
+            # Reuse the block's line-ending style so appended controls do
+            # not introduce mixed endings in CRLF files.
+            preceding = "".join(lines[max(0, end - 20) : end])
+            newline = "\r\n" if "\r\n" in preceding else "\n"
+            if end > start and not lines[end - 1].endswith(("\n", "\r")):
+                lines[end - 1] += newline
+            additions = [a.replace("\n", newline) for a in additions]
         lines[end:end] = additions
     return "".join(lines), changes
 

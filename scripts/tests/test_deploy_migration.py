@@ -1475,12 +1475,14 @@ def test_control_env_flags_sync_everywhere(tmp_path, style):
     config = service / "config.json"
     config.write_text(
         json.dumps(
-            {"env_variables": {"MECH_MARKETPLACE_CONFIG": entry({"response_timeout": 300})}}
+            {
+                "env_variables": {
+                    "MECH_MARKETPLACE_CONFIG": entry({"response_timeout": 300})
+                }
+            }
         )
     )
-    marketplace = json.dumps(
-        {"response_timeout": 300}, separators=(",", ":")
-    )
+    marketplace = json.dumps({"response_timeout": 300}, separators=(",", ":"))
     env = {
         "MECH_MARKETPLACE_CONFIG": marketplace,
         "SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_MECH_MARKETPLACE_CONFIG": marketplace,
@@ -1504,9 +1506,8 @@ def test_control_env_flags_sync_everywhere(tmp_path, style):
         else yaml.safe_dump({"environment": values}, width=60)
     )
     run(tmp_path)
-    assert (
-        json.loads(saved.read_text())["user_provided_args"]
-        == dict(desired, KEEP="saved")
+    assert json.loads(saved.read_text())["user_provided_args"] == dict(
+        desired, KEEP="saved"
     )
     actual = json.loads(config.read_text())["env_variables"]
     for key, value in desired.items():
@@ -1521,3 +1522,91 @@ def test_control_env_flags_sync_everywhere(tmp_path, style):
         for key, value in desired.items():
             assert cache[key] == value
         assert cache["KEEP"] == "agent"
+
+
+def test_offchain_deposit_target_calls_from_quickstart_wins(tmp_path):
+    """Sync the quickstart value over a hoisted legacy default."""
+    desired = {"OFFCHAIN_DEPOSIT_TARGET_CALLS": "7"}
+    legacy = {"response_timeout": 300, "offchain_deposit_target_calls": 10}
+    source = tmp_path / "configs/config_predict_trader.json"
+    source.parent.mkdir()
+    source.write_text(
+        json.dumps(
+            {
+                "env_variables": {
+                    **{
+                        key: dict(entry(value), provision_type="fixed")
+                        for key, value in desired.items()
+                    },
+                    "MECH_MARKETPLACE_CONFIG": entry(json.dumps(legacy)),
+                }
+            }
+        )
+    )
+    service = tmp_path / ".operate/services/sc-one"
+    service.mkdir(parents=True)
+    saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
+    saved.write_text(json.dumps({"user_provided_args": {"KEEP": "saved"}}))
+    config = service / "config.json"
+    config.write_text(
+        json.dumps({"env_variables": {"MECH_MARKETPLACE_CONFIG": entry(dict(legacy))}})
+    )
+    marketplace = json.dumps(legacy, separators=(",", ":"))
+    env = {
+        "MECH_MARKETPLACE_CONFIG": marketplace,
+        "SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_MECH_MARKETPLACE_CONFIG": marketplace,
+        "KEEP": "agent",
+    }
+    agent = service / "agent_0.env"
+    agent.write_text("".join(key + "=" + value + "\n" for key, value in env.items()))
+    run(tmp_path)
+    assert json.loads(saved.read_text())["user_provided_args"] == dict(
+        desired, KEEP="saved"
+    )
+    actual = json.loads(config.read_text())["env_variables"]
+    assert actual["OFFCHAIN_DEPOSIT_TARGET_CALLS"]["value"] == "7"
+    assert actual["MECH_MARKETPLACE_CONFIG"]["value"] == {"response_timeout": 300}
+    actual_env = dict(line.split("=", 1) for line in agent.read_text().splitlines())
+    assert actual_env["OFFCHAIN_DEPOSIT_TARGET_CALLS"] == "7"
+    assert actual_env["KEEP"] == "agent"
+
+
+def test_control_additions_reuse_crlf_endings(tmp_path):
+    """Appended controls keep the file's CRLF line endings."""
+    desired = {"USE_OFFCHAIN": "true"}
+    source = tmp_path / "configs/config_predict_trader.json"
+    source.parent.mkdir()
+    source.write_text(
+        json.dumps(
+            {
+                "env_variables": {
+                    **{
+                        key: dict(entry(value), provision_type="fixed")
+                        for key, value in desired.items()
+                    },
+                    "MECH_MARKETPLACE_CONFIG": entry(
+                        json.dumps({"response_timeout": 300})
+                    ),
+                }
+            }
+        )
+    )
+    service = tmp_path / ".operate/services/sc-one"
+    service.mkdir(parents=True)
+    marketplace = json.dumps({"response_timeout": 300}, separators=(",", ":"))
+    agent = service / "agent_0.env"
+    agent.write_bytes(
+        (
+            "MECH_MARKETPLACE_CONFIG="
+            + marketplace
+            + "\r\n"
+            + "SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_MECH_MARKETPLACE_CONFIG="
+            + marketplace
+            + "\r\n"
+            + "KEEP=agent"
+        ).encode()
+    )
+    run(tmp_path)
+    with agent.open(newline="") as handle:
+        text = handle.read()
+    assert text.endswith("KEEP=agent\r\nUSE_OFFCHAIN=true\r\n")
