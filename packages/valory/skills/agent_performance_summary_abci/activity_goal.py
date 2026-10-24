@@ -85,8 +85,8 @@ def read_successful_trade_count_state(
 ) -> Tuple[Optional[int], Set[str]]:
     """Read the durable counter and placement keys for the activity period.
 
-    Bind an undated counter to the first known checkpoint. Keep its count if
-    that write fails, and retry on the next read.
+    Bind an undated counter to the first known checkpoint. Reset a dated
+    counter only when its period differs. Retry failed writes on the next read.
 
     :param store_path: directory containing the durable counter.
     :param period_start: the current staking checkpoint, or unknown after restart.
@@ -102,7 +102,7 @@ def read_successful_trade_count_state(
             period_start is not None
             and state.get("period_start", period_start) != period_start
         ):
-            return 0, set()
+            state = {"count": 0, "placement_keys": []}
         count = state["count"]
         keys = state["placement_keys"]
         if (
@@ -117,7 +117,7 @@ def read_successful_trade_count_state(
             try:
                 write_json_atomically(store_path / TRADE_COUNT_FILENAME, state)
             except OSError:
-                # Keep the valid count if the checkpoint cannot be saved yet.
+                # Keep the period count if the checkpoint cannot be saved yet.
                 pass
         return count, set(keys)
     except (OSError, KeyError, ValueError):
