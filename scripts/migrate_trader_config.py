@@ -20,8 +20,9 @@
 """Migrate off-chain settings, marketplace addresses, and Omen strategy defaults.
 
 Sync saved quickstart inputs and cached service, agent, and Kubernetes envs.
-Use only with an Omen quickstart and Omen cached services. The profit threshold
-uses 18-decimal xDAI units. Do not run against Polymarket or mixed-service caches.
+Skip all files if configs/config_predict_trader.json is missing or declares
+IS_RUNNING_ON_POLYMARKET=true. In mixed caches, skip each Polymarket service
+as a group. The Omen profit threshold uses 18-decimal xDAI units.
 """
 
 import argparse
@@ -82,6 +83,33 @@ def objects(value):
     elif isinstance(value, list):
         for item in value:
             yield from objects(item)
+
+
+def is_polymarket(path):
+    """Detect the Polymarket flag in JSON, env, compose, or Kubernetes files."""
+    text = path.read_text(encoding="utf-8")
+    key = r"(?:SKILL_[A-Z0-9_]+_)?IS_RUNNING_ON_POLYMARKET"
+    if path.suffix == ".json":
+        for obj in objects(json.loads(text)):
+            for name, value in obj.items():
+                if re.fullmatch(key, name):
+                    if isinstance(value, dict):
+                        value = value.get("value")
+                    if str(value).strip().lower() == "true":
+                        return True
+        return False
+    return bool(
+        re.search(
+            r"^\s*(?:-\s*)?(?:"
+            + key
+            + r"[=:][ \t]*|- name:[ \t]*"
+            + key
+            + r"[ \t]*\r?\n[ \t]*value:[ \t]*)"
+            + r"['\"]?true['\"]?[ \t]*(?:#.*)?$",
+            text,
+            re.MULTILINE | re.IGNORECASE,
+        )
+    )
 
 
 def edit_json(text, desired, value=None, addition=None):
@@ -497,7 +525,7 @@ def sync_cached_env(text, desired, env_file=False):
             ):
                 blocks.append((index + 1, end, level))
     changes = []
-    for start, end, level in reversed(blocks):
+    for start, end, _level in reversed(blocks):
         present = set()
         style = "env" if env_file else "mapping"
         indent = ""
@@ -581,7 +609,13 @@ def sync_cached_env(text, desired, env_file=False):
 
 
 def migrate(quickstart, dry_run=False, warn_only=False):
-    """Migrate a selected quickstart and every cached operate service."""
+    """Migrate an Omen quickstart and skip Polymarket cached services."""
+    config = quickstart / "configs/config_predict_trader.json"
+    if not config.is_file() or is_polymarket(config):
+        print(
+            f"WARNING: {config}: missing or Polymarket quickstart; skipping all files"
+        )
+        return
     packages = json.loads(
         (Path(__file__).resolve().parents[1] / "packages/packages.json").read_text()
     )
@@ -589,7 +623,7 @@ def migrate(quickstart, dry_run=False, warn_only=False):
         name: packages["dev"][f"custom/valory/{name}/0.1.0"]
         for name in ("kelly_criterion", "fixed_bet")
     }
-    paths = [quickstart / "configs/config_predict_trader.json"]
+    paths = [config]
     paths.extend(sorted((quickstart / ".operate").glob("*-quickstart-config.json")))
     legacy = quickstart / ".operate/local_config.json"
     if legacy.is_file():
@@ -598,9 +632,18 @@ def migrate(quickstart, dry_run=False, warn_only=False):
     if not services:
         print(f">> {quickstart}: no operate services; skipping cache")
     for service in services:
-        paths.extend([service / "config.json"])
-        paths.extend(sorted(service.rglob("agent_0.env")))
-        paths.extend(sorted(service.rglob("build.yaml")))
+        service_paths = [service / "config.json"]
+        service_paths.extend(sorted(service.rglob("agent_0.env")))
+        service_paths.extend(sorted(service.rglob("build.yaml")))
+        for path in service_paths:
+            if path.is_file() and is_polymarket(path):
+                print(
+                    f"WARNING: {service}: Polymarket flag in {path}; "
+                    "skipping all service files"
+                )
+                break
+        else:
+            paths.extend(service_paths)
     stored = []
     desired = {}
     for path in paths:
