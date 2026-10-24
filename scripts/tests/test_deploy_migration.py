@@ -41,6 +41,14 @@ OLD = {
 }
 
 
+def test_fast_template_uses_locked_service_hash():
+    """Keep the fast quickstart template on the locked local service."""
+    repo = SCRIPT.parents[1]
+    config = json.loads((repo / "configs/config_omenstrat_fast.json").read_text())
+    packages = json.loads((repo / "packages/packages.json").read_text())
+    assert config["hash"] == packages["dev"]["service/valory/omenstrat_fast/0.1.0"]
+
+
 def entry(value):
     """Make a quickstart env entry."""
     return {

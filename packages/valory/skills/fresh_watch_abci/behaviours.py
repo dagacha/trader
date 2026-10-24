@@ -169,10 +169,11 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour):
             return {"lane": "wait"}
         raw = queue.pop()
         assert raw is not None
-        condition = raw.pop("condition", None)
+        bet_data = raw.copy()
+        condition = bet_data.pop("condition", None)
         if condition is not None:
-            raw["condition_id"] = condition["id"]
-        bet = Bet(**raw, market="omen_subgraph")
+            bet_data["condition_id"] = condition["id"]
+        bet = Bet(**bet_data, market="omen_subgraph")
         self.read_bets()
         index = next(
             (index for index, stored in enumerate(self.bets) if stored.id == bet.id),
@@ -210,6 +211,17 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour):
                     reason="request_price_unavailable_closed_or_expired",
                 ),
             )
+            if (
+                balances is None
+                and bet.openingTimestamp > requested_at
+                and requested_at - bet.creationTimestamp <= cfg.fresh_max_age_s
+            ):
+                # Preserve markets found by the poller during the pool read.
+                queue = FreshQueue(queue.path)
+                queue.pending.append(raw)
+                del queue.asked[bet.id]
+                queue.save()
+                yield from self.sleep(cfg.poll_s)
             return {"lane": "wait"}
         prices = [balances[1] / sum(balances), balances[0] / sum(balances)]
         return dict(

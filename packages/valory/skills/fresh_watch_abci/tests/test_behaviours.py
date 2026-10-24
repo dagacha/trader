@@ -288,6 +288,124 @@ def test_watch_paths(tmp_path: Any, case: str) -> None:
         assert selection["mech_tool"] == FastConfig().tools[0]
     if case in {"closed", "no_quote"}:
         assert b.context.logger.info.call_count >= 1
+    if case == "no_quote":
+        with (
+            patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+            patch(
+                "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+                return_value=1065,
+            ),
+        ):
+            sd.return_value.mechs_info = [
+                SimpleNamespace(relevant_tools=set(FastConfig().tools))
+            ]
+            b._get_pool_balances = lambda *args: done([100, 100])
+            assert run(b.select())["lane"] == "market"
+
+
+@pytest.mark.parametrize(
+    "quoted_at,opening,retry",
+    [(1600, 100000, True), (1601, 100000, False), (1050, 1050, False)],
+)
+def test_quote_failure_survives_restart(
+    tmp_path: Any, quoted_at: int, opening: int, retry: bool
+) -> None:
+    """Restore only eligible rows and keep discovery made during a pool read."""
+    b = make(FreshWatchBehaviour, tmp_path)
+    b.context.state.fast_background_running = True
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    row = {**raw_market(), "openingTimestamp": opening}
+    queue.pending = [row]
+    queue.save()
+    another = {**raw_market(), "id": "next", "creationTimestamp": 1040}
+
+    def quote(*args: Any) -> Any:
+        yield None
+        # The background poller can write while the foreground waits for RPC.
+        discovered = FreshQueue(queue.path)
+        discovered.ingest([another], quoted_at, FastConfig().creators, 600)
+        discovered.save()
+        return None
+
+    b._get_pool_balances = quote
+    b.sleep = MagicMock(side_effect=lambda delay: done(None))
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+            return_value=quoted_at,
+        ),
+    ):
+        sd.return_value.mechs_info = [
+            SimpleNamespace(relevant_tools=set(FastConfig().tools))
+        ]
+        assert run(b.select())["lane"] == "wait"
+    reloaded = FreshQueue(queue.path)
+    assert reloaded.asked == ({} if retry else {"market": 1000})
+    assert reloaded.pending == ([another, row] if retry else [another])
+    if not retry:
+        return
+    b.sleep.assert_called_once_with(FastConfig().poll_s)
+    restarted = make(FreshWatchBehaviour, tmp_path)
+    restarted.context.state.fast_background_running = True
+    restarted._get_pool_balances = lambda *args: done([100, 100])
+    with (
+        patch.object(
+            type(restarted), "synchronized_data", new_callable=PropertyMock
+        ) as sd,
+        patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+            return_value=quoted_at,
+        ),
+    ):
+        sd.return_value.mechs_info = [
+            SimpleNamespace(relevant_tools=set(FastConfig().tools))
+        ]
+        assert run(restarted.select())["sampled_bet_index"] == 1
+        assert run(restarted.select())["sampled_bet_index"] == 0
+    assert FreshQueue(queue.path).asked == {"next": 1040, "market": 1000}
+
+
+def test_string_timestamps_through_selection_and_decision(tmp_path: Any) -> None:
+    """Subgraph decimal timestamps work through the stored bet and decision."""
+    b = make(FreshWatchBehaviour, tmp_path)
+    row = {**raw_market(), "creationTimestamp": "1000", "openingTimestamp": "100000"}
+    b._fetch_fresh = lambda *args: done([row])
+    b._get_pool_balances = lambda *args: done([100, 100])
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+            return_value=1050,
+        ),
+    ):
+        sd.return_value.mechs_info = [
+            SimpleNamespace(relevant_tools=set(FastConfig().tools))
+        ]
+        selection = run(b.select())
+    assert selection["lane"] == "market"
+    decision = make(FastDecisionBehaviour, tmp_path)
+    decision.read_bets()
+    bet = decision.bets[selection["sampled_bet_index"]]
+    assert bet.creationTimestamp == 1000
+    assert bet.openingTimestamp == 100000
+    decision._get_decision_prediction = lambda: SimpleNamespace(p_yes=0.9)
+    decision._get_pool_balances = lambda *args: done([100, 100])
+    with (
+        patch.object(
+            type(decision), "synchronized_data", new_callable=PropertyMock
+        ) as sd,
+        patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+            return_value=1100,
+        ),
+    ):
+        sd.return_value.sampled_bet_index = selection["sampled_bet_index"]
+        sd.return_value.db.get_strict.side_effect = selection.__getitem__
+        result = run(decision.evaluate())
+    assert result["age_at_request"] == 50
+    assert result["age_at_answer"] == 100
+    assert result["stake"] == 4
 
 
 @pytest.mark.parametrize(

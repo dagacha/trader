@@ -34,7 +34,7 @@ skills:
 - valory/chatui_abci:0.1.0:bafybeihj5y6cecuw4iz2gshicoygghrgi5b6rzynnofx25ycsv56ehgdvq
 - valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
 - valory/trader_abci:0.1.0:bafybeiacb7bhwy267gw2paw27amwyadnnafzbnuilqxxqctiew2q2nkovi
-- valory/fresh_watch_abci:0.1.0:bafybeif6md23dwsleu7sxijy6f66zccsfbcj2bzvqqip3jzc2ofcj6vwny
+- valory/fresh_watch_abci:0.1.0:bafybeifet5kv2wa3jge7exyll4pvmcvhyqo2ywa4v2dpjcdw5yczgmnoam
 behaviours:
   main:
     args: {}
