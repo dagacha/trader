@@ -132,8 +132,10 @@ has not changed. It builds and publishes artifacts; the separate quickstart
 repo starts the service.
 
 The migration skips Polymarket. If `configs/config_predict_trader.json` is
-missing or sets `IS_RUNNING_ON_POLYMARKET=true`, it prints one warning and exits
-without writing any files. In mixed caches, a Polymarket flag in a service's
+missing, or if it or any saved quickstart input
+(`.operate/*-quickstart-config.json`, `.operate/local_config.json`) sets
+`IS_RUNNING_ON_POLYMARKET=true`, it prints one warning and exits without writing
+any files. In mixed caches, a Polymarket flag in a service's
 `config.json`, `agent_0.env`, or `build.yaml` skips all files for that service.
 Omen services still migrate. The Omen profit threshold uses 18-decimal xDAI units.
 

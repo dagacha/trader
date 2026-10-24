@@ -623,11 +623,15 @@ def migrate(quickstart, dry_run=False, warn_only=False):
         name: packages["dev"][f"custom/valory/{name}/0.1.0"]
         for name in ("kelly_criterion", "fixed_bet")
     }
-    paths = [config]
-    paths.extend(sorted((quickstart / ".operate").glob("*-quickstart-config.json")))
+    saved = sorted((quickstart / ".operate").glob("*-quickstart-config.json"))
     legacy = quickstart / ".operate/local_config.json"
     if legacy.is_file():
-        paths.append(legacy)
+        saved.append(legacy)
+    for path in saved:
+        if path.is_file() and is_polymarket(path):
+            print(f"WARNING: {path}: Polymarket saved input; skipping all files")
+            return
+    paths = [config, *saved]
     services = sorted((quickstart / ".operate/services").glob("sc-*"))
     if not services:
         print(f">> {quickstart}: no operate services; skipping cache")

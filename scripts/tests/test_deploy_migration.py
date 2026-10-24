@@ -744,6 +744,26 @@ def test_polymarket_quickstart_writes_nothing(tmp_path, venue, flag):
     } == before
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("value", ["true", True])
+def test_polymarket_saved_input_writes_nothing(tmp_path, value, legacy):
+    """Skip every file when a saved quickstart input declares Polymarket."""
+    venue_fixture(tmp_path)
+    name = "local_config.json" if legacy else "Trader Agent-quickstart-config.json"
+    saved = tmp_path / ".operate" / name
+    data = json.loads(saved.read_text())
+    data["user_provided_args"]["IS_RUNNING_ON_POLYMARKET"] = value
+    saved.write_text(json.dumps(data))
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    output = run(tmp_path)
+    assert output.count("WARNING:") == 1
+    assert str(saved) in output
+    assert "skipping" in output.lower()
+    assert {
+        path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()
+    } == before
+
+
 @pytest.mark.parametrize(
     "style,quote",
     [(style, "") for style in ("entry", "plain", "boolean")]
