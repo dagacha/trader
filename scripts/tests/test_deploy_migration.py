@@ -49,6 +49,14 @@ def test_fast_template_uses_locked_service_hash():
     assert config["hash"] == packages["dev"]["service/valory/omenstrat_fast/0.1.0"]
 
 
+def test_fast_template_uses_main_release():
+    """Keep the fast release on main after the feature branch is deleted."""
+    repo = SCRIPT.parents[1]
+    config = json.loads((repo / "configs/config_omenstrat_fast.json").read_text())
+    assert config["service_version"] == "main"
+    assert config["agent_release"]["repository"]["version"] == "main"
+
+
 def entry(value):
     """Make a quickstart env entry."""
     return {

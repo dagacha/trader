@@ -118,6 +118,10 @@ publish, deploy, or change a server.
    The template records the local service CID. It is not available on IPFS until
    a separate publication is authorized. Do not use the normal trader release
    artifact for this agent. Quickstart also needs the matching agent release.
+   For a local image, pass `valory/omenstrat_fast:0.1.0:<agent-hash>` to
+   `build_image_offline.sh`. It builds `valory/oar-omenstrat_fast:<agent-hash>`
+   directly. No extra tag step is needed. Use `--print-tag` before the repository
+   path to check the image tag without a build.
 3. Copy `configs/config_omenstrat_fast.json` from this repository next to
    `configs/config_predict_trader.json` in the quickstart checkout. Use a separate
    quickstart instance and store volume for this pilot. Set the release version

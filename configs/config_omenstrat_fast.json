@@ -1,15 +1,15 @@
 {
     "name": "omenstrat_fast",
-    "hash": "bafybeihtwrdluqstquofzysymeirg4rxsvst4yntnfyix35pylp6oqzsfu",
+    "hash": "bafybeiarx74jsesnqjwuz5nlgd4p5zpzicfyb5x3tvrwkgc6ifw63kz5qi",
     "description": "Fresh-watch Omen agent with the fixed fast strategy.",
     "image": "https://operate.olas.network/_next/image?url=%2Fimages%2Fprediction-agent.png&w=3840&q=75",
-    "service_version": "feat/fast-mech-latency",
+    "service_version": "main",
     "agent_release": {
         "is_aea": true,
         "repository": {
             "owner": "dagacha",
             "name": "trader",
-            "version": "feat/fast-mech-latency"
+            "version": "main"
         }
     },
     "home_chain": "gnosis",

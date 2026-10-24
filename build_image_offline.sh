@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # build_image_offline.sh
 #
-# Build valory/oar-trader:<agent-hash> from this repo with NO Autonolas IPFS RPC
+# Build valory/oar-<agent-name>:<agent-hash> from this repo with NO Autonolas IPFS RPC
 # dependency during the Docker build. Reproduces the exact image tag the quickstart
 # expects (identical to a remote build), so run_service.sh / run_service_cron.sh
 # pull it the same way. Works on any computer with Docker + uv.
@@ -16,10 +16,18 @@
 # Usage:
 #   ./build_image_offline.sh                                        # default option-2 agent
 #   ./build_image_offline.sh /path/to/trader [valory/trader:0.1.0:<hash>]
+#   ./build_image_offline.sh --print-tag /path/to/trader valory/omenstrat_fast:0.1.0:<hash>
+#     Print only the image tag, without fetching packages or running Docker.
 #
 # Prereqs on a fresh box: Docker, and uv (https://docs.astral.sh/uv/).
 
 set -euo pipefail
+
+PRINT_TAG=0
+if [ "${1:-}" = "--print-tag" ]; then
+  PRINT_TAG=1
+  shift
+fi
 
 REPO="${1:-$(cd "$(dirname "$0")" && pwd)}"
 DEFAULT_AGENT="valory/trader:0.1.0:bafybeiaknbpkhjscvux5ikkskb4lstqu7cl44mi6affkzj6qqdga5io6bm"
@@ -29,7 +37,13 @@ AGENT="${2:-$DEFAULT_AGENT}"
 BASE_IMAGE="valory/open-autonomy:0.21.26"
 AGENT_HASH="${AGENT##*:}"
 [[ "$AGENT_HASH" =~ ^bafy ]] || { echo "ERROR: '$AGENT' has no bafy... hash (got '$AGENT_HASH'); pass 'valory/trader:0.1.0:<hash>'" >&2; exit 1; }
-IMAGE_TAG="valory/oar-trader:${AGENT_HASH}"
+AGENT_NAME="${AGENT%%:*}"
+AGENT_NAME="${AGENT_NAME##*/}"
+IMAGE_TAG="valory/oar-${AGENT_NAME}:${AGENT_HASH}"
+if [ "$PRINT_TAG" = "1" ]; then
+  printf '%s\n' "$IMAGE_TAG"
+  exit 0
+fi
 BUILD_DIR="$(mktemp -d /tmp/oar-build.XXXXXX)"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 
