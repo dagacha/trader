@@ -107,6 +107,72 @@ def test_select_and_restart(tmp_path: Any) -> None:
 
 
 @pytest.mark.parametrize(
+    "dynamic,offchain", [(True, True), (False, True), (True, False)]
+)
+@pytest.mark.parametrize(
+    "http_url,penalized,eligible",
+    [
+        (None, {}, False),
+        ("", {}, False),
+        ("https://mech.test", {"0xABC": 1000}, False),
+        ("https://mech.test", {}, True),
+    ],
+)
+def test_select_requires_eligible_offchain_mech(
+    tmp_path: Any,
+    dynamic: bool,
+    offchain: bool,
+    http_url: Any,
+    penalized: Any,
+    eligible: bool,
+) -> None:
+    """Keep the market queued when its tool has no eligible dynamic endpoint."""
+    b = make(FreshWatchBehaviour, tmp_path)
+    b.context.params.fast_dynamic_mech = dynamic
+    b.context.params.use_offchain = offchain
+    b.context.state.penalized_mechs = penalized
+    b.context.state.fast_background_running = True
+    b.sleep = MagicMock(side_effect=lambda delay: done(None))
+    b._get_pool_balances = MagicMock(side_effect=lambda *args: done([100, 100]))
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    row = raw_market()
+    queue.pending = [row]
+    queue.save()
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+            return_value=1050,
+        ),
+    ):
+        sd.return_value.mechs_info = [
+            SimpleNamespace(
+                address="0xabc",
+                http_url=http_url,
+                relevant_tools={"superforcaster"},
+            ),
+            SimpleNamespace(
+                address="0xdef", http_url="https://other.test", relevant_tools=set()
+            ),
+        ]
+        selection = run(b.select())
+    selected = eligible or not (dynamic and offchain)
+    assert selection["lane"] == ("market" if selected else "wait")
+    reloaded = FreshQueue(queue.path)
+    assert reloaded.pending == ([] if selected else [row])
+    assert reloaded.asked == ({"market": 1000} if selected else {})
+    if selected:
+        assert selection["mech_tool"] == "superforcaster"
+        b.sleep.assert_not_called()
+    else:
+        b.context.logger.warning.assert_called_once_with(
+            "Neither fast prediction tool is available."
+        )
+        b.sleep.assert_called_once_with(FastConfig().poll_s)
+        b._get_pool_balances.assert_not_called()
+
+
+@pytest.mark.parametrize(
     "prediction,balances,reason,stake",
     [
         (0.9, [100, 100], "", 4),

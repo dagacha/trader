@@ -159,11 +159,17 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour):
             yield from self.sleep(cfg.poll_s)
             return {"lane": "wait"}
 
-        offered = {
-            tool
-            for mech in self.synchronized_data.mechs_info
-            for tool in mech.relevant_tools
-        }
+        mechs = self.synchronized_data.mechs_info
+        if self.params.fast_dynamic_mech is True and self.params.use_offchain is True:
+            penalized = {
+                address.lower() for address in self.shared_state.penalized_mechs
+            }
+            mechs = [
+                mech
+                for mech in mechs
+                if mech.http_url and mech.address.lower() not in penalized
+            ]
+        offered = {tool for mech in mechs for tool in mech.relevant_tools}
         tool = next((tool for tool in cfg.tools if tool in offered), None)
         if tool is None:
             self.context.logger.warning("Neither fast prediction tool is available.")

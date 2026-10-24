@@ -8,7 +8,7 @@ aea_version: '>=2.0.0, <3.0.0'
 fingerprint:
   README.md: bafybeieurwex74dtimmmndedzrhznyfivsuaf27lteomz4cz23upjtv2pq
   __init__.py: bafybeihyphnywie3dyf7f7mmwm7yvcwekkgsa4mq5273ojuzbjsznvorv4
-  behaviours.py: bafybeidgeyayp67mifvyoa3bysj4zbofngrivt6rdspgqhzuo3kwdvixp4
+  behaviours.py: bafybeibtzkn66bnrblr5vefoqr33r6eoo2bxritib557ipjtninpkreln4
   dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
   fsm_specification.yaml: bafybeieiislbmdq6mfm4fscuui5aalhiknowuq3sym7k5b3erfabsf3xe4
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
@@ -16,7 +16,7 @@ fingerprint:
   rounds.py: bafybeibmqa62zmp26f7egxsuq6pb3wpbrw5yxbzpgg4hedwszwtag2k3wi
   strategy.py: bafybeig4yxuklttskr2e6f7zv4oo6wh3tclf7tgcqtskjiguv6vflle7ia
   tests/__init__.py: bafybeiebuokdlpgmmm6orggvfnnm537acc3eogkkrn6jyjaxzqyb7t7yzy
-  tests/test_behaviours.py: bafybeifgokpxqmmoqggg5fshiouqsrb5fdxqz5keif3si7eejldhlxn4fu
+  tests/test_behaviours.py: bafybeidwmbxa5hy6w6xv2mz625fpuos3d7eabxbetynxndlpchv74oc54m
   tests/test_rounds.py: bafybeihmy4lrkxqveq2pxhqldedspfeeeo3xrydkzms246exc2kmjagvky
   tests/test_strategy.py: bafybeie4agoiqcsoi6zcwkbw4enpilzpyhdfwbbo7gptjmornxiira7zb4
 fingerprint_ignore_patterns: []
