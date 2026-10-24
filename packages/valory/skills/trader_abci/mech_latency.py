@@ -142,6 +142,7 @@ class TraderPostTxSettlementBehaviour(PostTxSettlementBehaviour):
             for timing in self.context.shared_state.get(TIMINGS, {}).values():
                 if timing["sent_ts"] is None:
                     timing["sent_ts"] = now
+                    timing["mech"] = self.shared_state.last_called_mech
         super()._on_tx_settled()
 
 
@@ -162,7 +163,7 @@ class TraderMechResponseBehaviour(MechResponseBehaviour):
         timing.update(
             answered_ts=now,
             latency_s=now - timing["sent_ts"],
-            mech=response.get("mech_address") or "-",
+            mech=response.get("mech_address") or timing.get("mech") or "-",
         )
         self.context.logger.info(
             "[MECH_LATENCY] tool=%s mech=%s offchain=%s sent_ts=%s answered_ts=%s latency_s=%.3f market=%s",

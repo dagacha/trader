@@ -29,6 +29,9 @@ import pytest
 from packages.valory.skills.mech_interact_abci.behaviours.offchain_request import (
     OffchainRequestExecutor,
 )
+from packages.valory.skills.mech_interact_abci.behaviours.offchain_response import (
+    serialise_responses,
+)
 from packages.valory.skills.mech_interact_abci.behaviours.request import (
     MechRequestBehaviour,
 )
@@ -36,6 +39,9 @@ from packages.valory.skills.mech_interact_abci.behaviours.response import (
     MechResponseBehaviour,
 )
 from packages.valory.skills.mech_interact_abci.payloads import JSONPayload
+from packages.valory.skills.mech_interact_abci.states.base import (
+    MechInteractionResponse,
+)
 from packages.valory.skills.trader_abci import mech_latency as latency
 
 
@@ -155,6 +161,79 @@ def test_settlement_starts_onchain_clock() -> None:
         with patch.object(latency.time, "time", return_value=200):
             b._on_tx_settled()
     assert ctx.shared_state[latency.TIMINGS]["uuid"]["sent_ts"] == 200
+
+
+@pytest.mark.parametrize("offchain", [False, True])
+def test_serialised_answer_keeps_request_mech(offchain: bool) -> None:
+    """Keep the request Mech when the real response has no Mech address."""
+    ctx = context()
+    ctx.params.use_offchain = offchain
+    metadata = dict(
+        tool="forecast", nonce="uuid", request_context={"market_id": "market"}
+    )
+    if offchain:
+        executor = latency.TimedOffchainRequestExecutor(SimpleNamespace(context=ctx))
+        with (
+            patch.object(
+                OffchainRequestExecutor, "_post_signed_request", return_value=done(None)
+            ),
+            patch.object(latency.time, "time", return_value=100),
+        ):
+            run(
+                executor._post_signed_request(
+                    "https://selected.test",
+                    "0xselected",
+                    "hash",
+                    json.dumps(metadata),
+                    b"id",
+                    "signature",
+                    0,
+                    1,
+                    "safe",
+                )
+            )
+    else:
+        ctx.shared_state[latency.TIMINGS] = {
+            "uuid": latency.request_timing(metadata, None)
+        }
+        ctx.state.last_called_mech = "0xselected"
+        settlement = latency.TraderPostTxSettlementBehaviour(
+            name="settlement", skill_context=ctx
+        )
+        with (
+            patch.object(
+                type(settlement), "synchronized_data", new_callable=PropertyMock
+            ) as synced,
+            patch.object(latency.time, "time", return_value=100),
+        ):
+            synced.return_value.tx_submitter = "mech_request_round"
+            settlement._on_tx_settled()
+    response = MechInteractionResponse(nonce="uuid", result="answer")
+    payload = JSONPayload("agent", serialise_responses([response]))
+    behaviour = latency.TraderMechResponseBehaviour(name="response", skill_context=ctx)
+    behaviour.current_mech_response = response
+    with (
+        patch.object(
+            MechResponseBehaviour, "finish_behaviour", side_effect=lambda p: done(None)
+        ),
+        patch.object(
+            MechResponseBehaviour, "_get_response", side_effect=lambda: done(True)
+        ),
+        patch.object(latency.time, "time", return_value=131),
+    ):
+        if not offchain:
+            assert run(behaviour._get_response())
+        run(behaviour.finish_behaviour(payload))
+        run(behaviour.finish_behaviour(payload))
+    lines = [
+        call.args[0] % call.args[1:]
+        for call in ctx.logger.info.call_args_list
+        if call.args[0].startswith("[MECH_LATENCY]")
+    ]
+    assert lines == [
+        f"[MECH_LATENCY] tool=forecast mech=0xselected offchain={str(offchain).lower()} sent_ts=100 answered_ts=131 latency_s=31.000 market=market"
+    ]
+    assert ctx.shared_state[latency.TIMINGS]["uuid"]["mech"] == "0xselected"
 
 
 def test_composition_uses_shared_timing_behaviours() -> None:

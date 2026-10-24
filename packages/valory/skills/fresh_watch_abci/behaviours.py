@@ -340,7 +340,17 @@ class FastDecisionBehaviour(DecisionMakerBaseBehaviour):
         )
         timings = self.context.shared_state.get("mech_latency", {})
         timing: Dict[str, Any] = (
-            next(reversed(timings.values()), {}) if isinstance(timings, dict) else {}
+            next(
+                (
+                    record
+                    for record in reversed(timings.values())
+                    if record.get("market") == bet.id
+                    and record.get("latency_s") is not None
+                ),
+                {},
+            )
+            if isinstance(timings, dict)
+            else {}
         )
         result.update(mech=timing.get("mech"), latency_s=timing.get("latency_s"))
         prediction = self._get_decision_prediction()

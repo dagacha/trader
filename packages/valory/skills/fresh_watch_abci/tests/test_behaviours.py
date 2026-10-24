@@ -187,7 +187,9 @@ def test_evaluate(
     """Evaluate a real sampled bet without policy setup or strategy loading."""
     b = make(FastDecisionBehaviour, tmp_path)
     b.context.shared_state = {
-        "mech_latency": {"uuid": {"mech": "0xselected", "latency_s": 31}}
+        "mech_latency": {
+            "uuid": {"market": "market", "mech": "0xselected", "latency_s": 31}
+        }
     }
     raw = raw_market()
     raw.pop("condition")
@@ -217,6 +219,36 @@ def test_evaluate(
     assert result["age_at_answer"] == 100
     assert result["mech"] == "0xselected"
     assert result["latency_s"] == 31
+
+
+@pytest.mark.parametrize("completed", [False, True])
+def test_evaluate_matches_completed_market_timing(
+    tmp_path: Any, completed: bool
+) -> None:
+    """Use the bet's completed record after an earlier nonce is overwritten."""
+    b = make(FastDecisionBehaviour, tmp_path)
+    timings = {
+        "uuid": {"market": "market", "mech": "0xold", "latency_s": 99},
+        "other": {"market": "other_market", "mech": "0xother", "latency_s": 5},
+    }
+    timings["uuid"] = {"market": "market", "mech": "0xselected"}
+    if completed:
+        timings["uuid"]["latency_s"] = 31
+    b.context.shared_state = {"mech_latency": timings}
+    raw = raw_market()
+    raw.pop("condition")
+    bet = Bet(**raw, market="omen_subgraph")
+    with (
+        patch.object(
+            type(b), "sampled_bet", new_callable=PropertyMock, return_value=bet
+        ),
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+    ):
+        sd.return_value.db.get_strict.return_value = 1050
+        b._get_decision_prediction = lambda: None
+        result = run(b.evaluate())
+    assert result["mech"] == ("0xselected" if completed else None)
+    assert result["latency_s"] == (31 if completed else None)
 
 
 def test_calibrated_placement_prediction(tmp_path: Any) -> None:
