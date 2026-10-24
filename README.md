@@ -157,10 +157,10 @@ rollback; the standard agent ignores them.
 
 The fast lane uses the persistent per-period trade counter. After the cap,
 `reason=trade_cap` is logged once per staking period, including across restarts.
-It sends off-chain Mech-only requests until the staking activity target is met,
-then waits while periodic housekeeping continues. A target met before the cap
-does not stop trades below the cap. With `USE_OFFCHAIN=false`, the capped lane
-waits instead of sending on-chain Mech requests.
+It sends Mech-only requests until the staking activity target is met, then waits
+while periodic housekeeping continues. Requests use `USE_OFFCHAIN` to select
+off-chain or on-chain payment. A target met before the cap does not stop trades
+below the cap. Staking activity reads are cached for one poll interval.
 
 The olas-scripts `enable_offchain_controls_all.sh` helper is not needed for fast
 traders. The migration adds missing fast controls and keeps explicit user values.

@@ -49,6 +49,9 @@ from packages.valory.skills.decision_maker_abci.states.post_bet_update import (
     PostBetUpdateRound,
 )
 from packages.valory.skills.decision_maker_abci.states.redeem import RedeemRound
+from packages.valory.skills.decision_maker_abci.states.trade_count import (
+    TradeCountRound,
+)
 
 
 class Event(Enum):
@@ -163,23 +166,23 @@ class FreshWatchAbciApp(AbciApp[Event]):
 
     Initial round: FreshWatchRound
 
-    Initial states: {FastDecisionRound, FreshWatchRound, PostBetUpdateRound}
+    Initial states: {FastDecisionRound, FreshWatchRound, PostBetUpdateRound, TradeCountRound}
 
     Transition states:
         0. FreshWatchRound
             - market: 2.
             - mech only: 1.
-            - housekeeping: 6.
+            - housekeeping: 7.
             - wait: 0.
             - no majority: 0.
             - round timeout: 0.
         1. MechOnlySelectionRound
-            - done: 7.
+            - done: 8.
             - no markets: 0.
             - no majority: 1.
             - round timeout: 0.
         2. DecisionRequestRound
-            - done: 7.
+            - done: 8.
             - mock mech request: 3.
             - slots unsupported error: 0.
             - no majority: 2.
@@ -190,26 +193,31 @@ class FreshWatchAbciApp(AbciApp[Event]):
             - no majority: 3.
             - round timeout: 3.
         4. BetPlacementRound
-            - done: 8.
-            - mock tx: 5.
+            - done: 9.
+            - mock tx: 6.
             - insufficient balance: 0.
             - calc buy amount failed: 0.
             - no majority: 4.
             - round timeout: 0.
-        5. PostBetUpdateRound
-            - done: 0.
+        5. TradeCountRound
+            - done: 6.
             - none: 5.
             - no majority: 5.
             - round timeout: 5.
-        6. RedeemRound
-            - done: 8.
-            - mock tx: 9.
-            - no redeeming: 9.
+        6. PostBetUpdateRound
+            - done: 0.
+            - none: 6.
             - no majority: 6.
-            - redeem round timeout: 9.
-        7. FinishedRequestRound
-        8. FinishedFastTxRound
-        9. FinishedHousekeepingRound
+            - round timeout: 6.
+        7. RedeemRound
+            - done: 9.
+            - mock tx: 10.
+            - no redeeming: 10.
+            - no majority: 7.
+            - redeem round timeout: 10.
+        8. FinishedRequestRound
+        9. FinishedFastTxRound
+        10. FinishedHousekeepingRound
 
     Final states: {FinishedFastTxRound, FinishedHousekeepingRound, FinishedRequestRound}
 
@@ -220,7 +228,12 @@ class FreshWatchAbciApp(AbciApp[Event]):
     """
 
     initial_round_cls = FreshWatchRound
-    initial_states = {FreshWatchRound, FastDecisionRound, PostBetUpdateRound}
+    initial_states = {
+        FreshWatchRound,
+        FastDecisionRound,
+        PostBetUpdateRound,
+        TradeCountRound,
+    }
     transition_function = {
         FreshWatchRound: {
             Event.MARKET: DecisionRequestRound,
@@ -256,6 +269,12 @@ class FreshWatchAbciApp(AbciApp[Event]):
             D.CALC_BUY_AMOUNT_FAILED: FreshWatchRound,
             D.NO_MAJORITY: BetPlacementRound,
             D.ROUND_TIMEOUT: FreshWatchRound,
+        },
+        TradeCountRound: {
+            D.DONE: PostBetUpdateRound,
+            D.NONE: TradeCountRound,
+            D.NO_MAJORITY: TradeCountRound,
+            D.ROUND_TIMEOUT: TradeCountRound,
         },
         PostBetUpdateRound: {
             D.DONE: FreshWatchRound,

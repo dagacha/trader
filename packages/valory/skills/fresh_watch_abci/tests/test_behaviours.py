@@ -57,6 +57,7 @@ def make(cls: Any, tmp_path: Any) -> Any:
     context = MagicMock()
     context.params.store_path = tmp_path
     context.params.fast = FastConfig(active_window_utc="00:00-23:59")
+    context.state.fast_activity_status = None
     context.state.fast_last_poll = 0
     context.params.max_trades = 3
     context.state.synchronized_data.successful_trade_count = 0
@@ -1003,7 +1004,7 @@ def test_watch_staking_contract_read(tmp_path: Any, positional: bool) -> None:
 
 @pytest.mark.parametrize("housekeeping", [False, True])
 def test_capped_watch_without_offchain(tmp_path: Any, housekeeping: bool) -> None:
-    """Keep periodic housekeeping, but never send a capped on-chain request."""
+    """Keep housekeeping and allow capped on-chain requests for unmet activity."""
     from packages.valory.skills.staking_abci.rounds import StakingState
 
     b = make(FreshWatchBehaviour, tmp_path)
@@ -1024,7 +1025,7 @@ def test_capped_watch_without_offchain(tmp_path: Any, housekeeping: bool) -> Non
             return_value=1050,
         ):
             assert run(b.select())["lane"] == (
-                "housekeeping" if housekeeping else "wait"
+                "housekeeping" if housekeeping else "mech_only"
             )
 
 
@@ -1045,3 +1046,41 @@ def test_watch_without_durable_counter(tmp_path: Any) -> None:
             return_value=1050,
         ):
             assert run(b.select())["lane"] == "wait"
+
+
+@pytest.mark.parametrize("refresh", ["interval", "checkpoint"])
+def test_activity_status_cached_across_watch_rounds(
+    tmp_path: Any, refresh: str
+) -> None:
+    """Reuse activity reads across watch instances and refresh after expiry."""
+    b = make(FreshWatchBehaviour, tmp_path)
+    from packages.valory.skills.abstract_round_abci.base import AbciAppDB
+    from packages.valory.skills.decision_maker_abci.states.base import SynchronizedData
+
+    b.context.state.synchronized_data = SynchronizedData(
+        AbciAppDB(setup_data={"previous_checkpoint": [100]})
+    )
+    b._select = lambda *args: done({"lane": "wait"})
+    reads = MagicMock(side_effect=lambda: done((False, False, 8, 3)))
+    b._compute_activity_status = reads
+    with patch(
+        "packages.valory.skills.fresh_watch_abci.behaviours.time.monotonic",
+        return_value=10,
+    ) as clock:
+        assert run(b.select())["activity_completed"] == 3
+        restarted: Any = FreshWatchBehaviour(name="next", skill_context=b.context)
+        restarted._compute_activity_status = reads
+        restarted._select = b._select
+        clock.return_value = 11
+        assert run(restarted.select())["previous_checkpoint"] == 100
+        assert reads.call_count == 1
+        if refresh == "checkpoint":
+            b.context.state.synchronized_data = (
+                b.context.state.synchronized_data.update(previous_checkpoint=200)
+            )
+            restarted.ts_checkpoint = 200
+        else:
+            clock.return_value = 25
+            restarted.ts_checkpoint = 100
+        run(restarted.select())
+        assert reads.call_count == 2

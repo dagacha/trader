@@ -1971,7 +1971,12 @@ def test_release_selects_service_and_skips_polymarket(tmp_path, service, dry_run
     builder = repo / "build_image_offline.sh"
     builder.write_text('#!/bin/sh\nprintf \'%s\\n\' "$2" > "$1/build-agent.txt"\n')
     builder.chmod(0o755)
-    omen, poly = tmp_path / "omen", tmp_path / "poly"
+    omen = tmp_path / "omen-trader/quickstart"
+    poly = tmp_path / "poly-trader/quickstart"
+    pilot = tmp_path / "pilot-trader/quickstart"
+    pilot_config = pilot / "configs/config_omenstrat_fast.json"
+    pilot_config.parent.mkdir(parents=True)
+    shutil.copy2(repo / "configs/config_omenstrat_fast.json", pilot_config)
     omen_paths, poly_paths = fixture(omen), fixture(poly)
     for paths, is_poly in [(omen_paths, False), (poly_paths, True)]:
         data = json.loads(paths[0].read_text())
@@ -1982,7 +1987,14 @@ def test_release_selects_service_and_skips_polymarket(tmp_path, service, dry_run
         )
         data["env_variables"]["IS_RUNNING_ON_POLYMARKET"] = entry(str(is_poly).lower())
         paths[0].write_text(json.dumps(data))
-    before = {p: p.read_bytes() for p in [*omen_paths, *poly_paths]}
+    if service == "trader_pearl":
+        config = json.loads(omen_paths[0].read_text())
+        config["env_variables"]["MAX_TRADES"] = entry("1")
+        config["env_variables"]["POLL_S"] = entry("7")
+        omen_paths[0].write_text(json.dumps(config))
+        # Start release rollback from an actual migrated fast quickstart.
+        run(omen, "--service", "omenstrat_fast")
+    before = {p: p.read_bytes() for p in [*omen_paths, *poly_paths, pilot_config]}
     arguments = [] if service == "omenstrat_fast" else ["--service", service]
     arguments.append("--force-build")
     if dry_run:
@@ -1997,8 +2009,6 @@ def test_release_selects_service_and_skips_polymarket(tmp_path, service, dry_run
             "bash",
             str(repo / "release_service.sh"),
             "--skip-publish",
-            "--quickstart",
-            f"{omen},{poly}",
             *arguments,
         ],
         env=env,
@@ -2012,6 +2022,10 @@ def test_release_selects_service_and_skips_polymarket(tmp_path, service, dry_run
     assert f"valory/oar-{agent}:" in output
     assert cid in output
     assert "Polymarket" in output
+    assert str(pilot) not in output
+    assert pilot_config.read_bytes() == before[pilot_config]
+    if dry_run:
+        print(f"\nRelease fixture: {service}\n{output}")
     assert all(p.read_bytes() == before[p] for p in poly_paths)
     if dry_run:
         assert all(p.read_bytes() == before[p] for p in omen_paths)
@@ -2026,6 +2040,10 @@ def test_release_selects_service_and_skips_polymarket(tmp_path, service, dry_run
         assert actual["configurations"] == old["configurations"]
         if service == "omenstrat_fast":
             assert actual["env_variables"]["MAX_TRADES"]["value"] == "3"
+        else:
+            assert actual["env_variables"]["MAX_TRADES"] == entry("1")
+            assert actual["env_variables"]["POLL_S"] == entry("7")
+            assert "FAST_DYNAMIC_MECH" in actual["env_variables"]
 
 
 def test_fast_defaults_without_env_mapping(tmp_path):
@@ -2049,3 +2067,38 @@ def test_fast_defaults_without_env_mapping(tmp_path):
     before = config.read_bytes()
     run(tmp_path)
     assert config.read_bytes() == before
+
+
+@pytest.mark.parametrize("cap", ["1", "0", "3"])
+@pytest.mark.parametrize("has_hash", [True, False])
+def test_explicit_service_migration_round_trip(tmp_path, cap, has_hash):
+    """Switch to fast and back with the locked hash and user values intact."""
+    paths = fixture(tmp_path)
+    config = json.loads(paths[0].read_text())
+    config.update(
+        hash="old-service",
+        name="Trader Agent",
+        configurations={"gnosis": {"agent_id": 14, "staking": "keep"}},
+    )
+    if not has_hash:
+        config.pop("hash")
+    config["env_variables"]["MAX_TRADES"] = entry(cap)
+    config["env_variables"]["POLL_S"] = entry("7")
+    paths[0].write_text(json.dumps(config))
+    packages = json.loads((SCRIPT.parents[1] / "packages/packages.json").read_text())
+    for service in ("omenstrat_fast", "trader_pearl"):
+        before = paths[0].read_bytes()
+        run(tmp_path, "--service", service, "--dry-run")
+        assert paths[0].read_bytes() == before
+        run(tmp_path, "--service", service)
+        actual = json.loads(paths[0].read_text())
+        assert actual["hash"] == packages["dev"][f"service/valory/{service}/0.1.0"]
+        assert actual["name"] == config["name"]
+        assert actual["configurations"] == config["configurations"]
+        assert actual["env_variables"]["MAX_TRADES"] == entry(cap)
+        assert actual["env_variables"]["POLL_S"] == entry("7")
+        after = paths[0].read_bytes()
+        run(tmp_path, "--service", service)
+        assert paths[0].read_bytes() == after
+    # Extra fast keys remain harmless: trader_pearl has no matching placeholders.
+    assert "FAST_DYNAMIC_MECH" in actual["env_variables"]

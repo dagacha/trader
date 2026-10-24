@@ -27,6 +27,7 @@ start_states:
 - FastDecisionRound
 - FreshWatchRound
 - PostBetUpdateRound
+- TradeCountRound
 states:
 - BetPlacementRound
 - DecisionRequestRound
@@ -38,6 +39,7 @@ states:
 - MechOnlySelectionRound
 - PostBetUpdateRound
 - RedeemRound
+- TradeCountRound
 transition_func:
     (BetPlacementRound, CALC_BUY_AMOUNT_FAILED): FreshWatchRound
     (BetPlacementRound, DONE): FinishedFastTxRound
@@ -73,3 +75,7 @@ transition_func:
     (RedeemRound, NO_MAJORITY): RedeemRound
     (RedeemRound, NO_REDEEMING): FinishedHousekeepingRound
     (RedeemRound, REDEEM_ROUND_TIMEOUT): FinishedHousekeepingRound
+    (TradeCountRound, DONE): PostBetUpdateRound
+    (TradeCountRound, NONE): TradeCountRound
+    (TradeCountRound, NO_MAJORITY): TradeCountRound
+    (TradeCountRound, ROUND_TIMEOUT): TradeCountRound

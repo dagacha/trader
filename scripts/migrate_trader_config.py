@@ -654,6 +654,9 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
     packages = json.loads(
         (Path(__file__).resolve().parents[1] / "packages/packages.json").read_text()
     )
+    selected_cid = (
+        packages["dev"][f"service/valory/{service}/0.1.0"] if service else None
+    )
     fast_mode = service == "omenstrat_fast" or (
         service is None
         and json.loads(config.read_text()).get("hash")
@@ -703,7 +706,7 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
             continue
         with path.open(encoding="utf-8", newline="") as source:
             text = source.read()
-        if not fast_mode and "omenstrat_fast" in text.lower():
+        if selected_cid is None and not fast_mode and "omenstrat_fast" in text.lower():
             print(f">> {path}: omenstrat_fast: skipping trader migration")
             continue
         priorities = []
@@ -716,6 +719,17 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                 migrate_json if path.suffix == ".json" else migrate_env
             )(text, priorities, hashes, warnings)
         if path == paths[0]:
+            data = json.loads(updated)
+            if selected_cid is not None and data.get("hash") != selected_cid:
+                has_hash = "hash" in data
+                data["hash"] = selected_cid
+                updated = edit_json(
+                    updated,
+                    data,
+                    value=selected_cid,
+                    addition=None if has_hash else ("hash", selected_cid),
+                )
+                changes.append(f"hash -> {selected_cid}")
             if fast_mode:
                 data = json.loads(updated)
                 if "env_variables" not in data:

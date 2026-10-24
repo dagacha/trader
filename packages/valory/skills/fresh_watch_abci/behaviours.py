@@ -52,6 +52,9 @@ from packages.valory.skills.decision_maker_abci.behaviours.post_bet_update impor
     PostBetUpdateBehaviour,
 )
 from packages.valory.skills.decision_maker_abci.behaviours.reedem import RedeemBehaviour
+from packages.valory.skills.decision_maker_abci.behaviours.trade_count import (
+    TradeCountBehaviour,
+)
 from packages.valory.skills.decision_maker_abci.models import RedeemingProgress
 from packages.valory.skills.decision_maker_abci.policy import EGreedyPolicy
 from packages.valory.skills.fresh_watch_abci.rounds import (
@@ -154,14 +157,24 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour, CheckStopTradingBehaviour)
         :yield: control during polling, live quotes, and idle waits.
         :return: consensus inputs for the selected lane.
         """
-        kpi_met, target_met, target, completed = (
-            yield from self._compute_activity_status()
-        )
-        period = (
-            self.ts_checkpoint
-            if self.service_staking_state == StakingState.STAKED
-            else self.synchronized_data.previous_checkpoint
-        )
+        # Keep payload activity fields current without repeating all staking reads
+        # in each fast round. The shared cache survives behaviour replacement.
+        cache = self.context.state.fast_activity_status
+        now = time.monotonic()
+        if (
+            cache is None
+            or cache[1] != self.synchronized_data.previous_checkpoint
+            or now - cache[0] >= self.params.fast.poll_s
+        ):
+            status = yield from self._compute_activity_status()
+            period = (
+                self.ts_checkpoint
+                if self.service_staking_state == StakingState.STAKED
+                else self.synchronized_data.previous_checkpoint
+            )
+            cache = (now, period, status)
+            self.context.state.fast_activity_status = cache
+        _, period, (kpi_met, target_met, target, completed) = cache
         count, _ = read_successful_trade_count_state(self.params.store_path, period)
         if count is None:
             count = self.synchronized_data.successful_trade_count
@@ -213,7 +226,7 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour, CheckStopTradingBehaviour)
                 queue.save()
                 return {"lane": "housekeeping"}
             yield from self.sleep(cfg.poll_s)
-            if not target_met and self.params.use_offchain:
+            if not target_met:
                 return {"lane": "mech_only"}
             return {"lane": "wait"}
         last_poll = self.context.state.fast_last_poll
@@ -559,6 +572,7 @@ class FreshWatchRoundBehaviour(AbstractRoundBehaviour):
     abci_app_cls = FreshWatchAbciApp
     behaviours = {
         FreshWatchBehaviour,
+        TradeCountBehaviour,
         MechOnlySelectionBehaviour,
         FastDecisionBehaviour,
         FastBetPlacementBehaviour,
