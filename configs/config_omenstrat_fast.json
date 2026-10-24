@@ -1,15 +1,15 @@
 {
     "name": "omenstrat_fast",
-    "hash": "bafybeifpc4kvgwb4iftueb73v2yfzj2fk4wn75fvc3ztydtbs526xh4lmm",
+    "hash": "bafybeihtwrdluqstquofzysymeirg4rxsvst4yntnfyix35pylp6oqzsfu",
     "description": "Fresh-watch Omen agent with the fixed fast strategy.",
     "image": "https://operate.olas.network/_next/image?url=%2Fimages%2Fprediction-agent.png&w=3840&q=75",
-    "service_version": "feat/omenstrat-fast",
+    "service_version": "feat/fast-mech-latency",
     "agent_release": {
         "is_aea": true,
         "repository": {
             "owner": "dagacha",
             "name": "trader",
-            "version": "feat/omenstrat-fast"
+            "version": "feat/fast-mech-latency"
         }
     },
     "home_chain": "gnosis",
@@ -85,7 +85,7 @@
         "MECH_MARKETPLACE_CONFIG": {
             "name": "Mech marketplace config",
             "description": "",
-            "value": "{\"mech_marketplace_address\":\"0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB\",\"priority_mech_address\":\"0x552cEA7Bc33CbBEb9f1D90c1D11D2C6daefFd053\",\"priority_mech_staking_instance_address\":\"0x0000000000000000000000000000000000000000\",\"priority_mech_service_id\":975,\"requester_staking_instance_address\":\"0x0000000000000000000000000000000000000000\",\"response_timeout\":300,\"offchain_url\":null,\"auto_deposit_cap_per_cycle\":5000000000000000000,\"offchain_poll_interval_seconds\":1.5,\"offchain_poll_timeout_seconds\":300.0,\"offchain_failover_max_retries\":0}",
+            "value": "{\"mech_marketplace_address\":\"0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB\",\"priority_mech_address\":\"0x552cEA7Bc33CbBEb9f1D90c1D11D2C6daefFd053\",\"priority_mech_staking_instance_address\":\"0x0000000000000000000000000000000000000000\",\"priority_mech_service_id\":975,\"requester_staking_instance_address\":\"0x0000000000000000000000000000000000000000\",\"response_timeout\":300,\"offchain_url\":null,\"auto_deposit_cap_per_cycle\":5000000000000000000,\"offchain_poll_interval_seconds\":1.5,\"offchain_poll_timeout_seconds\":300.0,\"offchain_failover_max_retries\":0,\"use_dynamic_mech_selection\":true}",
             "provision_type": "user"
         },
         "USE_MECH_MARKETPLACE": {
@@ -343,13 +343,19 @@
         "VALID_MECHS": {
             "name": "Valid mechs",
             "description": "",
-            "value": "[\"0x552cEA7Bc33CbBEb9f1D90c1D11D2C6daefFd053\"]",
+            "value": "[\"0xc05e7412439bd7e91730a6880e18d5d5873f632c\",\"0x601024e27f1c67b28209e24272ced8a31fc8151f\",\"0xb3c6319962484602b00d5587e965946890b82101\",\"0xdb78159e9246ec738f51c2c9cb1169b5c0e45fee\",\"0x818df8dcd43d716a7263798c99a2fc8e27010711\",\"0x11c4389bf449991d69f89f941c3e79d5d828f1bc\",\"0x552cEA7Bc33CbBEb9f1D90c1D11D2C6daefFd053\"]",
             "provision_type": "user"
         },
         "STRATEGIES_KWARGS": {
             "name": "Strategies kwargs",
             "description": "",
             "value": "{\"floor_balance\":0,\"default_max_bet_size\":800000000000000000,\"absolute_min_bet_size\":10000000000000000,\"absolute_max_bet_size\":4000000000000000000,\"n_bets\":1,\"min_edge\":0.03,\"min_oracle_prob\":0.5,\"fee_per_trade\":10000000000000000,\"grid_points\":500}",
+            "provision_type": "user"
+        },
+        "FAST_DYNAMIC_MECH": {
+            "name": "Dynamic Mech selection",
+            "description": "Select an allowed Mech by tool and rank. Use the priority Mech when false.",
+            "value": "true",
             "provision_type": "user"
         }
     }

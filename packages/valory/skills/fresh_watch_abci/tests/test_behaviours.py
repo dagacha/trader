@@ -120,6 +120,9 @@ def test_evaluate(
 ) -> None:
     """Evaluate a real sampled bet without policy setup or strategy loading."""
     b = make(FastDecisionBehaviour, tmp_path)
+    b.context.shared_state = {
+        "mech_latency": {"uuid": {"mech": "0xselected", "latency_s": 31}}
+    }
     raw = raw_market()
     raw.pop("condition")
     bet = Bet(**raw, market="omen_subgraph")
@@ -146,6 +149,8 @@ def test_evaluate(
     assert result["stake"] == stake
     assert result["age_at_request"] == 50
     assert result["age_at_answer"] == 100
+    assert result["mech"] == "0xselected"
+    assert result["latency_s"] == 31
 
 
 def test_calibrated_placement_prediction(tmp_path: Any) -> None:

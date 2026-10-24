@@ -128,6 +128,12 @@ class FastParams(TraderParams):
             raise ValueError("The fast agent supports Omen only.")
         if self.fast.tools != FastConfig().tools:
             raise ValueError("Use only the two fast tools in priority order.")
+        dynamic = self._ensure("fast_dynamic_mech", kwargs, bool)
+        kwargs["fast_dynamic_mech"] = dynamic
+        kwargs["mech_marketplace_config"] = {
+            **kwargs["mech_marketplace_config"],
+            "use_dynamic_mech_selection": dynamic,
+        }
         super().__init__(*args, **kwargs)
 
 

@@ -8,12 +8,13 @@ aea_version: '>=2.0.0, <3.0.0'
 fingerprint:
   README.md: bafybeiab4xgadptz4mhvno4p6xvkh7p4peg7iuhotabydriu74dmj6ljga
   __init__.py: bafybeidp3c6ychle2a6gvrzznmgvkgtzkcxras42gmq3kfey4xwmxa3rom
-  behaviours.py: bafybeibyov3o4xuzysdpsm6ullyxjvv34ffyy7msif4l6xsp5esskmc2se
+  behaviours.py: bafybeibr2wxzrnzpniwbbxd6hftltaqscflorfxb3pmf6nyzl23bnekscm
   composition.py: bafybeidbra5yeyhzc4ghkwzczpijwov33mmagzpfxg5jpg5jd6psbc6m7e
   dialogues.py: bafybeifoywfxhnowfy2ofkltizyhuiuv3tgqakwjzm7vj4y4gb2ozhjpey
   fsm_specification.yaml: bafybeihntyjwj2e35zhrjw52yjeezavbwvjjjsas4exrpohixzzwyy6lae
   handlers.py: bafybeiausytnqsngbh7qlr5tzyzxmdp33e7cfo6kkgxnccbfvu3hecyyiq
-  models.py: bafybeidqxl26hxm7g3mk3j642hv5r62o27j35rqj5zec2pfo6ouoaozhty
+  mech_latency.py: bafybeifiqayn5p3kx5gnk65dkrialawuawbfd2ynbx74deipxtmti526zi
+  models.py: bafybeib2n5yjs6eo3cuei5mbzbwakaa3zyu7hpke5eajdtkce7v2u6l6ba
   tests/__init__.py: bafybeiadatapyjh3e7ucg2ehz77oms3ihrbutwb2cs2tkjehy54utwvuyi
   tests/test_agent_config_resolution.py: bafybeiggznsh6nrgcln7q4d3rvlnx2dd44rzfuw3c4ayrihkzzgp7z6jdu
   tests/test_behaviours.py: bafybeife72nmoi363rv3kj2krzmlzdysxuubknke43glbf3fyh2ls4wy6u
@@ -21,6 +22,7 @@ fingerprint:
   tests/test_dialogues.py: bafybeibatogwoj6ieapcbiwonij6vskhogc65vfv53tyauqzeyiwmnd2im
   tests/test_handlers.py: bafybeihl373oleiibafei4qknvszuu4c7axc6nfvn35qp32trvd35n2cea
   tests/test_ledger_receipt_dispatch.py: bafybeiaqkb4ijm2kmdruyu4s2lklksmdnuyjrjfjfiykzns6lvortqcbru
+  tests/test_mech_latency.py: bafybeibup5cf3b7cooz7wvh6lpdhgbet76whce5o3ufqg3ikygbbtoe3pa
   tests/test_models.py: bafybeiewq4rcnbpukiur2vfdqysuaagdi2krswghz3ktv3l7gynaip43hq
   tests/test_skill_dependencies.py: bafybeifpwgwo3hubycvskqgtbqpzu2lg7f6dql5ijnmsz6qcodneju5lcu
   tx_validation.py: bafybeiah5qi2si255hiv3rrmlic3k7bkwobctc63n27aer6clrxseboj5q
@@ -324,6 +326,7 @@ models:
         offchain_poll_interval_seconds: 3.0
         offchain_poll_timeout_seconds: 300.0
         offchain_failover_max_retries: 2
+      fast_dynamic_mech: false
       use_offchain: false
       offchain_deposit_target_calls: 10
       expected_mech_response_time: 300

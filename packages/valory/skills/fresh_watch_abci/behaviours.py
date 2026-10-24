@@ -70,6 +70,8 @@ def log_decision(behaviour: DecisionMakerBaseBehaviour, result: Dict[str, Any]) 
     :param behaviour: calling behaviour.
     :param result: decision and timing fields.
     """
+    result.setdefault("mech", None)
+    result.setdefault("latency_s", None)
     behaviour.context.logger.info(
         "[FAST_DECISION] %s", json.dumps(result, sort_keys=True)
     )
@@ -330,6 +332,11 @@ class FastDecisionBehaviour(DecisionMakerBaseBehaviour):
             stake=0.0,
             reason="mech_response",
         )
+        timings = self.context.shared_state.get("mech_latency", {})
+        timing: Dict[str, Any] = (
+            next(reversed(timings.values()), {}) if isinstance(timings, dict) else {}
+        )
+        result.update(mech=timing.get("mech"), latency_s=timing.get("latency_s"))
         prediction = self._get_decision_prediction()
         if prediction is None:
             return result

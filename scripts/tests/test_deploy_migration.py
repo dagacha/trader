@@ -1655,9 +1655,18 @@ def test_skip_fast_template_and_caches(tmp_path):
                 {
                     "name": "omenstrat_fast",
                     "env_variables": {
+                        "FAST_DYNAMIC_MECH": entry("true"),
+                        "MECH_MARKETPLACE_CONFIG": entry(
+                            json.dumps(
+                                {
+                                    "use_dynamic_mech_selection": True,
+                                    "priority_mech_service_id": 975,
+                                }
+                            )
+                        ),
                         "STRATEGIES_KWARGS": entry(
                             '{"absolute_max_bet_size":4000000000000000000}'
-                        )
+                        ),
                     },
                 }
             )

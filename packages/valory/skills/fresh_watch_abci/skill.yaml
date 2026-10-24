@@ -8,15 +8,15 @@ aea_version: '>=2.0.0, <3.0.0'
 fingerprint:
   README.md: bafybeieurwex74dtimmmndedzrhznyfivsuaf27lteomz4cz23upjtv2pq
   __init__.py: bafybeihyphnywie3dyf7f7mmwm7yvcwekkgsa4mq5273ojuzbjsznvorv4
-  behaviours.py: bafybeie7s2dkacpuwq2mxgzycziyzelkvpf5xpcv4wisq35kqio6ewbvx4
+  behaviours.py: bafybeidgeyayp67mifvyoa3bysj4zbofngrivt6rdspgqhzuo3kwdvixp4
   dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
   fsm_specification.yaml: bafybeieiislbmdq6mfm4fscuui5aalhiknowuq3sym7k5b3erfabsf3xe4
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
-  models.py: bafybeid4g2263qa64vbpqkpr2fitowf3vlb5hrc2eyiilhvib3w6wt225y
+  models.py: bafybeichkkxkldg24ukw7sz5e3xcp3qp6qudx3mu5m6b437spiappdnds4
   rounds.py: bafybeibmqa62zmp26f7egxsuq6pb3wpbrw5yxbzpgg4hedwszwtag2k3wi
   strategy.py: bafybeig4yxuklttskr2e6f7zv4oo6wh3tclf7tgcqtskjiguv6vflle7ia
   tests/__init__.py: bafybeiebuokdlpgmmm6orggvfnnm537acc3eogkkrn6jyjaxzqyb7t7yzy
-  tests/test_behaviours.py: bafybeic3wal3kmakghor6zzv42naoejlo7w65sp7demtlxf5kx73ypixzm
+  tests/test_behaviours.py: bafybeifgokpxqmmoqggg5fshiouqsrb5fdxqz5keif3si7eejldhlxn4fu
   tests/test_rounds.py: bafybeihmy4lrkxqveq2pxhqldedspfeeeo3xrydkzms246exc2kmjagvky
   tests/test_strategy.py: bafybeie4agoiqcsoi6zcwkbw4enpilzpyhdfwbbo7gptjmornxiira7zb4
 fingerprint_ignore_patterns: []
@@ -27,7 +27,7 @@ skills:
 - valory/abstract_round_abci:0.1.0:bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4
 - valory/market_manager_abci:0.1.0:bafybeicle4v4hbzfitrndz4iezmpzqft7q26eijmzpqpfs7o4ccv7pkfcu
 - valory/decision_maker_abci:0.1.0:bafybeigpgscs5zzar3ibwksb5arhna3azcid4yblvfq6tdlvc6xpihwdpa
-- valory/trader_abci:0.1.0:bafybeiacb7bhwy267gw2paw27amwyadnnafzbnuilqxxqctiew2q2nkovi
+- valory/trader_abci:0.1.0:bafybeigbkzxh6v6qdctgqzde5xbew4a5wxevgaejselqvmmblhyhwosfsi
 behaviours:
   main:
     args: {}
@@ -273,12 +273,14 @@ models:
         priority_mech_staking_instance_address: '0x0000000000000000000000000000000000000000'
         priority_mech_service_id: 975
         requester_staking_instance_address: '0x0000000000000000000000000000000000000000'
+        use_dynamic_mech_selection: true
         response_timeout: 300
         offchain_url: null
         auto_deposit_cap_per_cycle: 5000000000000000000
         offchain_poll_interval_seconds: 1.5
         offchain_poll_timeout_seconds: 300.0
         offchain_failover_max_retries: 0
+      fast_dynamic_mech: true
       use_offchain: true
       offchain_deposit_target_calls: 10
       expected_mech_response_time: 300

@@ -43,11 +43,13 @@ from packages.valory.skills.tx_settlement_multiplexer_abci.behaviours import (
 
 
 class FastMechInformationBehaviour(MechInformationBehaviour):
-    """Discover only the configured priority mech, once at startup."""
+    """Discover allowed mechs, or the priority mech in static mode."""
 
     @property
     def eligible_mechs(self) -> List[str]:
-        """Return only the configured mech address."""
+        """Use the shared allowlist when dynamic selection is enabled."""
+        if self.params.mech_marketplace_config.use_dynamic_mech_selection:
+            return super().eligible_mechs
         return [
             (self.params.mech_marketplace_config.priority_mech_address or "").lower()
         ]
