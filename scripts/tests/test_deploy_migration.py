@@ -193,7 +193,8 @@ def test_no_final_newline_and_missing_top_level_values(tmp_path):
     assert (
         json.loads(values["MECH_MARKETPLACE_CONFIG"])["priority_mech_service_id"] == 975
     )
-    assert values["USE_OFFCHAIN"] == "false"
+    # The quickstart control sync runs after the hoist, so it wins.
+    assert values["USE_OFFCHAIN"] == "true"
     assert values["OFFCHAIN_DEPOSIT_TARGET_CALLS"] == "7"
 
 
@@ -257,7 +258,8 @@ def test_wrapped_yaml_value(tmp_path, kubernetes):
         json.loads(values["MECH_MARKETPLACE_CONFIG"])["offchain_url"]
         == OLD["offchain_url"]
     )
-    assert values["USE_OFFCHAIN"] == "false"
+    # The quickstart control sync runs after the hoist, so it wins.
+    assert values["USE_OFFCHAIN"] == "true"
     assert values["OFFCHAIN_DEPOSIT_TARGET_CALLS"] == "7"
 
 
@@ -332,7 +334,7 @@ def test_settings_are_scoped_to_each_yaml_environment(tmp_path):
     run(tmp_path)
     actual = list(yaml.safe_load_all(path.read_text()))
     values = [{item["name"]: item["value"] for item in doc["env"]} for doc in actual]
-    assert values[0]["USE_OFFCHAIN"] == "false"
+    assert values[0]["USE_OFFCHAIN"] == "true"
     assert values[1]["USE_OFFCHAIN"] == "true"
     assert all(value["OFFCHAIN_DEPOSIT_TARGET_CALLS"] == "7" for value in values)
 
@@ -420,7 +422,7 @@ def test_strategy_deployment_migration(tmp_path, style, existing):
         result = source.read()
     if style == "env":
         assert result.startswith("# keep\r\n")
-        value = result.split("STRATEGIES_KWARGS=", 1)[1]
+        value = result.split("STRATEGIES_KWARGS=", 1)[1].split("\n", 1)[0]
     else:
         env = yaml.safe_load(result)["environment"]
         if style == "list":
@@ -433,7 +435,8 @@ def test_strategy_deployment_migration(tmp_path, style, existing):
         strategy, min_expected_profit=6 * 10**16 if existing is None else existing
     )
     backups = list(path.parent.glob(path.name + ".bak-*"))
-    assert len(backups) == (1 if existing is None else 0)
+    # The agent env also gains the synced USE_OFFCHAIN control.
+    assert len(backups) == (1 if existing is None or style == "env" else 0)
     if existing is None:
         assert str(path) in preview
         assert "STRATEGIES_KWARGS.min_expected_profit=60000000000000000" in preview
@@ -483,8 +486,14 @@ def test_empty_strategy_deployment_entry(tmp_path, raw, style):
         assert "min_expected_profit" in result
         assert list(path.parent.glob(path.name + ".bak-*"))[0].read_text() == original
     else:
-        assert result == original
-        assert not list(path.parent.glob(path.name + ".bak-*"))
+        if style == "env":
+            # The control sync appends the quickstart USE_OFFCHAIN line.
+            assert result.startswith(original)
+            assert "USE_OFFCHAIN=true" in result
+            assert list(path.parent.glob(path.name + ".bak-*"))
+        else:
+            assert result == original
+            assert not list(path.parent.glob(path.name + ".bak-*"))
     later_env = json.loads(paths[2].read_text())["env_variables"]
     assert later_env["OFFCHAIN_DEPOSIT_TARGET_CALLS"]["value"] == "7"
     run(tmp_path)
@@ -1467,3 +1476,170 @@ def test_skip_fast_template_and_caches(tmp_path):
     assert "omenstrat_fast: skipping trader migration" in output
     assert all(path.read_bytes() == data for path, data in before.items())
     assert not list(tmp_path.rglob("*.bak-*"))
+
+
+@pytest.mark.parametrize("style", ["env", "mapping", "list", "kubernetes"])
+def test_control_env_flags_sync_everywhere(tmp_path, style):
+    """Sync fresh-first and off-chain controls into every cache."""
+    import yaml
+
+    desired = {"PRIORITIZE_FRESH_MARKETS": "true", "USE_OFFCHAIN": "true"}
+    source = tmp_path / "configs/config_predict_trader.json"
+    source.parent.mkdir()
+    source.write_text(
+        json.dumps(
+            {
+                "env_variables": {
+                    **{
+                        key: dict(entry(value), provision_type="fixed")
+                        for key, value in desired.items()
+                    },
+                    "MECH_MARKETPLACE_CONFIG": entry(
+                        json.dumps({"response_timeout": 300})
+                    ),
+                }
+            }
+        )
+    )
+    service = tmp_path / ".operate/services/sc-one"
+    service.mkdir(parents=True)
+    saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
+    saved.write_text(json.dumps({"user_provided_args": {"KEEP": "saved"}}))
+    config = service / "config.json"
+    config.write_text(
+        json.dumps(
+            {
+                "env_variables": {
+                    "MECH_MARKETPLACE_CONFIG": entry({"response_timeout": 300})
+                }
+            }
+        )
+    )
+    marketplace = json.dumps({"response_timeout": 300}, separators=(",", ":"))
+    env = {
+        "MECH_MARKETPLACE_CONFIG": marketplace,
+        "SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_MECH_MARKETPLACE_CONFIG": marketplace,
+        "KEEP": "agent",
+    }
+    agent = service / "agent_0.env"
+    agent.write_text("".join(key + "=" + value + "\n" for key, value in env.items()))
+    build = service / "build.yaml"
+    if style == "kubernetes":
+        values = [{"name": key, "value": value} for key, value in env.items()]
+    elif style == "list":
+        values = [key + "=" + value for key, value in env.items()]
+    elif style == "env":
+        values = None
+    else:
+        values = env
+    build.write_text(
+        "environment:\n"
+        + "".join("  - " + key + "=" + value + "\n" for key, value in env.items())
+        if style == "env"
+        else yaml.safe_dump({"environment": values}, width=60)
+    )
+    run(tmp_path)
+    assert json.loads(saved.read_text())["user_provided_args"] == dict(
+        desired, KEEP="saved"
+    )
+    actual = json.loads(config.read_text())["env_variables"]
+    for key, value in desired.items():
+        assert actual[key]["value"] == value
+    actual_env = dict(line.split("=", 1) for line in agent.read_text().splitlines())
+    actual_build = yaml.safe_load(build.read_text())["environment"]
+    if style in ("env", "list"):
+        actual_build = dict(value.split("=", 1) for value in actual_build)
+    elif style == "kubernetes":
+        actual_build = {item["name"]: item["value"] for item in actual_build}
+    for cache in [actual_env, actual_build]:
+        for key, value in desired.items():
+            assert cache[key] == value
+        assert cache["KEEP"] == "agent"
+
+
+def test_offchain_deposit_target_calls_from_quickstart_wins(tmp_path):
+    """Sync the quickstart value over a hoisted legacy default."""
+    desired = {"OFFCHAIN_DEPOSIT_TARGET_CALLS": "7"}
+    legacy = {"response_timeout": 300, "offchain_deposit_target_calls": 10}
+    source = tmp_path / "configs/config_predict_trader.json"
+    source.parent.mkdir()
+    source.write_text(
+        json.dumps(
+            {
+                "env_variables": {
+                    **{
+                        key: dict(entry(value), provision_type="fixed")
+                        for key, value in desired.items()
+                    },
+                    "MECH_MARKETPLACE_CONFIG": entry(json.dumps(legacy)),
+                }
+            }
+        )
+    )
+    service = tmp_path / ".operate/services/sc-one"
+    service.mkdir(parents=True)
+    saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
+    saved.write_text(json.dumps({"user_provided_args": {"KEEP": "saved"}}))
+    config = service / "config.json"
+    config.write_text(
+        json.dumps({"env_variables": {"MECH_MARKETPLACE_CONFIG": entry(dict(legacy))}})
+    )
+    marketplace = json.dumps(legacy, separators=(",", ":"))
+    env = {
+        "MECH_MARKETPLACE_CONFIG": marketplace,
+        "SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_MECH_MARKETPLACE_CONFIG": marketplace,
+        "KEEP": "agent",
+    }
+    agent = service / "agent_0.env"
+    agent.write_text("".join(key + "=" + value + "\n" for key, value in env.items()))
+    run(tmp_path)
+    assert json.loads(saved.read_text())["user_provided_args"] == dict(
+        desired, KEEP="saved"
+    )
+    actual = json.loads(config.read_text())["env_variables"]
+    assert actual["OFFCHAIN_DEPOSIT_TARGET_CALLS"]["value"] == "7"
+    assert actual["MECH_MARKETPLACE_CONFIG"]["value"] == {"response_timeout": 300}
+    actual_env = dict(line.split("=", 1) for line in agent.read_text().splitlines())
+    assert actual_env["OFFCHAIN_DEPOSIT_TARGET_CALLS"] == "7"
+    assert actual_env["KEEP"] == "agent"
+
+
+def test_control_additions_reuse_crlf_endings(tmp_path):
+    """Appended controls keep the file's CRLF line endings."""
+    desired = {"USE_OFFCHAIN": "true"}
+    source = tmp_path / "configs/config_predict_trader.json"
+    source.parent.mkdir()
+    source.write_text(
+        json.dumps(
+            {
+                "env_variables": {
+                    **{
+                        key: dict(entry(value), provision_type="fixed")
+                        for key, value in desired.items()
+                    },
+                    "MECH_MARKETPLACE_CONFIG": entry(
+                        json.dumps({"response_timeout": 300})
+                    ),
+                }
+            }
+        )
+    )
+    service = tmp_path / ".operate/services/sc-one"
+    service.mkdir(parents=True)
+    marketplace = json.dumps({"response_timeout": 300}, separators=(",", ":"))
+    agent = service / "agent_0.env"
+    agent.write_bytes(
+        (
+            "MECH_MARKETPLACE_CONFIG="
+            + marketplace
+            + "\r\n"
+            + "SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_MECH_MARKETPLACE_CONFIG="
+            + marketplace
+            + "\r\n"
+            + "KEEP=agent"
+        ).encode()
+    )
+    run(tmp_path)
+    with agent.open(newline="") as handle:
+        text = handle.read()
+    assert text.endswith("KEEP=agent\r\nUSE_OFFCHAIN=true\r\n")

@@ -37,14 +37,12 @@ class EpochResetRound(CollectSameUntilThresholdRound):
 
     This round runs at the start of every decision-maker cycle, immediately
     after randomness and *before* ``TradeCapRound`` evaluates the cap, so a
-    reset observed in the previous cycle's checkpoint applies within this
-    cycle (no one-cycle lag).  When the staking skill's
-    ``is_checkpoint_reached`` flag is ``True`` — set at the end of the
-    previous cycle when an on-chain checkpoint was detected — the round
-    writes ``successful_trade_count = 0`` and an empty ``mech_only_queue``,
-    effectively lifting the cap for the new epoch.  When the flag is
-    ``False`` the round is a no-op: it re-writes the existing values
-    unchanged.
+    counter from an older on-chain checkpoint period resets before the cap
+    check. The durable counter reader preserves counts for the same period
+    and binds legacy counters to the current period. The staking skill's
+    ``is_checkpoint_reached`` flag clears the ``mech_only_queue``. The flag
+    alone does not reset the counter, as a stale checkpoint file can also
+    set it after a restart.
     """
 
     payload_class = EpochResetPayload

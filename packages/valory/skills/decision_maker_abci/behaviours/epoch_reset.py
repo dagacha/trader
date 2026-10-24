@@ -39,26 +39,18 @@ class EpochResetBehaviour(DecisionMakerBaseBehaviour):
     def async_act(self) -> Generator:
         """Reset the trade counter and clear the Mech-only queue at the epoch boundary."""
         with self.context.benchmark_tool.measure(self.behaviour_id).local():
+            # The durable reader resets only a dated counter from another period.
+            # A checkpoint flag can also result from a stale file after restart.
+            count = self.durable_trade_count()
+            queue = self.synchronized_data.mech_only_queue
             if self.synchronized_data.is_checkpoint_reached:
-                # New staking epoch: reset the cap and clear the Mech-only queue.
-                # Reset the durable file too, otherwise the pre-epoch count would
-                # be reloaded on the next restart and keep the cap armed.
-                self.store_trade_count_state(0, set())
+                queue = []
                 self.context.logger.info(
-                    "New staking epoch detected; resetting the trade cap counter."
+                    "Staking checkpoint detected; clearing the Mech-only queue."
                 )
-                payload = EpochResetPayload(
-                    self.context.agent_address,
-                    successful_trade_count=0,
-                    mech_only_queue=json.dumps([]),
-                )
-            else:
-                # No epoch change: re-write existing values (no-op). Use the
-                # durable counter so synchronized data is re-hydrated from the
-                # file after a restart wiped the ABCI database.
-                payload = EpochResetPayload(
-                    self.context.agent_address,
-                    successful_trade_count=self.durable_trade_count(),
-                    mech_only_queue=json.dumps(self.synchronized_data.mech_only_queue),
-                )
+            payload = EpochResetPayload(
+                self.context.agent_address,
+                successful_trade_count=count,
+                mech_only_queue=json.dumps(queue),
+            )
         yield from self.finish_behaviour(payload)
