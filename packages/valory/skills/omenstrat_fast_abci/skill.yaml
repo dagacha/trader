@@ -1,0 +1,706 @@
+name: omenstrat_fast_abci
+author: valory
+version: 0.1.0
+type: skill
+description: Fresh Omen markets and the fixed fast strategy.
+license: Apache-2.0
+aea_version: '>=2.0.0, <3.0.0'
+fingerprint:
+  README.md: bafybeihpik4c2q3n7gu236hnc6uzbgdgqst4xmrdloycr352cglbu2gtkq
+  __init__.py: bafybeib3ysnyfp5g7wqqopddtqp3vrod5hlfhyjekrdasrbpexa6fc4eoq
+  behaviours.py: bafybeid6cayeudmhqpqoy7ehw2syttxynwtndlmtbuvw4ya4zfstwlg4s4
+  composition.py: bafybeidqglprz3azjyuopcmwsmhgsxjdoq3cggg4n76tawvvwgykbpfg6a
+  dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
+  fsm_specification.yaml: bafybeibhmxlncynj53bw6p72qx3cisxeem4q3hlynpxxrgqnvybab7wbmq
+  handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
+  models.py: bafybeicihpfeq66ahhuboojdrf7f33xu6tmktmskzodh7oiqvxtggka4om
+  tests/__init__.py: bafybeifx5qa3c7rsjbe4ujuif363osh23mvgprcd5jwv67t5kl3kgqrszu
+  tests/test_composition.py: bafybeif6hjjymm75u3az6aunyrtoetoxc6mjohaoltbwed2im7htmpx5ge
+  tests/test_config.py: bafybeiatc37eomlnoqadm4smde42wipiotbqqibzz5u7yzqypsnr4ktdhm
+  tests/test_requests.py: bafybeifplkqqhpcc73ebo4xrdwifcsthwaavnzuhebsrx6sbgcfgepwgna
+fingerprint_ignore_patterns: []
+connections: []
+contracts: []
+protocols: []
+skills:
+- valory/abstract_round_abci:0.1.0:bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4
+- valory/registration_abci:0.1.0:bafybeicwfwrzdu5kjcjh4ntzgo7dghy5rs4o6ddbwgo2vz7bomi67gn5wa
+- valory/transaction_settlement_abci:0.1.0:bafybeidmmhjcgp7chozxovensq3zplkufvaityd2w3zladtssu4ijvqbzm
+- valory/termination_abci:0.1.0:bafybeig5lk6agmjpctxh4smrqvtbylynda7a5kwgtdlss2sjnnabedzuem
+- valory/decision_maker_abci:0.1.0:bafybeigpgscs5zzar3ibwksb5arhna3azcid4yblvfq6tdlvc6xpihwdpa
+- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeihnwzqig42nksht233lxydj4mwykiozotce5czd2kbjs5rsgh3zsu
+- valory/staking_abci:0.1.0:bafybeihjsvg6qmpcvca24hlj34ppdgnhx6wnbi56ddcnnfdj2p7bg66mii
+- valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m
+- valory/chatui_abci:0.1.0:bafybeihj5y6cecuw4iz2gshicoygghrgi5b6rzynnofx25ycsv56ehgdvq
+- valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
+- valory/trader_abci:0.1.0:bafybeiacb7bhwy267gw2paw27amwyadnnafzbnuilqxxqctiew2q2nkovi
+- valory/fresh_watch_abci:0.1.0:bafybeiez6xexoghawwubridot4zv2hry7vz6c4ljjbjiiwzljwyztgtnqa
+behaviours:
+  main:
+    args: {}
+    class_name: OmenstratFastConsensusBehaviour
+handlers:
+  abci:
+    args: {}
+    class_name: TraderHandler
+  acn:
+    args: {}
+    class_name: AcnHandler
+  contract_api:
+    args: {}
+    class_name: ContractApiHandler
+  http:
+    args: {}
+    class_name: HttpHandler
+  ipfs:
+    args: {}
+    class_name: IpfsHandler
+  ledger_api:
+    args: {}
+    class_name: LedgerApiHandler
+  signing:
+    args: {}
+    class_name: SigningHandler
+  tendermint:
+    args: {}
+    class_name: TendermintHandler
+  srr:
+    args: {}
+    class_name: SrrHandler
+models:
+  abci_dialogues:
+    args: {}
+    class_name: AbciDialogues
+  acn_dialogues:
+    args: {}
+    class_name: AcnDialogues
+  benchmark_tool:
+    args:
+      log_dir: /logs
+    class_name: BenchmarkTool
+  contract_api_dialogues:
+    args: {}
+    class_name: ContractApiDialogues
+  http_dialogues:
+    args: {}
+    class_name: HttpDialogues
+  ipfs_dialogues:
+    args: {}
+    class_name: IpfsDialogues
+  ledger_api_dialogues:
+    args: {}
+    class_name: LedgerApiDialogues
+  params:
+    args:
+      cleanup_history_depth: 1
+      cleanup_history_depth_current: null
+      drand_public_key: 868f005eb8e6e4ca0a47c8a77ceaa5309a47978a7c71bc5cce96366b5d7a569937c529eeda66c7293784a9402801af31
+      finalize_timeout: 15.0
+      genesis_config:
+        genesis_time: '2022-05-20T16:00:21.735122717Z'
+        chain_id: chain-c4daS1
+        consensus_params:
+          block:
+            max_bytes: '22020096'
+            max_gas: '-1'
+            time_iota_ms: '1000'
+          evidence:
+            max_age_num_blocks: '100000'
+            max_age_duration: '172800000000000'
+            max_bytes: '1048576'
+          validator:
+            pub_key_types:
+            - ed25519
+          version: {}
+        voting_power: '10'
+      history_check_timeout: 1205
+      init_fallback_gas: 0
+      keeper_allowed_retries: 3
+      keeper_timeout: 30.0
+      max_attempts: 10
+      max_healthcheck: 120
+      multisend_address: '0x0000000000000000000000000000000000000000'
+      multisend_batch_size: 1
+      on_chain_service_id: null
+      request_retry_delay: 1.0
+      request_timeout: 10.0
+      reset_pause_duration: 10
+      reset_tendermint_after: 2
+      retry_attempts: 400
+      retry_timeout: 1
+      use_slashing: false
+      slash_cooldown_hours: 3
+      slash_threshold_amount: 10000000000000000
+      light_slash_unit_amount: 5000000000000000
+      serious_slash_unit_amount: 8000000000000000
+      round_timeout_seconds: 350.0
+      service_id: omenstrat_fast
+      service_registry_address: null
+      genai_api_key: ''
+      agent_registry_address: '0x0000000000000000000000000000000000000000'
+      use_acn_for_delivers: false
+      setup:
+        all_participants:
+        - '0x0000000000000000000000000000000000000000'
+        safe_contract_address: '0x0000000000000000000000000000000000000000'
+        consensus_threshold: null
+      share_tm_config_on_startup: false
+      sleep_time: 1
+      tendermint_check_sleep_delay: 1
+      tendermint_com_url: http://localhost:8080
+      tendermint_max_retries: 5
+      tendermint_p2p_url: localhost:26656
+      tendermint_url: http://localhost:26657
+      termination_sleep: 900
+      tx_timeout: 10.0
+      use_termination: false
+      termination_from_block: 0
+      validate_timeout: 1205
+      creator_per_subgraph:
+        omen_subgraph: []
+      slot_count: 2
+      opening_margin: 300
+      expired_bet_retention: 2592000
+      languages:
+      - en_US
+      disabled_polymarket_tags:
+      - hide-from-new
+      - rewards-50-4pt5-20
+      - rewards-100-4pt5-100
+      - rewards-automation-50-4pt5-50
+      - finance-rewards-20
+      - denmark
+      - denmark-election
+      - slovenia
+      - slovenia-elections
+      - bulgaria
+      - venezuela
+      - colombia
+      - columbia
+      - colombia-election
+      - bangladesh-election
+      - trump-iran
+      - trump-xi
+      - trade-war
+      - tariffs
+      - tiktok
+      - china
+      - trump-presidency
+      - middle-east
+      - iran
+      - diplomacy-ceasefire
+      - geopolitics
+      - starmer
+      - uap
+      - ufo
+      - aliens
+      - march-3-primaries
+      - primaries
+      - primary-elections
+      - texas-primary
+      - house-primary
+      - republican-primary
+      average_block_time: 5
+      abt_error_mult: 5
+      the_graph_error_message_key: message
+      the_graph_payment_required_error: payment required for subsequent requests for
+        this API key
+      mech_contract_address: '0x77af31de935740567cf4ff1986d04b2c964a786a'
+      mech_chain_id: gnosis
+      mech_wrapped_native_token_address: '0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d'
+      sample_bets_closing_days: 10
+      irrelevant_tools: []
+      max_trades: 3
+      max_mech_requests_per_cycle: 10
+      polymarket_spread_min: 0.0
+      polymarket_spread_max: 1.0
+      trading_strategy: strategy_name
+      use_fallback_strategy: true
+      ipfs_address: https://gateway.autonolas.tech/ipfs/
+      tools_accuracy_hash: QmYyfAn7d8KyL1xzdtDfMCvgGjBBKTRd9KZikKWu5HzYa8
+      prompt_template: With the given question "@{question}" and the `yes` option
+        represented by `@{yes}` and the `no` option represented by `@{no}`, what are
+        the respective probabilities of `p_yes` and `p_no` occurring?
+      dust_threshold: 10000000000000
+      conditional_tokens_address: '0xCeAfDD6bc0bEF976fdCd1112955828E00543c0Ce'
+      realitio_proxy_address: '0xAB16D643bA051C11962DA645f74632d3130c81E2'
+      realitio_address: '0x79e32aE03fb27B07C89c0c568F80287C01ca2E57'
+      event_filtering_batch_size: 5000
+      reduce_factor: 0.25
+      max_filtering_retries: 6
+      minimum_batch_size: 500
+      redeeming_batch_size: 5
+      slippage: 0.01
+      withdrawal_slippage: 0.01
+      withdrawal_return_buffer: 0.05
+      dust_epsilon_wxdai: 10000000000000000
+      policy_epsilon: 0.25
+      tool_accuracy_prior_requests: 10
+      store_path: /data/
+      policy_store_update_offset: 259200
+      use_subgraph_for_redeeming: true
+      staking_contract_address: '0x2Ef503950Be67a98746F484DA0bBAdA339DF3326'
+      staking_interaction_sleep_time: 5
+      disable_trading: false
+      stop_trading_if_staking_kpi_met: false
+      activity_target: 8
+      default_activity_goal: 8
+      agent_balance_threshold: 10000000000000000
+      refill_check_interval: 10
+      mech_activity_checker_contract: '0x0000000000000000000000000000000000000000'
+      redeem_round_timeout: 3600.0
+      withdrawal_round_timeout: 1800.0
+      enable_live_requote: true
+      skip_bet_if_live_quote_unavailable: true
+      placement_min_edge: 0.03
+      prioritize_fresh_markets: false
+      fresh_market_max_age: 1800
+      tool_punishment_multiplier: 1
+      contract_timeout: 300.0
+      file_hash_to_strategies: {}
+      strategies_kwargs:
+        floor_balance: 0
+        default_max_bet_size: 800000000000000000
+        absolute_min_bet_size: 10000000000000000
+        absolute_max_bet_size: 4000000000000000000
+        n_bets: 1
+        min_edge: 0.03
+        min_oracle_prob: 0.5
+        fee_per_trade: 10000000000000000
+        grid_points: 500
+      service_endpoint: trader.autonolas.tech/
+      rpc_sleep_time: 10
+      safe_voting_range: 600
+      rebet_chance: 0.6
+      mech_interaction_sleep_time: 10
+      use_mech_marketplace: true
+      mech_marketplace_config:
+        mech_marketplace_address: '0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB'
+        priority_mech_address: '0x552cEA7Bc33CbBEb9f1D90c1D11D2C6daefFd053'
+        priority_mech_staking_instance_address: '0x0000000000000000000000000000000000000000'
+        priority_mech_service_id: 975
+        requester_staking_instance_address: '0x0000000000000000000000000000000000000000'
+        response_timeout: 300
+        offchain_url: null
+        auto_deposit_cap_per_cycle: 5000000000000000000
+        offchain_poll_interval_seconds: 1.5
+        offchain_poll_timeout_seconds: 300.0
+        offchain_failover_max_retries: 0
+      use_offchain: true
+      offchain_deposit_target_calls: 10
+      expected_mech_response_time: 300
+      mech_invalid_response: Invalid Response
+      mech_consecutive_failures_threshold: 2
+      tool_quarantine_duration: 18000
+      default_chain_id: gnosis
+      mech_interact_round_timeout_seconds: 5400
+      use_multi_bets_mode: true
+      enable_multi_bets_fallback: false
+      enable_position_review: false
+      review_period_seconds: 86400
+      withdrawal_max_fak_attempts: 3
+      withdrawal_fak_backoff_s:
+      - 10
+      - 30
+      coingecko_olas_in_usd_price_url: https://api.coingecko.com/api/v3/simple/token_price/xdai?contract_addresses=0xcE11e14225575945b8E6Dc0D4F2dD4C570f79d9f&vs_currencies=usd
+      coingecko_pol_in_usd_price_url: https://api.coingecko.com/api/v3/simple/token_price/polygon-pos?contract_addresses=0x0000000000000000000000000000000000001010&vs_currencies=usd
+      x402_payment_requirements: {}
+      gnosis_ledger_rpc: https://rpc.gnosischain.com/
+      polygon_ledger_rpc: https://1rpc.io/matic
+      lifi_quote_to_amount_url: https://li.quest/v1/quote/toAmount
+      use_x402: false
+      use_mech_facilitator: false
+      mech_pre_deposit_floor: 150000000000000000
+      mech_pre_deposit_target: 500000000000000000
+      mech_pre_deposit_cap: 500000000000000000
+      mech_facilitator_base_url: https://x402.olas.autonolas.tech
+      native_gas_reserve: 210000000000000000
+      is_agent_performance_summary_enabled: true
+      is_achievement_checker_enabled: true
+      is_running_on_polymarket: false
+      balance_tracker_address: '0x0000000000000000000000000000000000000000'
+      mech_analytics_url: ''
+      olas_predict_leaderboard_url: https://predict.olas.network/api/leaderboard/agents
+      use_mech_analytics: false
+      polymarket_builder_program_enabled: true
+      polymarket_collateral_address: '0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB'
+      polymarket_usdc_e_address: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174'
+      polymarket_collateral_onramp_address: '0x93070a847efEf7F70739046A929D47a521F5B8ee'
+      polymarket_usdc_e_wrap_dust_threshold: 1000000
+      polymarket_ctf_address: '0x4D97DCd97eC945f40cF65F87097ACe5EA0476045'
+      polymarket_ctf_exchange_address: '0xE111180000d2663C0091e4f400237545B87B996B'
+      polymarket_neg_risk_ctf_exchange_address: '0xe2222d279d744050d28e00520010520000310F59'
+      polymarket_neg_risk_adapter_address: '0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296'
+      polymarket_ctf_collateral_adapter_address: '0xAdA100Db00Ca00073811820692005400218FcE1f'
+      polymarket_neg_risk_ctf_collateral_adapter_address: '0xadA2005600Dec949baf300f4C6120000bDB6eAab'
+      valid_mechs:
+      - '0x552cEA7Bc33CbBEb9f1D90c1D11D2C6daefFd053'
+      mech_marketplace_v1_suitable_tools: []
+      penalize_mech_time_window: 1800
+      pol_threshold_for_swap: 2000000000000000000
+      slippages_for_swap: {}
+      is_outcome_side_threshold_filter_enabled: false
+      outcome_side_threshold_filter_threshold: 0.8
+      exclude_neg_risk_markets: false
+      deliveries_lookback_days: 30
+      delivery_rate_caps:
+        native: 10000000000000000
+        token_usdc: 10000
+      marketplace_api_url: https://marketplace.olas.network/api/erc8004
+      creators:
+      - '0x89c5cc945dd550bcffb72fe42bff002429f46fec'
+      - '0xffc8029154ecd55abed15bd428ba596e7d23f557'
+      fresh_max_age_s: 600
+      overlap_s: 120
+      poll_s: 15
+      active_window_utc: 00:00-05:30
+      housekeeping_interval_s: 600
+      tools:
+      - superforcaster_calibrated_full_search
+      - superforcaster
+      prior_weight: 0.5
+      priors:
+        still_hold: 0.85
+        numeric_threshold: 0.6
+        other_event: 0.18
+      min_edge: 0.03
+      max_price: 0.9
+      no_min_p: 0.7
+      cap: 4.0
+      kelly_bankroll: 10.0
+      max_slip: 0.1
+    class_name: FastParams
+  benchmarking_mode:
+    args:
+      enabled: false
+      native_balance: 10000000000000000000
+      collateral_balance: 10000000000000000000
+      mech_cost: 10000000000000000
+      pool_fee: 20000000000000000
+      outcome_token_amounts:
+      - 11000000000000000000
+      - 9000000000000000000
+      outcome_token_marginal_prices:
+      - 0.4
+      - 0.6
+      sep: ','
+      dataset_filename: benchmark_data.csv
+      question_field: question
+      question_id_field: question_id
+      answer_field: answer
+      p_yes_field_part: p_yes_
+      p_no_field_part: p_no_
+      confidence_field_part: confidence_
+      part_prefix_mode: true
+      bet_amount_field: collateral_amount
+      results_filename: benchmarking_results.csv
+      randomness: benchmarking_randomness
+      nr_mech_calls: 60
+    class_name: BenchmarkingMode
+  acc_info_fields:
+    args:
+      tool: tool
+      requests: total_requests
+      accuracy: tool_accuracy
+      sep: ','
+      max: max
+      datetime_format: '%Y-%m-%d %H:%M:%S'
+    class_name: AccuracyInfoFields
+  network_subgraph:
+    args:
+      api_id: network
+      headers:
+        Content-Type: application/json
+      method: POST
+      parameters: {}
+      response_key: data:blocks
+      response_index: 0
+      response_type: dict
+      error_key: errors
+      error_index: 0
+      error_type: dict
+      retries: 5
+      url: https://api.thegraph.com/subgraphs/name/stakewise/ethereum-gnosis
+    class_name: NetworkSubgraph
+  omen_subgraph:
+    args:
+      api_id: omen
+      headers:
+        Content-Type: application/json
+      method: POST
+      parameters: {}
+      response_key: data:fixedProductMarketMakers
+      response_type: list
+      error_key: errors
+      error_index: 0
+      error_type: dict
+      retries: 5
+      url: https://api.thegraph.com/subgraphs/name/protofire/omen-xdai
+    class_name: OmenSubgraph
+  randomness_api:
+    args:
+      api_id: cloudflare
+      headers: {}
+      method: GET
+      parameters: {}
+      response_key: null
+      response_type: dict
+      retries: 5
+      url: https://drand.cloudflare.com/public/latest
+    class_name: RandomnessApi
+  mech_response:
+    args:
+      api_id: mech_response
+      headers:
+        Content-Type: application/json
+      method: GET
+      parameters: {}
+      response_key: result
+      response_type: str
+      retries: 5
+      url: ''
+    class_name: MechResponseSpecs
+  agent_tools:
+    args:
+      api_id: agent_tools
+      headers:
+        Content-Type: application/json
+      method: GET
+      parameters: {}
+      response_key: tools
+      response_type: list
+      retries: 5
+      url: ''
+    class_name: AgentToolsSpecs
+  trades_subgraph:
+    args:
+      api_id: trades
+      headers:
+        Content-Type: application/json
+      method: POST
+      parameters: {}
+      response_key: data:fpmmTrades
+      response_type: list
+      error_key: errors
+      error_index: 0
+      error_type: dict
+      retries: 5
+      url: https://api.thegraph.com/subgraphs/name/protofire/omen-xdai
+    class_name: TradesSubgraph
+  conditional_tokens_subgraph:
+    args:
+      api_id: conditional_tokens
+      headers:
+        Content-Type: application/json
+      method: POST
+      parameters: {}
+      response_key: data:user:userPositions
+      response_type: list
+      error_key: errors
+      error_index: 0
+      error_type: dict
+      retries: 5
+      url: https://api.thegraph.com/subgraphs/name/gnosis/conditional-tokens-gc
+    class_name: ConditionalTokensSubgraph
+  realitio_subgraph:
+    args:
+      api_id: realitio
+      headers:
+        Content-Type: application/json
+      method: POST
+      parameters: {}
+      response_key: data:answers
+      response_type: list
+      error_key: errors
+      error_index: 0
+      error_type: dict
+      retries: 5
+      url: https://api.thegraph.com/subgraphs/name/realityeth/realityeth-gnosis
+    class_name: RealitioSubgraph
+  open_markets_subgraph:
+    args:
+      api_id: open_markets
+      headers:
+        Content-Type: application/json
+      method: POST
+      parameters: {}
+      response_key: data:questions
+      response_type: list
+      error_key: errors
+      error_index: 0
+      error_type: dict
+      retries: 5
+      url: https://api.subgraph.autonolas.tech/api/proxy/predict-omen
+    class_name: OpenMarketsSubgraph
+  olas_agents_subgraph:
+    args:
+      api_id: olas_agents
+      headers:
+        Content-Type: application/json
+      method: POST
+      parameters: {}
+      response_key: data:traderAgent
+      response_type: dict
+      error_key: errors
+      error_index: 0
+      error_type: dict
+      retries: 5
+      url: https://api.subgraph.autonolas.tech/api/proxy/predict-omen
+    class_name: OlasAgentsSubgraph
+  olas_mech_subgraph:
+    args:
+      api_id: olas_mech
+      headers:
+        Content-Type: application/json
+      method: POST
+      parameters: {}
+      response_key: data:sender
+      response_type: dict
+      error_key: errors
+      error_index: 0
+      error_type: dict
+      retries: 5
+      url: https://api.subgraph.autonolas.tech/api/proxy/marketplace-gnosis
+    class_name: OlasMechSubgraph
+  gnosis_staking_subgraph:
+    args:
+      api_id: gnosis_staking
+      headers:
+        Content-Type: application/json
+      method: POST
+      parameters: {}
+      response_key: data:service
+      response_type: dict
+      error_key: errors
+      error_index: 0
+      error_type: dict
+      retries: 5
+      url: https://staking-gnosis.subgraph.autonolas.tech
+    class_name: GnosisStakingSubgraph
+  polygon_staking_subgraph:
+    args:
+      api_id: polygon_staking
+      headers:
+        Content-Type: application/json
+      method: POST
+      parameters: {}
+      response_key: data:service
+      response_type: dict
+      error_key: errors
+      error_index: 0
+      error_type: dict
+      retries: 5
+      url: https://staking-polygon.subgraph.autonolas.tech
+    class_name: PolygonStakingSubgraph
+  mech_tools:
+    args:
+      api_id: mech_tools
+      headers:
+        Content-Type: application/json
+      method: GET
+      parameters: {}
+      response_key: tools
+      response_type: list
+      retries: 5
+      url: ''
+    class_name: MechToolsSpecs
+  mechs_subgraph:
+    args:
+      api_id: mechs
+      headers:
+        Content-Type: application/json
+      method: POST
+      parameters: {}
+      response_key: data:meches
+      response_type: list
+      error_key: errors
+      error_index: 0
+      error_type: dict
+      retries: 5
+      url: https://api.subgraph.autonolas.tech/api/proxy/marketplace-gnosis
+    class_name: MechsSubgraph
+  polymarket_agents_subgraph:
+    args:
+      api_id: polymarket_agents
+      headers:
+        Content-Type: application/json
+      method: POST
+      parameters: {}
+      response_key: data:traderAgentById
+      response_type: dict
+      error_key: errors
+      error_index: 0
+      error_type: dict
+      retries: 5
+      url: https://subgraph.autonolas.tech/squid/predict-polymarket/graphql
+    class_name: PolymarketAgentsSubgraph
+  polymarket_bets_subgraph:
+    args:
+      api_id: polymarket_bets
+      headers:
+        Content-Type: application/json
+      method: POST
+      parameters: {}
+      response_key: data:marketParticipants
+      response_type: list
+      error_key: errors
+      error_index: 0
+      error_type: dict
+      retries: 5
+      url: https://subgraph.autonolas.tech/squid/predict-polymarket/graphql
+    class_name: PolymarketBetsSubgraph
+  polymarket_questions_subgraph:
+    args:
+      api_id: polymarket_questions
+      headers:
+        Content-Type: application/json
+      method: POST
+      parameters: {}
+      response_key: data:questions
+      response_type: list
+      error_key: errors
+      error_index: 0
+      error_type: dict
+      retries: 5
+      url: https://subgraph.autonolas.tech/squid/predict-polymarket/graphql
+    class_name: PolymarketQuestionsSubgraph
+  polygon_mech_subgraph:
+    args:
+      api_id: polygon_mech
+      headers:
+        Content-Type: application/json
+      method: POST
+      parameters: {}
+      response_key: data:sender
+      response_type: dict
+      error_key: errors
+      error_index: 0
+      error_type: dict
+      retries: 5
+      url: https://api.subgraph.autonolas.tech/api/proxy/marketplace-polygon
+    class_name: PolygonMechSubgraph
+  requests:
+    args: {}
+    class_name: Requests
+  signing_dialogues:
+    args: {}
+    class_name: SigningDialogues
+  state:
+    args: {}
+    class_name: SharedState
+  tendermint_dialogues:
+    args: {}
+    class_name: TendermintDialogues
+  srr_dialogues:
+    args: {}
+    class_name: SrrDialogues
+dependencies:
+  eth-account:
+    version: <0.14.0,>=0.13.0
+  web3:
+    version: <8,>=7.15.0
+  requests:
+    version: <2.33.0,>=2.32.5
+  open-aea-ledger-ethereum:
+    version: ==2.2.9
+is_abstract: false

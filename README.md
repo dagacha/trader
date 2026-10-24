@@ -9,7 +9,9 @@ The **Trader** repo hosts the [Olas](https://olas.network/) prediction-market ag
 
 Both services run as **single-agent (sovereign) deployments** distributed via [Pearl](https://olas.network/operate). The agent queries an [AI Mech](https://github.com/valory-xyz/mech) for probability estimates, evaluates profitability, and executes on-chain via a Safe multisig.
 
-The high-level loop is the same in both flavors:
+A separate pilot agent and service, [`valory/omenstrat_fast`](packages/valory/services/omenstrat_fast/README.md), watches fresh Omen markets. It uses agent id 25, a fixed strategy, and a fast lane that skips the normal cycle delay. Its [quickstart template](configs/config_omenstrat_fast.json) needs a separately approved release before deployment.
+
+The high-level loop is the same in both standard flavors:
 
 1. Retrieve open prediction markets.
 2. Pick a market to investigate.

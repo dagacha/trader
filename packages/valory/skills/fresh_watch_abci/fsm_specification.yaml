@@ -1,0 +1,67 @@
+alphabet_in:
+- BET
+- CALC_BUY_AMOUNT_FAILED
+- DONE
+- HOUSEKEEPING
+- INSUFFICIENT_BALANCE
+- MARKET
+- MOCK_MECH_REQUEST
+- MOCK_TX
+- NONE
+- NO_MAJORITY
+- NO_REDEEMING
+- REDEEM_ROUND_TIMEOUT
+- ROUND_TIMEOUT
+- SKIP
+- SLOTS_UNSUPPORTED_ERROR
+- WAIT
+default_start_state: FreshWatchRound
+final_states:
+- FinishedFastTxRound
+- FinishedHousekeepingRound
+- FinishedRequestRound
+label: FreshWatchAbciApp
+start_states:
+- FastDecisionRound
+- FreshWatchRound
+- PostBetUpdateRound
+states:
+- BetPlacementRound
+- DecisionRequestRound
+- FastDecisionRound
+- FinishedFastTxRound
+- FinishedHousekeepingRound
+- FinishedRequestRound
+- FreshWatchRound
+- PostBetUpdateRound
+- RedeemRound
+transition_func:
+    (BetPlacementRound, CALC_BUY_AMOUNT_FAILED): FreshWatchRound
+    (BetPlacementRound, DONE): FinishedFastTxRound
+    (BetPlacementRound, INSUFFICIENT_BALANCE): FreshWatchRound
+    (BetPlacementRound, MOCK_TX): PostBetUpdateRound
+    (BetPlacementRound, NO_MAJORITY): BetPlacementRound
+    (BetPlacementRound, ROUND_TIMEOUT): FreshWatchRound
+    (DecisionRequestRound, DONE): FinishedRequestRound
+    (DecisionRequestRound, MOCK_MECH_REQUEST): FastDecisionRound
+    (DecisionRequestRound, NO_MAJORITY): DecisionRequestRound
+    (DecisionRequestRound, ROUND_TIMEOUT): DecisionRequestRound
+    (DecisionRequestRound, SLOTS_UNSUPPORTED_ERROR): FreshWatchRound
+    (FastDecisionRound, BET): BetPlacementRound
+    (FastDecisionRound, NO_MAJORITY): FastDecisionRound
+    (FastDecisionRound, ROUND_TIMEOUT): FastDecisionRound
+    (FastDecisionRound, SKIP): FreshWatchRound
+    (FreshWatchRound, HOUSEKEEPING): RedeemRound
+    (FreshWatchRound, MARKET): DecisionRequestRound
+    (FreshWatchRound, NO_MAJORITY): FreshWatchRound
+    (FreshWatchRound, ROUND_TIMEOUT): FreshWatchRound
+    (FreshWatchRound, WAIT): FreshWatchRound
+    (PostBetUpdateRound, DONE): FreshWatchRound
+    (PostBetUpdateRound, NONE): PostBetUpdateRound
+    (PostBetUpdateRound, NO_MAJORITY): PostBetUpdateRound
+    (PostBetUpdateRound, ROUND_TIMEOUT): PostBetUpdateRound
+    (RedeemRound, DONE): FinishedFastTxRound
+    (RedeemRound, MOCK_TX): FinishedHousekeepingRound
+    (RedeemRound, NO_MAJORITY): RedeemRound
+    (RedeemRound, NO_REDEEMING): FinishedHousekeepingRound
+    (RedeemRound, REDEEM_ROUND_TIMEOUT): FinishedHousekeepingRound

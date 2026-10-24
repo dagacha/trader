@@ -611,6 +611,10 @@ def sync_cached_env(text, desired, env_file=False):
 def migrate(quickstart, dry_run=False, warn_only=False):
     """Migrate an Omen quickstart and skip Polymarket cached services."""
     config = quickstart / "configs/config_predict_trader.json"
+    fast = quickstart / "configs/config_omenstrat_fast.json"
+    if not config.is_file() and fast.is_file():
+        print(f">> {fast}: omenstrat_fast: skipping trader migration")
+        return
     if not config.is_file() or is_polymarket(config):
         print(
             f"WARNING: {config}: missing or Polymarket quickstart; skipping all files"
@@ -656,6 +660,9 @@ def migrate(quickstart, dry_run=False, warn_only=False):
             continue
         with path.open(encoding="utf-8", newline="") as source:
             text = source.read()
+        if "omenstrat_fast" in text.lower():
+            print(f">> {path}: omenstrat_fast: skipping trader migration")
+            continue
         priorities = []
         warnings = []
         # Saved inputs use plain values. Only sync explicit controls there.

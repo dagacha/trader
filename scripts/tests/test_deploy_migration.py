@@ -41,6 +41,14 @@ OLD = {
 }
 
 
+def test_fast_template_uses_locked_service_hash():
+    """Keep the fast quickstart template on the locked local service."""
+    repo = SCRIPT.parents[1]
+    config = json.loads((repo / "configs/config_omenstrat_fast.json").read_text())
+    packages = json.loads((repo / "packages/packages.json").read_text())
+    assert config["hash"] == packages["dev"]["service/valory/omenstrat_fast/0.1.0"]
+
+
 def entry(value):
     """Make a quickstart env entry."""
     return {
@@ -1633,6 +1641,39 @@ def test_priority_sync_uses_only_explicit_inputs(tmp_path, key, value):
     )
 
 
+def test_skip_fast_template_and_caches(tmp_path):
+    """Keep the fast strategy out of the normal trader migration."""
+    template = tmp_path / "configs/config_omenstrat_fast.json"
+    cache = tmp_path / ".operate/services/sc-fast/config.json"
+    env = tmp_path / ".operate/services/sc-fast/agent_0.env"
+    for path in (template, cache, env):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_SERVICE_ID=omenstrat_fast\n"
+            if path == env
+            else json.dumps(
+                {
+                    "name": "omenstrat_fast",
+                    "env_variables": {
+                        "STRATEGIES_KWARGS": entry(
+                            '{"absolute_max_bet_size":4000000000000000000}'
+                        )
+                    },
+                }
+            )
+        )
+    before = {path: path.read_bytes() for path in (template, cache, env)}
+    from scripts import migrate_trader_config
+
+    output_stream = io.StringIO()
+    with redirect_stdout(output_stream):
+        migrate_trader_config.migrate(tmp_path)
+    output = output_stream.getvalue()
+    assert "omenstrat_fast: skipping trader migration" in output
+    assert all(path.read_bytes() == data for path, data in before.items())
+    assert not list(tmp_path.rglob("*.bak-*"))
+
+
 @pytest.mark.parametrize("style", ["env", "mapping", "list", "kubernetes"])
 def test_control_env_flags_sync_everywhere(tmp_path, style):
     """Sync fresh-first and off-chain controls into every cache."""
@@ -1798,3 +1839,23 @@ def test_control_additions_reuse_crlf_endings(tmp_path):
     with agent.open(newline="") as handle:
         text = handle.read()
     assert text.endswith("KEEP=agent\r\nUSE_OFFCHAIN=true\r\n")
+
+
+def test_skip_fast_cache_next_to_omen_trader(tmp_path):
+    """Migrate the Omen services but leave a fast-agent cache unchanged."""
+    venue_fixture(tmp_path)
+    fast = tmp_path / ".operate/services/sc-fast/config.json"
+    fast.parent.mkdir(parents=True)
+    fast.write_text(
+        json.dumps(
+            {
+                "name": "omenstrat_fast",
+                "env_variables": {"STRATEGIES_KWARGS": entry({"min_edge": 0.03})},
+            }
+        )
+    )
+    before = fast.read_bytes()
+    output = run(tmp_path)
+    assert f"{fast}: omenstrat_fast: skipping trader migration" in output
+    assert fast.read_bytes() == before
+    assert "updated" in output
