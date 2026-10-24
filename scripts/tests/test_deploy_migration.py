@@ -745,15 +745,25 @@ def test_polymarket_quickstart_writes_nothing(tmp_path, venue, flag):
 
 
 @pytest.mark.parametrize(
-    "style",
-    ["entry", "plain", "boolean", "env", "prefixed", "mapping", "list", "kubernetes"],
+    "style,quote",
+    [(style, "") for style in ("entry", "plain", "boolean")]
+    + [
+        (style, quote)
+        for style in ("env", "mapping", "list", "kubernetes")
+        for quote in ("", "'", '"')
+    ],
 )
+@pytest.mark.parametrize("prefixed", [False, True])
 @pytest.mark.parametrize("value", ["true", "TrUe", "false", None])
-def test_mixed_cache_skips_polymarket_service_group(tmp_path, style, value):
+def test_mixed_cache_skips_polymarket_service_group(
+    tmp_path, style, quote, prefixed, value
+):
     """Detect each venue format before editing any file in the service."""
     configs = venue_fixture(tmp_path)
     service = configs[1].parent
     key = "IS_RUNNING_ON_POLYMARKET"
+    if prefixed:
+        key = "SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_" + key
     if style in ("entry", "plain", "boolean"):
         config = json.loads(configs[1].read_text())
         if value is not None:
@@ -764,18 +774,17 @@ def test_mixed_cache_skips_polymarket_service_group(tmp_path, style, value):
             )
         configs[1].write_text(json.dumps({"user_params": config}))
     elif value is not None:
-        if style == "prefixed":
-            key = "SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_" + key
         path = service / "deployment/agent_0.env"
-        marker = key + "=" + value + "\n"
+        quoted_value = quote + value + quote
+        marker = key + "=" + quoted_value + "\n"
         if style in ("mapping", "list", "kubernetes"):
             path = service / "deployment/kubernetes/build.yaml"
             if style == "mapping":
-                marker = "  " + key + ": '" + value + "'\n"
+                marker = "  " + key + ": " + quoted_value + "\n"
             elif style == "list":
-                marker = "  - " + key + "=" + value + "\n"
+                marker = "  - " + quote + key + "=" + value + quote + "\n"
             else:
-                marker = "  - name: " + key + '\n    value: "' + value + '"\n'
+                marker = "  - name: " + key + "\n    value: " + quoted_value + "\n"
         path.write_text(path.read_text() + marker)
     paths = [path for path in service.rglob("*") if path.is_file()]
     before = {path: path.read_bytes() for path in paths}

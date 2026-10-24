@@ -100,7 +100,7 @@ def is_polymarket(path):
         return False
     return bool(
         re.search(
-            r"^\s*(?:-\s*)?(?:"
+            r"^\s*(?:-\s*['\"]?)?(?:"
             + key
             + r"[=:][ \t]*|- name:[ \t]*"
             + key
