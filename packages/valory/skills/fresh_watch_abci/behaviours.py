@@ -344,7 +344,7 @@ class FastDecisionBehaviour(DecisionMakerBaseBehaviour):
                 (
                     record
                     for record in reversed(timings.values())
-                    if record.get("market") == bet.id
+                    if record.get("market") == (bet.condition_id or bet.id)
                     and record.get("latency_s") is not None
                 ),
                 {},

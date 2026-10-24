@@ -34,6 +34,7 @@ from packages.valory.skills.fresh_watch_abci.behaviours import (
 )
 from packages.valory.skills.fresh_watch_abci.strategy import FastConfig, FreshQueue
 from packages.valory.skills.market_manager_abci.bets import Bet
+from packages.valory.skills.trader_abci.mech_latency import request_timing
 
 
 def done(value: Any) -> Any:
@@ -222,22 +223,24 @@ def test_evaluate(
 
 
 @pytest.mark.parametrize("completed", [False, True])
+@pytest.mark.parametrize("condition_id", [None, "condition"])
 def test_evaluate_matches_completed_market_timing(
-    tmp_path: Any, completed: bool
+    tmp_path: Any, completed: bool, condition_id: Any
 ) -> None:
     """Use the bet's completed record after an earlier nonce is overwritten."""
     b = make(FastDecisionBehaviour, tmp_path)
+    raw = raw_market()
+    raw.pop("condition")
+    bet = Bet(**raw, market="omen_subgraph", condition_id=condition_id)
+    metadata = {"tool": "superforcaster", "request_context": bet.to_request_context()}
     timings = {
-        "uuid": {"market": "market", "mech": "0xold", "latency_s": 99},
+        "uuid": dict(request_timing(metadata, 1000), mech="0xold", latency_s=99),
         "other": {"market": "other_market", "mech": "0xother", "latency_s": 5},
     }
-    timings["uuid"] = {"market": "market", "mech": "0xselected"}
+    timings["uuid"] = dict(request_timing(metadata, 1050), mech="0xselected")
     if completed:
         timings["uuid"]["latency_s"] = 31
     b.context.shared_state = {"mech_latency": timings}
-    raw = raw_market()
-    raw.pop("condition")
-    bet = Bet(**raw, market="omen_subgraph")
     with (
         patch.object(
             type(b), "sampled_bet", new_callable=PropertyMock, return_value=bet
