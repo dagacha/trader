@@ -8,7 +8,7 @@ aea_version: '>=2.0.0, <3.0.0'
 fingerprint:
   README.md: bafybeiab4xgadptz4mhvno4p6xvkh7p4peg7iuhotabydriu74dmj6ljga
   __init__.py: bafybeidp3c6ychle2a6gvrzznmgvkgtzkcxras42gmq3kfey4xwmxa3rom
-  behaviours.py: bafybeigz7mlskyhiusv7rhon7dalzyx7w5yd64nyyjy4bmz2mju72nm7jy
+  behaviours.py: bafybeibyov3o4xuzysdpsm6ullyxjvv34ffyy7msif4l6xsp5esskmc2se
   composition.py: bafybeidbra5yeyhzc4ghkwzczpijwov33mmagzpfxg5jpg5jd6psbc6m7e
   dialogues.py: bafybeifoywfxhnowfy2ofkltizyhuiuv3tgqakwjzm7vj4y4gb2ozhjpey
   fsm_specification.yaml: bafybeihntyjwj2e35zhrjw52yjeezavbwvjjjsas4exrpohixzzwyy6lae
@@ -16,12 +16,13 @@ fingerprint:
   models.py: bafybeidqxl26hxm7g3mk3j642hv5r62o27j35rqj5zec2pfo6ouoaozhty
   tests/__init__.py: bafybeiadatapyjh3e7ucg2ehz77oms3ihrbutwb2cs2tkjehy54utwvuyi
   tests/test_agent_config_resolution.py: bafybeiggznsh6nrgcln7q4d3rvlnx2dd44rzfuw3c4ayrihkzzgp7z6jdu
-  tests/test_behaviours.py: bafybeicovtjruufnh2yd5lhfvc6pgcletuyj2s3jaz5sz55wsdo2w22xle
+  tests/test_behaviours.py: bafybeicdipmt3fd6zo3vz4axyqxg74rkqm7ihi6rvjjmwsemjwvw5s7ek4
   tests/test_composition.py: bafybeifcamlkymoezzds63r5difknyc5te6ifxqv3xhgglbbtcgenlv45e
   tests/test_dialogues.py: bafybeibatogwoj6ieapcbiwonij6vskhogc65vfv53tyauqzeyiwmnd2im
   tests/test_handlers.py: bafybeihl373oleiibafei4qknvszuu4c7axc6nfvn35qp32trvd35n2cea
   tests/test_models.py: bafybeiewq4rcnbpukiur2vfdqysuaagdi2krswghz3ktv3l7gynaip43hq
   tests/test_skill_dependencies.py: bafybeifpwgwo3hubycvskqgtbqpzu2lg7f6dql5ijnmsz6qcodneju5lcu
+  tx_validation.py: bafybeid6yjqxiixy5ykdmcb2lsyh32g42ollq55qmz5bxnu6jn4xnfjx7e
   ui-build/omenstrat/README.md: bafybeiccodprvjsh5ejknb7iixrmfvz7igogs57mbkwmeiyq34m2xw22py
   ui-build/omenstrat/assets/agentsfun-chat-CQO2MvlO.png: bafybeibm5nhmhfa54gimrsjt7pupvw3bkg2ayr6nul5o5krlj67ivh26oy
   ui-build/omenstrat/assets/basius-chat-BiDLb6xE.png: bafybeic2ujg6kdkhdpbcg43kouti5xaf7dpg7sfwdrugl4whw5epspkpcy
@@ -52,6 +53,8 @@ connections:
 - valory/x402:0.1.0:bafybeifhxkt7kaxfotnqnr6w4hxfjnjxf3uumr6psz3felj6pe5astyily
 contracts: []
 protocols:
+- valory/contract_api:1.0.0:bafybeibld2xb5m7kyluiptkamp4nrt6oeomkohz7a3yppbv2oo7qw2e4la
+- valory/ledger_api:1.0.0:bafybeiecq56phjfws36rgrefw6niyo4ezesloodsfis647mpm5ygqo4ysi
 - valory/http:1.0.0:bafybeidxkp3vga7t6x2pbt2tpkgyaxa5bgpdgryao54py7w3yxyzr7neoy
 - valory/srr:0.1.0:bafybeibfs6osw7guctdpollf4iwt4vhd6yk7ai34tqk5djuxtgowjwdjb4
 skills:
