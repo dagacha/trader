@@ -1831,3 +1831,23 @@ def test_control_additions_reuse_crlf_endings(tmp_path):
     with agent.open(newline="") as handle:
         text = handle.read()
     assert text.endswith("KEEP=agent\r\nUSE_OFFCHAIN=true\r\n")
+
+
+def test_skip_fast_cache_next_to_omen_trader(tmp_path):
+    """Migrate the Omen services but leave a fast-agent cache unchanged."""
+    venue_fixture(tmp_path)
+    fast = tmp_path / ".operate/services/sc-fast/config.json"
+    fast.parent.mkdir(parents=True)
+    fast.write_text(
+        json.dumps(
+            {
+                "name": "omenstrat_fast",
+                "env_variables": {"STRATEGIES_KWARGS": entry({"min_edge": 0.03})},
+            }
+        )
+    )
+    before = fast.read_bytes()
+    output = run(tmp_path)
+    assert f"{fast}: omenstrat_fast: skipping trader migration" in output
+    assert fast.read_bytes() == before
+    assert "updated" in output

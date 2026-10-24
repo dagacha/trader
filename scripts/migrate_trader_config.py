@@ -660,10 +660,7 @@ def migrate(quickstart, dry_run=False, warn_only=False):
             continue
         with path.open(encoding="utf-8", newline="") as source:
             text = source.read()
-        if (
-            "omenstrat_fast" in text.lower()
-            or path.name == "config_omenstrat_fast.json"
-        ):
+        if "omenstrat_fast" in text.lower():
             print(f">> {path}: omenstrat_fast: skipping trader migration")
             continue
         priorities = []
