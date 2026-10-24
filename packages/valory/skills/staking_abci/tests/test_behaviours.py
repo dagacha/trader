@@ -1432,6 +1432,38 @@ class TestCheckNewEpoch:
                 next(gen)
             assert exc_info.value.value is False
 
+    def test_retries_checkpoint_write_after_synchronized_data_advances(
+        self, tmp_path: Path
+    ) -> None:
+        """A failed write is retried even after consensus adopts the checkpoint."""
+        b = self._make()
+        b._checkpoint_filepath = tmp_path / CHECKPOINT_FILENAME
+        b._checkpoint_filepath.write_text("50")
+        mock_sync = MagicMock(period_count=5, previous_checkpoint=50)
+        with (
+            patch.object(
+                type(b),
+                "synchronized_data",
+                new_callable=PropertyMock,
+                return_value=mock_sync,
+            ),
+            patch.object(
+                type(b), "context", new_callable=PropertyMock, return_value=MagicMock()
+            ),
+            patch.object(b, "wait_for_condition_with_sleep", _noop_gen),
+        ):
+            with patch.object(b, "store_timestamp", return_value=0):
+                with pytest.raises(StopIteration) as first:
+                    next(b.check_new_epoch())
+            assert first.value.value is True
+            assert b._checkpoint_filepath.read_text() == "50"
+
+            mock_sync.previous_checkpoint = b.ts_checkpoint
+            with pytest.raises(StopIteration) as second:
+                next(b.check_new_epoch())
+            assert second.value.value is False
+            assert b._checkpoint_filepath.read_text() == str(b.ts_checkpoint)
+
     def test_first_period_stored_invalidated(self) -> None:
         """First period with different stored timestamp detects change."""
         b = self._make()

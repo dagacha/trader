@@ -693,6 +693,7 @@ class CallCheckpointBehaviour(
     def check_new_epoch(self) -> Generator[None, None, bool]:
         """Check if a new epoch has been reached."""
         yield from self.wait_for_condition_with_sleep(self._get_ts_checkpoint)
+        stored_timestamp = self.read_stored_timestamp()
         stored_timestamp_invalidated = False
 
         # if it is the first period of the service,
@@ -701,7 +702,6 @@ class CallCheckpointBehaviour(
         # That way, we protect from the case in which the user stops their service
         # before the next checkpoint is reached and restarts it afterward.
         if self.is_first_period:
-            stored_timestamp = self.read_stored_timestamp()
             stored_timestamp_invalidated = stored_timestamp != self.ts_checkpoint
 
         is_checkpoint_reached = (
@@ -709,6 +709,8 @@ class CallCheckpointBehaviour(
         )
         if is_checkpoint_reached:
             self.context.logger.info("An epoch change has been detected.")
+        # Retry a failed write even after consensus adopts the new checkpoint.
+        if stored_timestamp != self.ts_checkpoint:
             status = self.store_timestamp()
             if status:
                 self.context.logger.info(

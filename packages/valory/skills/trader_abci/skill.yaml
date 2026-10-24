@@ -64,13 +64,13 @@ skills:
 - valory/transaction_settlement_abci:0.1.0:bafybeidmmhjcgp7chozxovensq3zplkufvaityd2w3zladtssu4ijvqbzm
 - valory/termination_abci:0.1.0:bafybeig5lk6agmjpctxh4smrqvtbylynda7a5kwgtdlss2sjnnabedzuem
 - valory/market_manager_abci:0.1.0:bafybeicle4v4hbzfitrndz4iezmpzqft7q26eijmzpqpfs7o4ccv7pkfcu
-- valory/decision_maker_abci:0.1.0:bafybeiacc46rjajh3hvcifil3j25k6tr5og7rzwlef5operh5kk26d6k5e
-- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeie4tkvthh3be6jmlbysd2bghdqqgytl3qoy27euosmnqw3ytypy7u
-- valory/staking_abci:0.1.0:bafybeiab5fq6b7nd5nmedsxtfd452ufwtnd7gdsm5qi7sqhbey6nl2h3u4
-- valory/check_stop_trading_abci:0.1.0:bafybeibbq7xvo7mcbchqiey4rxijtmv3ga7vc6tgpxlolhoraua7ieqslm
+- valory/decision_maker_abci:0.1.0:bafybeigpgscs5zzar3ibwksb5arhna3azcid4yblvfq6tdlvc6xpihwdpa
+- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeihnwzqig42nksht233lxydj4mwykiozotce5czd2kbjs5rsgh3zsu
+- valory/staking_abci:0.1.0:bafybeihjsvg6qmpcvca24hlj34ppdgnhx6wnbi56ddcnnfdj2p7bg66mii
+- valory/check_stop_trading_abci:0.1.0:bafybeidwkfafnhkew4ylhqwg5pv3y2sakgkl6d6d2q7hjmfrag4xe6pfxq
 - valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m
-- valory/chatui_abci:0.1.0:bafybeianhfooj7ncojnpd3b5d6wmuyxcsyqrsis4xxweafycsjd3gccp2q
-- valory/agent_performance_summary_abci:0.1.0:bafybeiet4cq3ata4ny7e5edfuyaupimltzzb2drefxxue2tmni5c64gvae
+- valory/chatui_abci:0.1.0:bafybeihj5y6cecuw4iz2gshicoygghrgi5b6rzynnofx25ycsv56ehgdvq
+- valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
 - valory/funds_manager:0.1.0:bafybeigiaepsk7t2dqmbwgk2iesxuttlsmypadfvku5sp4mucckzpdgssi
 behaviours:
   main:
