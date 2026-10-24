@@ -537,6 +537,9 @@ def test_strategy_hash_migration(tmp_path, style, case):
     """Update known strategy hashes with backups, dry runs, and repeat safety."""
     import yaml
 
+    source = tmp_path / "configs/config_predict_trader.json"
+    source.parent.mkdir()
+    source.write_text("{}")
     packages = json.loads((SCRIPT.parents[1] / "packages/packages.json").read_text())
     current = {
         name: packages["dev"][f"custom/valory/{name}/0.1.0"]
@@ -674,6 +677,185 @@ V2_MARKETPLACE = "0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB"
 ZERO_ADDRESS = "0x" + "0" * 40
 
 
+def venue_fixture(qs):
+    """Write inputs and service files that need each Omen migration."""
+    configs = fixture(qs)
+    for path in configs:
+        config = json.loads(path.read_text())
+        config["env_variables"].update(
+            {
+                "STRATEGIES_KWARGS": entry({"min_edge": 0.03}),
+                "FILE_HASH_TO_STRATEGIES": entry({"old": ["kelly_criterion"]}),
+                "MECH_MARKETPLACE_CONFIG": entry(
+                    dict(OLD, mech_marketplace_address=V1_MARKETPLACE)
+                ),
+            }
+        )
+        path.write_text(json.dumps(config))
+        if path == configs[0]:
+            continue
+        env = dict(config["env_variables"], USE_OFFCHAIN=entry("false"))
+        agent = path.parent / "deployment/agent_0.env"
+        agent.parent.mkdir()
+        agent.write_text(
+            "".join(
+                key + "=" + json.dumps(val["value"]) + "\n" for key, val in env.items()
+            )
+        )
+        build = path.parent / "deployment/kubernetes/build.yaml"
+        build.parent.mkdir()
+        build.write_text(
+            "env:\n"
+            + "".join(
+                "  - name: " + key + "\n    value: '" + json.dumps(val["value"]) + "'\n"
+                for key, val in env.items()
+            )
+        )
+    for name in ["Trader Agent-quickstart-config.json", "local_config.json"]:
+        (qs / ".operate" / name).write_text(
+            json.dumps({"user_provided_args": {"USE_OFFCHAIN": "false"}})
+        )
+    return configs
+
+
+@pytest.mark.parametrize("flag", [None, "--dry-run", "--warn-only"])
+@pytest.mark.parametrize("venue", ["missing", "entry", "plain", "boolean"])
+def test_polymarket_quickstart_writes_nothing(tmp_path, venue, flag):
+    """Skip saved inputs and all caches unless the quickstart is Omen."""
+    source = venue_fixture(tmp_path)[0]
+    if venue == "missing":
+        source.unlink()
+        (source.parent / "config_polymarket_trader.json").write_text("{}")
+    else:
+        config = json.loads(source.read_text())
+        config["env_variables"]["IS_RUNNING_ON_POLYMARKET"] = (
+            entry("true")
+            if venue == "entry"
+            else True if venue == "boolean" else "true"
+        )
+        source.write_text(json.dumps(config))
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    output = run(tmp_path, *([flag] if flag else []))
+    assert output.count("WARNING:") == 1
+    assert str(source) in output
+    assert "skipping" in output.lower()
+    assert {
+        path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()
+    } == before
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("value", ["true", True])
+def test_polymarket_saved_input_writes_nothing(tmp_path, value, legacy):
+    """Skip every file when a saved quickstart input declares Polymarket."""
+    venue_fixture(tmp_path)
+    name = "local_config.json" if legacy else "Trader Agent-quickstart-config.json"
+    saved = tmp_path / ".operate" / name
+    data = json.loads(saved.read_text())
+    data["user_provided_args"]["IS_RUNNING_ON_POLYMARKET"] = value
+    saved.write_text(json.dumps(data))
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    output = run(tmp_path)
+    assert output.count("WARNING:") == 1
+    assert str(saved) in output
+    assert "skipping" in output.lower()
+    assert {
+        path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()
+    } == before
+
+
+@pytest.mark.parametrize(
+    "style,quote",
+    [(style, "") for style in ("entry", "plain", "boolean")]
+    + [
+        (style, quote)
+        for style in ("env", "mapping", "list", "kubernetes")
+        for quote in ("", "'", '"')
+    ],
+)
+@pytest.mark.parametrize("prefixed", [False, True])
+@pytest.mark.parametrize("value", ["true", "TrUe", "false", None])
+def test_mixed_cache_skips_polymarket_service_group(
+    tmp_path, style, quote, prefixed, value
+):
+    """Detect each venue format before editing any file in the service."""
+    configs = venue_fixture(tmp_path)
+    service = configs[1].parent
+    key = "IS_RUNNING_ON_POLYMARKET"
+    if prefixed:
+        key = "SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_" + key
+    if style in ("entry", "plain", "boolean"):
+        config = json.loads(configs[1].read_text())
+        if value is not None:
+            config["env_variables"][key] = (
+                entry(value)
+                if style == "entry"
+                else value.lower() == "true" if style == "boolean" else value
+            )
+        configs[1].write_text(json.dumps({"user_params": config}))
+    elif value is not None:
+        path = service / "deployment/agent_0.env"
+        quoted_value = quote + value + quote
+        marker = key + "=" + quoted_value + "\n"
+        if style in ("mapping", "list", "kubernetes"):
+            path = service / "deployment/kubernetes/build.yaml"
+            if style == "mapping":
+                marker = "  " + key + ": " + quoted_value + "\n"
+            elif style == "list":
+                marker = "  - " + quote + key + "=" + value + quote + "\n"
+            else:
+                marker = "  - name: " + key + "\n    value: " + quoted_value + "\n"
+        path.write_text(path.read_text() + marker)
+    paths = [path for path in service.rglob("*") if path.is_file()]
+    before = {path: path.read_bytes() for path in paths}
+    skipped = value is not None and value.lower() == "true"
+    for flag in ["--dry-run", "--warn-only"]:
+        output = run(tmp_path, flag)
+        assert ("WARNING:" in output) == skipped
+        assert all(path.read_bytes() == before[path] for path in paths)
+        assert not list(tmp_path.rglob("*.bak-*"))
+    output = run(tmp_path)
+    if skipped:
+        assert "WARNING:" in output
+        assert str(service) in output
+        assert all(path.read_bytes() == before[path] for path in paths)
+        assert not list(service.rglob("*.bak-*"))
+    else:
+        assert "WARNING:" not in output
+        assert all(path.read_bytes() != before[path] for path in paths)
+        assert len(list(service.rglob("*.bak-*"))) == 3
+    for path in [configs[0], configs[2]]:
+        env = json.loads(path.read_text())["env_variables"]
+        assert (
+            env["STRATEGIES_KWARGS"]["value"]["min_expected_profit"]
+            == 60000000000000000
+        )
+        assert (
+            env["MECH_MARKETPLACE_CONFIG"]["value"]["mech_marketplace_address"]
+            == V2_MARKETPLACE
+        )
+        assert "old" not in env["FILE_HASH_TO_STRATEGIES"]["value"]
+    after = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    run(tmp_path)
+    assert {
+        path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()
+    } == after
+
+
+@pytest.mark.parametrize("value", [entry("false"), "false", False, None])
+def test_omen_quickstart_flag_allows_migration(tmp_path, value):
+    """Keep migrating when the quickstart flag is false or absent."""
+    paths = fixture(tmp_path)
+    config = json.loads(paths[0].read_text())
+    if value is not None:
+        config["env_variables"]["IS_RUNNING_ON_POLYMARKET"] = value
+    paths[0].write_text(json.dumps(config))
+    before = {path: path.read_bytes() for path in paths}
+    assert "WARNING:" not in run(tmp_path)
+    assert all(path.read_bytes() != before[path] for path in paths)
+    assert len(list(tmp_path.rglob("*.bak-*"))) == 3
+
+
 @pytest.mark.parametrize("address", [V1_MARKETPLACE, V1_MARKETPLACE.lower()])
 @pytest.mark.parametrize("mapping", [False, True])
 @pytest.mark.parametrize("plain_enabled", [False, True])
@@ -727,6 +909,9 @@ def test_marketplace_deployment_migration(tmp_path, style):
     """Replace only the old marketplace in each deployment format."""
     import yaml
 
+    source = tmp_path / "configs/config_predict_trader.json"
+    source.parent.mkdir()
+    source.write_text("{}")
     service = tmp_path / ".operate/services/sc-one"
     service.mkdir(parents=True)
     mech = {
@@ -890,6 +1075,9 @@ def test_marketplace_and_strategy_migrate_together(tmp_path, style):
     """Apply all migrations in one pass with one backup and stable repeat runs."""
     import yaml
 
+    source = tmp_path / "configs/config_predict_trader.json"
+    source.parent.mkdir()
+    source.write_text("{}")
     packages = json.loads((SCRIPT.parents[1] / "packages/packages.json").read_text())
     values = {
         "MECH_MARKETPLACE_CONFIG": dict(
