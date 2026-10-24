@@ -248,7 +248,9 @@ def test_legacy_asked_state(tmp_path: Any) -> None:
 
 
 @pytest.mark.parametrize("opening,queued", [(999, False), (1000, False), (1001, True)])
-def test_queue_market_close_time(tmp_path: Any, opening: int, queued: bool) -> None:
+def test_queue_realitio_opening_is_trading_close(
+    tmp_path: Any, opening: int, queued: bool
+) -> None:
     """Realitio answering opens when the Omen trading window closes."""
     queue = FreshQueue(tmp_path / "fresh.json")
     row = {**market("market", 950), "openingTimestamp": str(opening)}

@@ -17,6 +17,7 @@ fingerprint:
   tests/__init__.py: bafybeifx5qa3c7rsjbe4ujuif363osh23mvgprcd5jwv67t5kl3kgqrszu
   tests/test_composition.py: bafybeibu5jita24cyxapjbg5waywoolsmiyvvxbpjiqk4kfurr6b2hxn5e
   tests/test_config.py: bafybeiatc37eomlnoqadm4smde42wipiotbqqibzz5u7yzqypsnr4ktdhm
+  tests/test_requests.py: bafybeifplkqqhpcc73ebo4xrdwifcsthwaavnzuhebsrx6sbgcfgepwgna
 fingerprint_ignore_patterns: []
 connections: []
 contracts: []
@@ -33,7 +34,7 @@ skills:
 - valory/chatui_abci:0.1.0:bafybeianhfooj7ncojnpd3b5d6wmuyxcsyqrsis4xxweafycsjd3gccp2q
 - valory/agent_performance_summary_abci:0.1.0:bafybeiet4cq3ata4ny7e5edfuyaupimltzzb2drefxxue2tmni5c64gvae
 - valory/trader_abci:0.1.0:bafybeibl7acaahv4naic5bbvkdxiu7kkhunnb43jtegci4rixtzt3jg73e
-- valory/fresh_watch_abci:0.1.0:bafybeibjdnc6en46lf3uoayft3iewz564ej7l3rub3q2bxwzq6tg7i6yim
+- valory/fresh_watch_abci:0.1.0:bafybeia6qljlw4rttsemunr7u2d5j5oqetvswjsbndtcaraatwjc6ucqiy
 behaviours:
   main:
     args: {}
