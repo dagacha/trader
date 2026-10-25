@@ -612,8 +612,8 @@ def test_execution_quote(
         assert run(b._calc_buy_amount()) is allowed
 
 
-@pytest.mark.parametrize("placed,tokens", [(True, 100), (False, 0)])
-def test_placement_log(tmp_path: Any, placed: bool, tokens: int) -> None:
+@pytest.mark.parametrize("prepared,tokens", [(True, 100), (False, 0)])
+def test_placement_log(tmp_path: Any, prepared: bool, tokens: int) -> None:
     """Emit one terminal decision line with the final preparation result."""
     from packages.valory.skills.decision_maker_abci.behaviours.bet_placement import (
         BetPlacementBehaviour,
@@ -642,14 +642,15 @@ def test_placement_log(tmp_path: Any, placed: bool, tokens: int) -> None:
         ):
             run(
                 b.finish_behaviour(
-                    BetPlacementPayload("agent", tx_hash="tx" if placed else None)
+                    BetPlacementPayload("agent", tx_hash="tx" if prepared else None)
                 )
             )
     args = b.context.logger.info.call_args.args
     assert args[0] == "[FAST_DECISION] %s"
     result = json.loads(args[1])
     assert result["age_at_bet"] == 100
-    assert result["placed"] is placed
+    assert result["prepared"] is prepared
+    assert "placed" not in result
     assert result["stake"] == 4
 
 
@@ -1159,7 +1160,7 @@ def test_placement_failure_reason(
         sd.return_value.db.get_strict.side_effect = lambda key: {
             "request_prices": [0.5, 0.5],
             "fast_decision": json.dumps(
-                dict(p_hat=0.815, stake=4, reason="", price=0.6)
+                dict(p_hat=0.815, stake=4, reason="", price=0.6, edge=0.215)
             ),
         }[key]
         if submitter:
@@ -1167,7 +1168,7 @@ def test_placement_failure_reason(
         run(b.finish_behaviour(BetPlacementPayload("agent", tx_submitter=submitter)))
     result = json.loads(b.context.logger.info.call_args.args[1])
     assert result["reason"] == reason
-    assert result["placed"] is False
+    assert result["prepared"] is False
     assert result["request_price"] == 0.5
     assert result["stake"] == 4
     assert result["executed_price"] == (
@@ -1175,6 +1176,9 @@ def test_placement_failure_reason(
     )
     if result["executed_price"] is not None:
         assert result["edge"] == pytest.approx(0.815 - result["executed_price"])
+    else:
+        assert result["price"] is None
+        assert result["edge"] is None
 
 
 def test_placement_quote_retry(tmp_path: Any) -> None:
@@ -1262,7 +1266,7 @@ def test_staked_activity_cache_after_consensus(tmp_path: Any) -> None:
 
 @pytest.mark.parametrize("bound", ["max_price", "max_slip"])
 def test_decided_amount_passes_placement(tmp_path: Any, bound: str) -> None:
-    """Use the consensus wei amount to pass the same unchanged-pool bound."""
+    """Accept the consensus amount, then refuse it after an adverse small buy."""
     from dataclasses import asdict, replace
 
     from packages.valory.skills.abstract_round_abci.base import AbciAppDB
@@ -1314,10 +1318,20 @@ def test_decided_amount_passes_placement(tmp_path: Any, bound: str) -> None:
     assert synced.bet_amount / b.quoted_tokens == decision.price
     with (
         patch.object(
-            BetPlacementBehaviour, "_calc_buy_amount", return_value=done(True)
+            BetPlacementBehaviour, "_calc_buy_amount", side_effect=lambda: done(True)
         ),
         patch.object(
             type(b), "synchronized_data", new_callable=PropertyMock, return_value=synced
         ),
     ):
         assert run(b._calc_buy_amount())
+
+        other_buy = 10**15
+        other_tokens = buy_amount(other_buy, reserves, synced.vote, fee)
+        net = other_buy - other_buy * fee // 10**18
+        moved = [reserve + net for reserve in reserves]
+        moved[synced.vote] -= other_tokens
+        b.quoted_tokens = buy_amount(synced.bet_amount, moved, synced.vote, fee)
+        assert synced.bet_amount / b.quoted_tokens > limit
+        assert not run(b._calc_buy_amount())
+        assert b._placement_failure == bound

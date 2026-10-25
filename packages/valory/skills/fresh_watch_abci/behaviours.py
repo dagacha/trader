@@ -564,7 +564,7 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
         """
         result = json.loads(self.synchronized_data.db.get_strict("fast_decision"))
         result["age_at_bet"] = time.time() - self.sampled_bet.creationTimestamp
-        result["placed"] = bool(payload.tx_hash)
+        result["prepared"] = bool(payload.tx_hash)
         if not payload.tx_hash:
             result["reason"] = (
                 "balance" if payload.tx_submitter is None else self._placement_failure
@@ -573,6 +573,8 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
             "request_prices"
         )[self.outcome_index]
         result["executed_price"] = self._executed_price
+        result["price"] = None
+        result["edge"] = None
         if self._executed_price is not None:
             result["price"] = self._executed_price
             p = result["p_hat"] if self.outcome_index == 0 else 1 - result["p_hat"]

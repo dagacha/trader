@@ -2509,11 +2509,8 @@ def test_edited_fast_keys_sync_to_all_copies(tmp_path):
     from packages.valory.skills.fresh_watch_abci.strategy import FastConfig
 
     migration = runpy.run_path(str(SCRIPT))
-    keys = (
-        set(migration["FAST_ENV"])
-        | {field.name.upper() for field in fields(FastConfig)}
-        | {"MIN_STAKE"}
-    )
+    keys = set(migration["FAST_ENV"])
+    assert {field.name.upper() for field in fields(FastConfig)} <= keys
     template = json.loads(
         (SCRIPT.parents[1] / "configs/config_omenstrat_fast.json").read_text()
     )
@@ -2607,3 +2604,42 @@ def test_slip_upgrade_check_retires_for_current_values(tmp_path, initial):
         assert (
             json.loads(path.read_text())["env_variables"]["MAX_SLIP"]["value"] == "0.1"
         )
+
+
+@pytest.mark.parametrize("interrupt", [None, "source", "cache"])
+def test_slip_sync_retry_uses_source(tmp_path, monkeypatch, interrupt):
+    """Sync divergent copies from the source, also after an interrupted write."""
+    paths = fixture(tmp_path)
+    for path, value in zip(paths, ["0.1", "0.15", "0.1"]):
+        data = json.loads(path.read_text())
+        data["env_variables"]["MAX_SLIP"] = entry(value)
+        path.write_text(json.dumps(data))
+    marker = tmp_path / "configs/.fast_defaults_added.json"
+    marker.write_text(json.dumps({"added": ["MAX_SLIP"]}))
+    if interrupt:
+        target = paths[0 if interrupt == "source" else 1]
+        original = Path.open
+
+        def fail_write(path, mode="r", *args, **kwargs):
+            """Stop before writing the selected config."""
+            if path == target and mode == "w":
+                raise OSError("interrupted write")
+            return original(path, mode, *args, **kwargs)
+
+        with monkeypatch.context() as patcher:
+            patcher.setattr(Path, "open", fail_write)
+            with pytest.raises(OSError, match="interrupted write"):
+                run(tmp_path, "--service", "omenstrat_fast")
+        assert json.loads(marker.read_text())["upgraded"] == ["MAX_SLIP"]
+    run(tmp_path, "--service", "omenstrat_fast")
+    expected = "0.1" if interrupt == "source" else "0.2"
+    for path in paths:
+        assert (
+            json.loads(path.read_text())["env_variables"]["MAX_SLIP"]["value"]
+            == expected
+        )
+    before = {path: path.read_bytes() for path in [*paths, marker]}
+    backups = sorted(tmp_path.rglob("*.bak-*"))
+    run(tmp_path, "--service", "omenstrat_fast")
+    assert all(path.read_bytes() == content for path, content in before.items())
+    assert sorted(tmp_path.rglob("*.bak-*")) == backups

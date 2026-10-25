@@ -393,10 +393,10 @@ def test_trader_35_quote_replay() -> None:
 @pytest.mark.parametrize(
     "reserves,cap,stake,reason",
     [
-        ([1, 1], 4.0, 0, "min_stake"),
-        ([1, 1], 10**9, 0, "min_stake"),
+        ([1, 1], 4.0, 0, "no_feasible_stake"),
+        ([1, 1], 10**9, 0, "no_feasible_stake"),
         ([10**9, 10**9], 4.0, 0, "min_stake"),
-        ([10**20, 10**20], 0.0, 0, "min_stake"),
+        ([10**20, 10**20], 0.0, 0, "no_feasible_stake"),
         ([10**20, 10**20], 0.1, 0.1, ""),
         ([10**20, 10**20], 4.0, 4.0, ""),
     ],
@@ -412,7 +412,11 @@ def test_minimum_stake(reserves: Any, cap: float, stake: float, reason: str) -> 
 
 @pytest.mark.parametrize(
     "minimum,cap,expected,reason",
-    [(0.25, 0.2, 0, "min_stake"), (0.01, 0.05, 0.05, ""), (0.0, 0.0, 0, "min_stake")],
+    [
+        (0.25, 0.2, 0, "min_stake"),
+        (0.01, 0.05, 0.05, ""),
+        (0.0, 0.0, 0, "no_feasible_stake"),
+    ],
 )
 def test_configured_minimum_stake(
     minimum: float, cap: float, expected: float, reason: str
@@ -460,3 +464,11 @@ def test_stop_when_quote_amount_converges(bounded: bool) -> None:
     if not bounded:
         assert result.stake == cfg.cap
         assert len(amounts) == 1
+
+
+def test_no_kelly_stake() -> None:
+    """Explain when Kelly allows no positive stake despite passing price bounds."""
+    cfg = replace(FastConfig(), kelly_bankroll=0)
+    result = decide("still", 0.9, [10**20, 10**20], [0.5, 0.5], cfg, 0)
+    assert result.stake == 0
+    assert result.reason == "no_feasible_stake"

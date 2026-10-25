@@ -194,7 +194,11 @@ def decide(
         if int(next_stake * 10**18) == investment:
             break
         stake = next_stake
-    if low <= 0 or low < cfg.min_stake:
+    if low <= 0:
+        return Decision(
+            kind, p_hat, side, price, probability - price, 0.0, "no_feasible_stake"
+        )
+    if low < cfg.min_stake:
         return Decision(kind, p_hat, side, price, probability - price, 0.0, "min_stake")
     return Decision(kind, p_hat, side, price, probability - price, low, "")
 
