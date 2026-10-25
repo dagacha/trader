@@ -6,9 +6,9 @@ description: A single-agent service (sovereign agent) placing bets on Omen, used
 aea_version: '>=2.0.0, <3.0.0'
 license: Apache-2.0
 fingerprint:
-  README.md: bafybeiffqryjgr62a5tvzfvmnvf6ss3zt5k2jluyt55sfcokmh2sneqh5u
+  README.md: bafybeih6wfueji4aa7kwo6dtnksrm4wanqqukdrz3b3pxgl7zzqov34iwq
 fingerprint_ignore_patterns: []
-agent: valory/omenstrat_fast:0.1.0:bafybeibk5wzrhjvifo33j5hyczczcypx7nhlurrxcthwqvvg6yqujzfhji
+agent: valory/omenstrat_fast:0.1.0:bafybeibqpb5g3qkoirz3o33t5bagjzzu625htmgjcrkdnnvooozzmvpzm4
 number_of_agents: 1
 deployment:
   agent:

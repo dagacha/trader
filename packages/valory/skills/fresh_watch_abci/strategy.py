@@ -190,7 +190,10 @@ def decide(
             price = executed
         else:
             high = stake
-        stake = (low + high) / 2
+        next_stake = (low + high) / 2
+        if int(next_stake * 10**18) == investment:
+            break
+        stake = next_stake
     if low <= 0 or low < cfg.min_stake:
         return Decision(kind, p_hat, side, price, probability - price, 0.0, "min_stake")
     return Decision(kind, p_hat, side, price, probability - price, low, "")

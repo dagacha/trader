@@ -72,8 +72,11 @@ selects the largest stake within CAP, Kelly sizing, and all price bounds.
 A stake below `MIN_STAKE` is skipped with reason `min_stake`.
 The final execution quote also checks the blended edge, maximum price, and slip
 bound. `[FAST_DECISION]` records one terminal preparation decision per market,
-including age at request, answer, and bet preparation, plus `mech` and `latency_s`. A prepared bet is not proof
-that its transaction settled; use the existing settlement logs for that result.
+including age at request, answer, and bet preparation, plus `mech` and `latency_s`.
+Placement records `placed=true` when a transaction was prepared and `placed=false`
+when no transaction was prepared. `stake` is the attempted amount in both cases.
+A prepared bet is not proof that its transaction settled; use the existing
+settlement logs for that result.
 
 ## Parameters
 
@@ -104,6 +107,15 @@ that its transaction settled; use the existing settlement logs for that result.
 | `RETRY_TIMEOUT` | `1` s, down from `3` |
 | `STOP_TRADING_IF_STAKING_KPI_MET` | `false` |
 | `STRATEGIES_KWARGS.absolute_max_bet_size` | `4000000000000000000` wei (4 xDAI); the fast formula uses `CAP` directly |
+
+`MAX_SLIP=0.2` permits an absolute price rise of at most 0.2 from the selected
+outcome's request-time spot price to its average execution price. DG sets this
+limit as a trading policy. `MAX_PRICE=0.9` is a separate ceiling on the average
+execution price, including the fee and pool impact. Both limits must pass. For
+example, a request price of 0.65 permits an execution price up to 0.85; a request
+price of 0.8 still permits at most 0.9. This is an absolute price difference,
+not a percentage of the request price. `MIN_STAKE=0.1` xDAI is the minimum
+accepted stake; smaller or empty results are skipped before placement.
 
 The active window uses UTC regardless of the host timezone. `MAX_TRADES`
 defaults to `3` per staking period; `0` disables the cap. The durable counter

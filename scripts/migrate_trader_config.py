@@ -848,26 +848,39 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                     different_public_ids.add(public_id)
     provenance = quickstart / "configs/.fast_defaults_added.json"
     recorded = None
+    upgraded = []
     if provenance.is_file():
-        recorded = json.loads(provenance.read_text())["added"]
-        if not isinstance(recorded, list) or any(
-            key not in FAST_ENV for key in recorded
+        record = json.loads(provenance.read_text())
+        recorded = record["added"]
+        upgraded = record.get("upgraded", [])
+        if any(
+            not isinstance(keys, list) or any(key not in FAST_ENV for key in keys)
+            for keys in (recorded, upgraded)
         ):
             raise ValueError(f"Invalid fast migration provenance: {provenance}")
+    upgrade_slip = False
     if fast_mode:
         env = json.loads(config.read_text()).get("env_variables", {})
         added = sorted(set(recorded or []) | (set(defaults) - set(env)))
-        # Write provenance first, so an interrupted sync can still be rolled back.
+        upgrade_slip = (
+            "MAX_SLIP" in (recorded or [])
+            and "MAX_SLIP" not in upgraded
+            and scalar(env.get("MAX_SLIP", {}).get("value")) == "0.1"
+        )
+        provenance_data = {"added": added}
+        if upgraded or "MAX_SLIP" in added:
+            provenance_data["upgraded"] = sorted(
+                set(upgraded) | ({"MAX_SLIP"} if "MAX_SLIP" in added else set())
+            )
+        changes = []
+        if recorded != added:
+            changes.append("record added fast defaults: " + ", ".join(added))
+        if "MAX_SLIP" in added and "MAX_SLIP" not in upgraded:
+            changes.append("record one-time MAX_SLIP upgrade check")
+        # Record the decision before syncing files. A retry must not overwrite
+        # a later operator choice. Keep added keys for rollback.
         write_changes(
-            provenance,
-            json.dumps({"added": added}) + "\n",
-            (
-                ["record added fast defaults: " + ", ".join(added)]
-                if recorded != added
-                else []
-            ),
-            dry_run,
-            warn_only,
+            provenance, json.dumps(provenance_data) + "\n", changes, dry_run, warn_only
         )
     removed = set(recorded or []) - {"MAX_TRADES"}
     stored = []
@@ -934,13 +947,8 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                         data["env_variables"][key] = dict(source)
                         updated = edit_json(updated, data, addition=(key, source))
                         changes.append(f"add fast default {key}={source['value']}")
-                    elif (
-                        key == "MAX_SLIP"
-                        and key in (recorded or [])
-                        and scalar(data["env_variables"][key].get("value")) == "0.1"
-                    ):
-                        # Only replace the old value when migration provenance
-                        # confirms that it was inserted and remains unchanged.
+                    elif key == "MAX_SLIP" and upgrade_slip:
+                        # Apply the one-time decision recorded before the sync.
                         data["env_variables"][key]["value"] = source["value"]
                         updated = edit_json(updated, data, source["value"])
                         changes.append(

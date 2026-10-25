@@ -2404,11 +2404,12 @@ def test_missing_provenance_reports_matching_defaults(tmp_path):
 
 
 @pytest.mark.parametrize("recorded", ["USE_OFFCHAIN", ["UNRELATED_KEY"]])
-def test_invalid_provenance_stops_before_writes(tmp_path, recorded):
+@pytest.mark.parametrize("field", ["added", "upgraded"])
+def test_invalid_provenance_stops_before_writes(tmp_path, recorded, field):
     """Reject invalid records before changing configs or caches."""
     paths = fixture(tmp_path)
     marker = tmp_path / "configs/.fast_defaults_added.json"
-    marker.write_text(json.dumps({"added": recorded}))
+    marker.write_text(json.dumps({"added": [], field: recorded}))
     before = {path: path.read_bytes() for path in [*paths, marker]}
     with pytest.raises(ValueError, match="Invalid fast migration provenance"):
         run(tmp_path, "--service", "trader_pearl")
@@ -2548,3 +2549,61 @@ def test_cached_public_id_with_incomplete_cache(tmp_path, has_config):
         config.write_text(json.dumps({"package_path": "missing-package"}))
     helper = runpy.run_path(str(SCRIPT))["cached_public_id"]
     assert helper(config) is None
+
+
+def test_slip_upgrade_is_once_and_rollback_keeps_provenance(tmp_path):
+    """Keep an operator's later 0.1 choice and still remove added keys on rollback."""
+    paths = fixture(tmp_path)
+    data = json.loads(paths[0].read_text())
+    data["env_variables"]["MAX_SLIP"] = entry("0.1")
+    paths[0].write_text(json.dumps(data))
+    marker = tmp_path / "configs/.fast_defaults_added.json"
+    marker.write_text(json.dumps({"added": ["MAX_SLIP"]}))
+    saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
+    saved.write_text(json.dumps({"user_provided_args": {"MAX_SLIP": "0.1"}}))
+    agent = paths[1].parent / "agent_0.env"
+    agent.write_text("MAX_SLIP=0.1\n")
+    run(tmp_path, "--service", "omenstrat_fast")
+    assert (
+        json.loads(paths[0].read_text())["env_variables"]["MAX_SLIP"]["value"] == "0.2"
+    )
+    data = json.loads(paths[0].read_text())
+    data["env_variables"]["MAX_SLIP"]["value"] = "0.1"
+    paths[0].write_text(json.dumps(data))
+    run(tmp_path, "--service", "omenstrat_fast")
+    for path in paths:
+        assert (
+            json.loads(path.read_text())["env_variables"]["MAX_SLIP"]["value"] == "0.1"
+        )
+    assert json.loads(saved.read_text())["user_provided_args"]["MAX_SLIP"] == "0.1"
+    assert "MAX_SLIP=0.1\n" in agent.read_text()
+    provenance = json.loads(marker.read_text())
+    assert "MAX_SLIP" in provenance["added"]
+    assert provenance["upgraded"] == ["MAX_SLIP"]
+    run(tmp_path, "--service", "trader_pearl")
+    for path in paths:
+        assert "MAX_SLIP" not in json.loads(path.read_text())["env_variables"]
+    assert "MAX_SLIP" not in json.loads(saved.read_text())["user_provided_args"]
+    assert "MAX_SLIP=" not in agent.read_text()
+    assert json.loads(marker.read_text()) == {"added": []}
+
+
+@pytest.mark.parametrize("initial", [None, "0.2", "0.15"])
+def test_slip_upgrade_check_retires_for_current_values(tmp_path, initial):
+    """Keep a later operator choice after adding or retaining a current value."""
+    paths = fixture(tmp_path)
+    data = json.loads(paths[0].read_text())
+    if initial is not None:
+        data["env_variables"]["MAX_SLIP"] = entry(initial)
+    paths[0].write_text(json.dumps(data))
+    marker = tmp_path / "configs/.fast_defaults_added.json"
+    marker.write_text(json.dumps({"added": ["MAX_SLIP"] if initial else []}))
+    run(tmp_path, "--service", "omenstrat_fast")
+    data = json.loads(paths[0].read_text())
+    data["env_variables"]["MAX_SLIP"]["value"] = "0.1"
+    paths[0].write_text(json.dumps(data))
+    run(tmp_path, "--service", "omenstrat_fast")
+    for path in paths:
+        assert (
+            json.loads(path.read_text())["env_variables"]["MAX_SLIP"]["value"] == "0.1"
+        )

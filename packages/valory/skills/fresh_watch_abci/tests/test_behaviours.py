@@ -649,6 +649,7 @@ def test_placement_log(tmp_path: Any, placed: bool, tokens: int) -> None:
     assert args[0] == "[FAST_DECISION] %s"
     result = json.loads(args[1])
     assert result["age_at_bet"] == 100
+    assert result["placed"] is placed
     assert result["stake"] == 4
 
 
@@ -1166,6 +1167,7 @@ def test_placement_failure_reason(
         run(b.finish_behaviour(BetPlacementPayload("agent", tx_submitter=submitter)))
     result = json.loads(b.context.logger.info.call_args.args[1])
     assert result["reason"] == reason
+    assert result["placed"] is False
     assert result["request_price"] == 0.5
     assert result["stake"] == 4
     assert result["executed_price"] == (
@@ -1209,3 +1211,113 @@ def test_placement_quote_retry(tmp_path: Any) -> None:
     result = json.loads(b.context.logger.info.call_args.args[1])
     assert result["reason"] == "quote"
     assert result["executed_price"] is None
+
+
+def test_staked_activity_cache_after_consensus(tmp_path: Any) -> None:
+    """Reuse the staked period after consensus replaces an old checkpoint."""
+    from packages.valory.skills.abstract_round_abci.base import AbciAppDB
+    from packages.valory.skills.decision_maker_abci.states.base import SynchronizedData
+    from packages.valory.skills.fresh_watch_abci.rounds import (
+        Event,
+        FreshWatchRound,
+        SelectionPayload,
+    )
+    from packages.valory.skills.staking_abci.rounds import StakingState
+
+    b = make(FreshWatchBehaviour, tmp_path)
+    b.context.state.synchronized_data = SynchronizedData(
+        AbciAppDB(
+            setup_data=dict(
+                all_participants=[("agent",)],
+                participants=[("agent",)],
+                consensus_threshold=[1],
+                previous_checkpoint=[100],
+            )
+        )
+    )
+    reads = MagicMock(side_effect=lambda: done((False, False, 8, 3)))
+    with patch(
+        "packages.valory.skills.fresh_watch_abci.behaviours.time.monotonic"
+    ) as clock:
+        for now in (10, 27, 44):
+            clock.return_value = now
+            b.service_staking_state = StakingState.STAKED
+            b.ts_checkpoint = 200
+            b._compute_activity_status = reads
+            b._select = lambda *args: done({"lane": "wait"})
+            selection = run(b.select())
+            assert selection["previous_checkpoint"] == 200
+            round_ = FreshWatchRound(b.context.state.synchronized_data, MagicMock())
+            round_.process_payload(SelectionPayload("agent", json.dumps(selection)))
+            outcome = round_.end_block()
+            assert outcome is not None
+            data, event = outcome
+            assert event == Event.WAIT
+            assert isinstance(data, SynchronizedData)
+            assert data.previous_checkpoint == 200
+            b.context.state.synchronized_data = data
+            b = FreshWatchBehaviour(name="next", skill_context=b.context)
+    assert reads.call_count == 1
+
+
+@pytest.mark.parametrize("bound", ["max_price", "max_slip"])
+def test_decided_amount_passes_placement(tmp_path: Any, bound: str) -> None:
+    """Use the consensus wei amount to pass the same unchanged-pool bound."""
+    from dataclasses import asdict, replace
+
+    from packages.valory.skills.abstract_round_abci.base import AbciAppDB
+    from packages.valory.skills.decision_maker_abci.behaviours.bet_placement import (
+        BetPlacementBehaviour,
+    )
+    from packages.valory.skills.decision_maker_abci.states.base import SynchronizedData
+    from packages.valory.skills.fresh_watch_abci.rounds import (
+        Event,
+        FastDecisionRound,
+        SelectionPayload,
+    )
+    from packages.valory.skills.fresh_watch_abci.strategy import buy_amount, decide
+
+    cfg = replace(
+        FastConfig(),
+        prior_weight=1,
+        kelly_bankroll=1000000,
+        max_price=0.67 if bound == "max_price" else 0.9,
+    )
+    requested = [0.65, 0.35] if bound == "max_price" else [0.47, 0.53]
+    reserves, fee = [35 * 10**18, 65 * 10**18], 2 * 10**16
+    decision = decide("still", 0.99, reserves, requested, cfg, fee)
+    assert decision.stake >= cfg.min_stake
+    limit = cfg.max_price if bound == "max_price" else requested[0] + cfg.max_slip
+    assert decision.price == pytest.approx(limit, abs=1e-10)
+    data = SynchronizedData(
+        AbciAppDB(
+            setup_data=dict(
+                all_participants=[("agent",)],
+                participants=[("agent",)],
+                consensus_threshold=[1],
+                request_prices=[requested],
+            )
+        )
+    )
+    round_ = FastDecisionRound(data, MagicMock())
+    round_.process_payload(SelectionPayload("agent", json.dumps(asdict(decision))))
+    outcome = round_.end_block()
+    assert outcome is not None
+    synced, event = outcome
+    assert event == Event.BET
+    assert isinstance(synced, SynchronizedData)
+    assert synced.bet_amount == int(decision.stake * 10**18)
+    assert synced.vote is not None
+    b = make(FastBetPlacementBehaviour, tmp_path)
+    b.context.params.fast = cfg
+    b.quoted_tokens = buy_amount(synced.bet_amount, reserves, synced.vote, fee)
+    assert synced.bet_amount / b.quoted_tokens == decision.price
+    with (
+        patch.object(
+            BetPlacementBehaviour, "_calc_buy_amount", return_value=done(True)
+        ),
+        patch.object(
+            type(b), "synchronized_data", new_callable=PropertyMock, return_value=synced
+        ),
+    ):
+        assert run(b._calc_buy_amount())

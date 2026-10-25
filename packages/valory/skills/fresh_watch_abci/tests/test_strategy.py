@@ -394,6 +394,7 @@ def test_trader_35_quote_replay() -> None:
     "reserves,cap,stake,reason",
     [
         ([1, 1], 4.0, 0, "min_stake"),
+        ([1, 1], 10**9, 0, "min_stake"),
         ([10**9, 10**9], 4.0, 0, "min_stake"),
         ([10**20, 10**20], 0.0, 0, "min_stake"),
         ([10**20, 10**20], 0.1, 0.1, ""),
@@ -436,3 +437,26 @@ def test_higher_slip_default() -> None:
     )
     assert strict.reason == "max_slip"
     assert strict.stake == 0
+
+
+@pytest.mark.parametrize("bounded", [False, True])
+def test_stop_when_quote_amount_converges(bounded: bool) -> None:
+    """Stop once the next quote repeats the integer investment amount."""
+    from unittest.mock import patch
+
+    from packages.valory.skills.fresh_watch_abci.strategy import buy_amount
+
+    cfg = replace(FastConfig(), max_price=0.67) if bounded else FastConfig()
+    with patch(
+        "packages.valory.skills.fresh_watch_abci.strategy.buy_amount", wraps=buy_amount
+    ) as quotes:
+        result = decide(
+            "still", 0.9, [35 * 10**18, 65 * 10**18], [0.65, 0.35], cfg, 2 * 10**16
+        )
+    assert result.stake > 0
+    amounts = [call.args[0] for call in quotes.call_args_list]
+    assert len(amounts) < 64
+    assert all(a != b for a, b in zip(amounts, amounts[1:]))
+    if not bounded:
+        assert result.stake == cfg.cap
+        assert len(amounts) == 1
