@@ -2454,3 +2454,97 @@ def test_missing_provenance_warns_for_custom_value(tmp_path):
     output = run(tmp_path, "--service", "trader_pearl", "--warn-only")
     assert "USE_OFFCHAIN" in output
     assert paths[0].read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    "recorded,value,expected",
+    [
+        (None, "0.1", "0.1"),
+        ([], "0.1", "0.1"),
+        (["MAX_SLIP"], "0.1", "0.2"),
+        (["MAX_SLIP"], "0.15", "0.15"),
+        (["MAX_SLIP"], "0.2", "0.2"),
+    ],
+)
+def test_upgrade_only_recorded_slip_default(tmp_path, recorded, value, expected):
+    """Upgrade an unchanged migration default and preserve operator values."""
+    paths = fixture(tmp_path)
+    data = json.loads(paths[0].read_text())
+    data["env_variables"]["MAX_SLIP"] = entry(value)
+    paths[0].write_text(json.dumps(data))
+    marker = tmp_path / "configs/.fast_defaults_added.json"
+    if recorded is not None:
+        marker.write_text(json.dumps({"added": recorded}))
+    saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
+    saved.write_text(json.dumps({"user_provided_args": {"MAX_SLIP": "stale"}}))
+    agent = paths[1].parent / "agent_0.env"
+    agent.write_text("SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_MAX_SLIP=stale\n")
+    tracked = [*paths, saved, agent]
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    for mode in ("--dry-run", "--warn-only"):
+        run(tmp_path, "--service", "omenstrat_fast", mode)
+        assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
+    run(tmp_path, "--service", "omenstrat_fast")
+    for path in paths:
+        assert (
+            json.loads(path.read_text())["env_variables"]["MAX_SLIP"]["value"]
+            == expected
+        )
+    assert json.loads(saved.read_text())["user_provided_args"]["MAX_SLIP"] == expected
+    env = dict(line.split("=", 1) for line in agent.read_text().splitlines())
+    assert env["MAX_SLIP"] == expected
+    assert env["SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_MAX_SLIP"] == expected
+    after = {p: p.read_bytes() for p in [*tracked, marker]}
+    backups = sorted(tmp_path.rglob("*.bak-*"))
+    run(tmp_path, "--service", "omenstrat_fast")
+    assert all(p.read_bytes() == content for p, content in after.items())
+    assert sorted(tmp_path.rglob("*.bak-*")) == backups
+
+
+def test_edited_fast_keys_sync_to_all_copies(tmp_path):
+    """Sync every edited fast input without replacing it with its default."""
+    from dataclasses import fields
+
+    from packages.valory.skills.fresh_watch_abci.strategy import FastConfig
+
+    migration = runpy.run_path(str(SCRIPT))
+    keys = (
+        set(migration["FAST_ENV"])
+        | {field.name.upper() for field in fields(FastConfig)}
+        | {"MIN_STAKE"}
+    )
+    template = json.loads(
+        (SCRIPT.parents[1] / "configs/config_omenstrat_fast.json").read_text()
+    )
+    values = {key: "operator-" + key for key in keys}
+    paths = fixture(tmp_path)
+    source = json.loads(paths[0].read_text())
+    source["env_variables"].update({key: entry(value) for key, value in values.items()})
+    paths[0].write_text(json.dumps(source))
+    saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
+    saved.write_text(json.dumps({"user_provided_args": {key: "stale" for key in keys}}))
+    prefix = "SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_"
+    agent = paths[1].parent / "agent_0.env"
+    agent.write_text("".join(prefix + key + "=stale\n" for key in sorted(keys)))
+    run(tmp_path, "--service", "omenstrat_fast")
+    for path in paths:
+        actual = json.loads(path.read_text())["env_variables"]
+        for key, value in values.items():
+            assert actual[key]["value"] == value
+            assert actual[key]["value"] != template["env_variables"][key]["value"]
+    actual = json.loads(saved.read_text())["user_provided_args"]
+    env = dict(line.split("=", 1) for line in agent.read_text().splitlines())
+    for key, value in values.items():
+        assert actual[key] == value
+        assert env[key] == value
+        assert env[prefix + key] == value
+
+
+@pytest.mark.parametrize("has_config", [False, True])
+def test_cached_public_id_with_incomplete_cache(tmp_path, has_config):
+    """Treat a missing cache config or package as an unknown service ID."""
+    config = tmp_path / "config.json"
+    if has_config:
+        config.write_text(json.dumps({"package_path": "missing-package"}))
+    helper = runpy.run_path(str(SCRIPT))["cached_public_id"]
+    assert helper(config) is None

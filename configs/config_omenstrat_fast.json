@@ -1,6 +1,6 @@
 {
     "name": "omenstrat_fast",
-    "hash": "bafybeievekqjo3d3v7k7zrauljbj5s6hteyhobqwoljd6hrnkry6psdzia",
+    "hash": "bafybeiblnh2j2kruvzhrgxrr5zhqsptyuh77m2o24hwuyibsz6lvki4ct4",
     "description": "Fresh-watch Omen agent with the fixed fast strategy.",
     "image": "https://operate.olas.network/_next/image?url=%2Fimages%2Fprediction-agent.png&w=3840&q=75",
     "service_version": "main",
@@ -295,7 +295,7 @@
         "MAX_SLIP": {
             "name": "Max slip",
             "description": "",
-            "value": "0.1",
+            "value": "0.2",
             "provision_type": "user"
         },
         "SERVICE_ID": {
@@ -362,6 +362,12 @@
             "name": "Dynamic Mech selection",
             "description": "Select an allowed Mech by tool and rank. Use the priority Mech when false.",
             "value": "true",
+            "provision_type": "user"
+        },
+        "MIN_STAKE": {
+            "name": "Minimum stake",
+            "description": "Minimum fast bet amount in xDAI.",
+            "value": "0.1",
             "provision_type": "user"
         }
     }

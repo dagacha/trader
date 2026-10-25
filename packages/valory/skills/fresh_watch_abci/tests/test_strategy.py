@@ -118,7 +118,7 @@ def test_decision() -> None:
         ("above", 0.5, [0.54, 0.46], [0.54, 0.46], "min_edge"),
         ("still", 1, [0.91, 0.09], [0.91, 0.09], "max_price"),
         ("other", 0.5, [0.9, 0.1], [0.9, 0.1], "no_min_p"),
-        ("still", 0.9, [0.65, 0.35], [0.5, 0.5], "max_slip"),
+        ("still", 0.9, [0.75, 0.25], [0.5, 0.5], "max_slip"),
         ("still", 0.9, [0, 1], [0.5, 0.5], "invalid_price"),
     ],
 )
@@ -293,7 +293,7 @@ def test_queue_realitio_opening_is_trading_close(
             replace(FastConfig(), max_price=0.66),
             "max_price",
         ),
-        ([35, 65], 2 * 10**16, [0.55, 0.45], FastConfig(), "max_slip"),
+        ([35, 65], 2 * 10**16, [0.45, 0.55], FastConfig(), "max_slip"),
     ],
 )
 def test_executed_kelly(
@@ -381,9 +381,58 @@ def test_trader_35_quote_replay() -> None:
     fee = 2 * 10**16
     old_price = 4 * 10**18 / buy_amount(4 * 10**18, reserves, 0, fee)
     assert old_price == pytest.approx(0.7607, abs=1e-12)
-    assert old_price - 0.65 > FastConfig().max_slip
+    assert old_price - 0.65 > 0.1
+    assert old_price - 0.65 <= FastConfig().max_slip
     result = decide("still", 0.78, reserves, [0.65, 0.35], FastConfig(), fee)
     assert result.reason == ""
     assert result.stake == pytest.approx(2.8965418874612787)
     assert result.price == pytest.approx(0.7395634674420816)
     assert result.price - 0.65 <= FastConfig().max_slip
+
+
+@pytest.mark.parametrize(
+    "reserves,cap,stake,reason",
+    [
+        ([1, 1], 4.0, 0, "min_stake"),
+        ([10**9, 10**9], 4.0, 0, "min_stake"),
+        ([10**20, 10**20], 0.0, 0, "min_stake"),
+        ([10**20, 10**20], 0.1, 0.1, ""),
+        ([10**20, 10**20], 4.0, 4.0, ""),
+    ],
+)
+def test_minimum_stake(reserves: Any, cap: float, stake: float, reason: str) -> None:
+    """Skip empty and dust results, and keep normal and minimum-size bets."""
+    result = decide(
+        "still", 0.9, reserves, [0.5, 0.5], replace(FastConfig(), cap=cap), 0
+    )
+    assert result.stake == stake
+    assert result.reason == reason
+
+
+@pytest.mark.parametrize(
+    "minimum,cap,expected,reason",
+    [(0.25, 0.2, 0, "min_stake"), (0.01, 0.05, 0.05, ""), (0.0, 0.0, 0, "min_stake")],
+)
+def test_configured_minimum_stake(
+    minimum: float, cap: float, expected: float, reason: str
+) -> None:
+    """Apply the configured minimum and always explain an empty result."""
+    cfg = replace(FastConfig(), min_stake=minimum, cap=cap)
+    result = decide("still", 0.9, [10**20, 10**20], [0.5, 0.5], cfg, 0)
+    assert result.stake == expected
+    assert result.reason == reason
+
+
+def test_higher_slip_default() -> None:
+    """Allow a 0.15 price rise by default and retain explicit tighter limits."""
+    reserves = [35 * 10**18, 65 * 10**18]
+    cfg = FastConfig()
+    result = decide("still", 0.9, reserves, [0.5, 0.5], cfg, 2 * 10**16)
+    assert result.reason == ""
+    assert result.stake == 4
+    assert 0.1 < result.price - 0.5 < 0.2
+    strict = decide(
+        "still", 0.9, reserves, [0.5, 0.5], replace(cfg, max_slip=0.1), 2 * 10**16
+    )
+    assert strict.reason == "max_slip"
+    assert strict.stake == 0

@@ -103,6 +103,12 @@ def test_params_and_state(tmp_path: Any) -> None:
     params = FastParams(name="params", skill_context=context, **args)
     assert params.fast.overlap_s == 120
     assert params.fast.cap == 4
+    assert params.fast.min_stake == 0.1
+    assert params.fast.max_slip == 0.2
+    custom = FastParams(
+        name="custom", skill_context=context, **{**args, "min_stake": 0.25}
+    )
+    assert custom.fast.min_stake == 0.25
     assert params.use_offchain is True
     assert params.fast_dynamic_mech is True
     assert params.mech_marketplace_config.use_dynamic_mech_selection is True
@@ -269,3 +275,40 @@ def test_dynamic_param_declared_in_overriding_skills() -> None:
             (ROOT / "packages/valory/skills" / skill / "skill.yaml").read_text()
         )
         assert config["models"]["params"]["args"]["fast_dynamic_mech"] is default
+
+
+def test_slip_and_minimum_stake_defaults() -> None:
+    """Keep fast controls consistent across each deployment entry point."""
+    import json
+    import runpy
+
+    from packages.valory.skills.fresh_watch_abci.strategy import FastConfig
+
+    defaults = {"max_slip": 0.2, "min_stake": 0.1}
+    for key, value in defaults.items():
+        assert getattr(FastConfig(), key) == value
+    for skill in ("fresh_watch_abci", "omenstrat_fast_abci"):
+        config = yaml.safe_load(
+            (ROOT / "packages/valory/skills" / skill / "skill.yaml").read_text()
+        )
+        for key, value in defaults.items():
+            assert config["models"]["params"]["args"][key] == value
+    for relative in (
+        "agents/omenstrat_fast/aea-config.yaml",
+        "services/omenstrat_fast/service.yaml",
+    ):
+        docs = list(
+            yaml.safe_load_all((ROOT / "packages/valory" / relative).read_text())
+        )
+        args = next(
+            doc
+            for doc in docs[1:]
+            if doc["public_id"].startswith("valory/omenstrat_fast_abci:")
+        )["models"]["params"]["args"]
+        for key, value in defaults.items():
+            assert args[key] == "${" + key.upper() + ":float:" + str(value) + "}"
+    config = json.loads((ROOT / "configs/config_omenstrat_fast.json").read_text())
+    migration = runpy.run_path(str(ROOT / "scripts/migrate_trader_config.py"))
+    for key, value in defaults.items():
+        assert config["env_variables"][key.upper()]["value"] == str(value)
+        assert key.upper() in migration["FAST_ENV"]

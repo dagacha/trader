@@ -81,6 +81,7 @@ FAST_ENV = (
     "CAP",
     "KELLY_BANKROLL",
     "MAX_SLIP",
+    "MIN_STAKE",
     "FAST_DYNAMIC_MECH",
     "USE_OFFCHAIN",
     "STOP_TRADING_IF_STAKING_KPI_MET",
@@ -933,6 +934,18 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                         data["env_variables"][key] = dict(source)
                         updated = edit_json(updated, data, addition=(key, source))
                         changes.append(f"add fast default {key}={source['value']}")
+                    elif (
+                        key == "MAX_SLIP"
+                        and key in (recorded or [])
+                        and scalar(data["env_variables"][key].get("value")) == "0.1"
+                    ):
+                        # Only replace the old value when migration provenance
+                        # confirms that it was inserted and remains unchanged.
+                        data["env_variables"][key]["value"] = source["value"]
+                        updated = edit_json(updated, data, source["value"])
+                        changes.append(
+                            f"upgrade fast default {key}=0.1 -> {source['value']}"
+                        )
             env = json.loads(updated).get("env_variables", {})
             desired = {
                 key: entry

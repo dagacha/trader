@@ -161,6 +161,10 @@ that operate rebuilds later. This local sidecar is outside `.operate` and is
 not a tracked quickstart file. Operate redeploys and `update_all.sh` pulls do
 not replace it. Keep it with the quickstart config and include it in backups.
 
+An unchanged `MAX_SLIP=0.1` recorded as migration-added is upgraded to `0.2`.
+An unrecorded value or a value that differs from the old default stays unchanged.
+`MIN_STAKE` defaults to `0.1` xDAI and is added only when absent.
+
 On rollback, the migration removes recorded keys from the quickstart, saved
 user inputs, service configs, and generated env files. This removes shared
 fast overrides such as `USE_OFFCHAIN` and `FINALIZE_TIMEOUT`, so the pearl

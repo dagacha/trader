@@ -61,7 +61,8 @@ class FastConfig:
     no_min_p: float = 0.70
     cap: float = 4.0
     kelly_bankroll: float = 10.0
-    max_slip: float = 0.10
+    max_slip: float = 0.20
+    min_stake: float = 0.1
 
     def in_window(self, now: float) -> bool:
         """Check the half-open UTC window, including windows across midnight.
@@ -190,6 +191,8 @@ def decide(
         else:
             high = stake
         stake = (low + high) / 2
+    if low <= 0 or low < cfg.min_stake:
+        return Decision(kind, p_hat, side, price, probability - price, 0.0, "min_stake")
     return Decision(kind, p_hat, side, price, probability - price, low, "")
 
 

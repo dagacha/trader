@@ -195,7 +195,7 @@ def test_select_requires_eligible_offchain_mech(
         (0.9, [100 * 10**18, 100 * 10**18], "", 4),
         (None, [100 * 10**18, 100 * 10**18], "mech_response", 0),
         (0.9, None, "live_price_unavailable", 0),
-        (0.9, [35 * 10**18, 65 * 10**18], "max_slip", 0),
+        (0.9, [25 * 10**18, 75 * 10**18], "max_slip", 0),
     ],
 )
 @pytest.mark.parametrize("fee", [0, 2 * 10**16])

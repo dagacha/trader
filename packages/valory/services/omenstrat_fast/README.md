@@ -67,8 +67,9 @@ It keeps the new prepared transaction and does not reset Tendermint.
 The request records live pool prices. FastDecision reads the pool again, blends
 the YES probability with the title prior, then selects the side with the largest
 edge. Numeric phrases take priority over still-hold phrases. The NO probability
-is `1 - p_hat(YES)`. All bounds must pass. The stake is
-`min(CAP, KELLY_BANKROLL * (p_side - price) / (1 - price))` in xDAI.
+is `1 - p_hat(YES)`. All bounds must pass. The execution price includes the market fee and pool impact. A bounded search
+selects the largest stake within CAP, Kelly sizing, and all price bounds.
+A stake below `MIN_STAKE` is skipped with reason `min_stake`.
 The final execution quote also checks the blended edge, maximum price, and slip
 bound. `[FAST_DECISION]` records one terminal preparation decision per market,
 including age at request, answer, and bet preparation, plus `mech` and `latency_s`. A prepared bet is not proof
@@ -92,7 +93,8 @@ that its transaction settled; use the existing settlement logs for that result.
 | `NO_MIN_P` | `0.70` |
 | `CAP` | `4.0` xDAI |
 | `KELLY_BANKROLL` | `10.0` xDAI |
-| `MAX_SLIP` | `0.10` absolute price rise |
+| `MAX_SLIP` | `0.20` absolute price rise |
+| `MIN_STAKE` | `0.1` xDAI |
 | `USE_OFFCHAIN` | `true` |
 | `FAST_DYNAMIC_MECH` | `true`; controls `use_dynamic_mech_selection` |
 | `VALID_MECHS` | Normal Omen allowlist plus Mech 975 |
