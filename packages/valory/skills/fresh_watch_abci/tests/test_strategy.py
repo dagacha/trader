@@ -78,23 +78,36 @@ def test_template(title: Any, expected: Any) -> None:
 def test_decision() -> None:
     """Blend the prior, select a side, and size with capped Kelly."""
     cfg = FastConfig()
-    yes = decide("Will it still hold?", 0.9, [0.6, 0.4], [0.6, 0.4], cfg)
+
+    def decide_at_spot(
+        title: Any, p: Any, prices: Any, requested: Any, cfg: Any
+    ) -> Any:
+        """Keep price-rule fixtures free of material pool impact."""
+        return decide(
+            title, p, [int(v * 10**27) for v in reversed(prices)], requested, cfg, 0
+        )
+
+    yes = decide_at_spot("Will it still hold?", 0.9, [0.6, 0.4], [0.6, 0.4], cfg)
     assert yes.p_hat == pytest.approx(0.875)
     assert yes.side == 0
     assert yes.edge == pytest.approx(0.275)
     assert yes.stake == 4
-    no = decide("Will it happen?", 0.1, [0.7, 0.3], [0.7, 0.3], cfg)
+    no = decide_at_spot("Will it happen?", 0.1, [0.7, 0.3], [0.7, 0.3], cfg)
     assert no.side == 1
     assert no.stake == 4
-    assert decide("other", 0.1, [0.5, 0.5], [0.5, 0.5], cfg).stake == 4
-    small = decide("numeric above", 0.6, [0.5, 0.5], [0.5, 0.5], cfg)
+    assert decide_at_spot("other", 0.1, [0.5, 0.5], [0.5, 0.5], cfg).stake == 4
+    small = decide_at_spot("numeric above", 0.6, [0.5, 0.5], [0.5, 0.5], cfg)
     assert small.stake == pytest.approx(2)
     assert (
-        decide("numeric above", 0.6, [0.5, 0.5], [0.5, 0.5], replace(cfg, cap=1)).stake
+        decide_at_spot(
+            "numeric above", 0.6, [0.5, 0.5], [0.5, 0.5], replace(cfg, cap=1)
+        ).stake
         == 1
     )
     assert (
-        decide("other", 0.1, [0.7, 0.3], [0.7, 0.3], replace(cfg, prior_weight=1)).p_hat
+        decide_at_spot(
+            "other", 0.1, [0.7, 0.3], [0.7, 0.3], replace(cfg, prior_weight=1)
+        ).p_hat
         == 0.1
     )
 
@@ -111,7 +124,14 @@ def test_decision() -> None:
 )
 def test_skip(title: Any, p: Any, prices: Any, requested: Any, reason: Any) -> None:
     """Skip or abort when a strategy bound fails."""
-    result = decide(title, p, prices, requested, FastConfig())
+    result = decide(
+        title,
+        p,
+        [int(v * 10**27) for v in reversed(prices)],
+        requested,
+        FastConfig(),
+        0,
+    )
     assert result.reason == reason
     assert result.stake == 0
 
@@ -257,3 +277,113 @@ def test_queue_realitio_opening_is_trading_close(
     queue.ingest([row], 1000, ["allowed"], 600)
     queue.save()
     assert bool(FreshQueue(queue.path).pending) is queued
+
+
+@pytest.mark.parametrize(
+    "balances,fee,requested,cfg,reason",
+    [
+        ([3.5, 6.5], 2 * 10**16, [0.65, 0.35], FastConfig(), ""),
+        ([35, 65], 2 * 10**16, [0.65, 0.35], replace(FastConfig(), max_price=0.67), ""),
+        ([35, 65], 2 * 10**16, [0.65, 0.35], replace(FastConfig(), min_edge=0.14), ""),
+        ([35, 65], 2 * 10**17, [0.65, 0.35], FastConfig(), "min_edge"),
+        (
+            [35, 65],
+            2 * 10**16,
+            [0.65, 0.35],
+            replace(FastConfig(), max_price=0.66),
+            "max_price",
+        ),
+        ([35, 65], 2 * 10**16, [0.55, 0.45], FastConfig(), "max_slip"),
+    ],
+)
+def test_executed_kelly(
+    balances: Any, fee: int, requested: Any, cfg: Any, reason: str
+) -> None:
+    """Size against fees and impact, including a trader-35-like slip failure."""
+    reserves = [int(value * 10**18) for value in balances]
+    result = decide("still", 0.78, reserves, requested, cfg, fee)
+    assert result.p_hat == pytest.approx(0.815)
+    assert result.reason == reason
+    if reason:
+        assert result.stake == 0
+        return
+    # Independent binary invariant: net collateral increases both reserves.
+    net = result.stake * (1 - fee / 10**18)
+    tokens = balances[0] + net - balances[0] * balances[1] / (balances[1] + net)
+    assert result.price == pytest.approx(result.stake / tokens, abs=1e-12)
+    assert result.edge == pytest.approx(result.p_hat - result.price)
+    assert result.price <= cfg.max_price
+    assert result.price - requested[0] <= cfg.max_slip + 1e-12
+    assert result.edge + 1e-12 >= cfg.min_edge
+    assert 0 < result.stake < 4
+    kelly = cfg.kelly_bankroll * result.edge / (1 - result.price)
+    assert result.stake <= kelly + 1e-9
+    assert (
+        result.stake == pytest.approx(kelly, abs=1e-8)
+        or result.price == pytest.approx(cfg.max_price, abs=1e-8)
+        or result.edge == pytest.approx(cfg.min_edge, abs=1e-8)
+        or result.price - requested[0] == pytest.approx(cfg.max_slip, abs=1e-8)
+    )
+
+
+@pytest.mark.parametrize("fee", [-1, 10**18])
+def test_invalid_fee(fee: int) -> None:
+    """Fail closed when the market fee cannot give a valid quote."""
+    result = decide("still", 0.78, [10**18, 10**18], [0.5, 0.5], FastConfig(), fee)
+    assert result.reason == "invalid_fee"
+    assert result.stake == 0
+
+
+@pytest.mark.parametrize("side", [0, 1])
+@pytest.mark.parametrize("fee", [0, 2 * 10**16, 3 * 10**17])
+@pytest.mark.parametrize(
+    "reserves,investment",
+    [([35, 65], 4), ([10**19, 3 * 10**19], 4 * 10**18), ([1, 99], 1)],
+)
+def test_quote_contract_math(
+    side: int, fee: int, reserves: Any, investment: int
+) -> None:
+    """Compare with calcBuyAmount's binary invariant, including wei rounding."""
+    from fractions import Fraction
+    from math import ceil
+
+    from packages.valory.skills.fresh_watch_abci.strategy import buy_amount
+
+    # calcBuyAmount: https://github.com/gnosis/conditional-tokens-market-makers/
+    # blob/master/contracts/FixedProductMarketMaker.sol
+    # The binary invariant gives the ending reserve directly as an exact ratio.
+    net = investment - investment * fee // 10**18
+    ending = Fraction(reserves[0] * reserves[1], reserves[1 - side] + net)
+    expected = reserves[side] + net - ceil(ending)
+    assert buy_amount(investment, reserves, side, fee) == expected
+
+
+def test_no_outcome_execution_price() -> None:
+    """Use the selected NO reserve and probability when sizing a buy."""
+    from packages.valory.skills.fresh_watch_abci.strategy import buy_amount
+
+    reserves = [7 * 10**18, 3 * 10**18]
+    result = decide("other", 0.1, reserves, [0.3, 0.7], FastConfig(), 2 * 10**16)
+    assert result.side == 1
+    assert result.stake > 0
+    investment = int(result.stake * 10**18)
+    assert result.price == investment / buy_amount(investment, reserves, 1, 2 * 10**16)
+    assert result.edge == pytest.approx(1 - result.p_hat - result.price)
+
+
+def test_trader_35_quote_replay() -> None:
+    """Lower the stake for a synthetic pool with the reported 0.7607 quote."""
+    from packages.valory.skills.fresh_watch_abci.strategy import buy_amount
+
+    # The task supplies no reserves or request price. This fixture uses a 0.65
+    # request and reserves chosen to reproduce its 2% fee and 0.7607 buy quote.
+    reserves = [3657009488301950024, 6791589049703621473]
+    fee = 2 * 10**16
+    old_price = 4 * 10**18 / buy_amount(4 * 10**18, reserves, 0, fee)
+    assert old_price == pytest.approx(0.7607, abs=1e-12)
+    assert old_price - 0.65 > FastConfig().max_slip
+    result = decide("still", 0.78, reserves, [0.65, 0.35], FastConfig(), fee)
+    assert result.reason == ""
+    assert result.stake == pytest.approx(2.8965418874612787)
+    assert result.price == pytest.approx(0.7395634674420816)
+    assert result.price - 0.65 <= FastConfig().max_slip

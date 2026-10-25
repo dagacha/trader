@@ -146,7 +146,7 @@ class SharedState(TraderSharedState):
         """Initialize the poll timestamp."""
         super().__init__(*args, **kwargs)
         self.fast_activity_status: Optional[
-            Tuple[float, Optional[int], Tuple[bool, bool, int, int]]
+            Tuple[float, Optional[int], Tuple[bool, bool, int, int], int]
         ] = None
         self.fast_last_poll = 0.0
         self.fast_background_running = False

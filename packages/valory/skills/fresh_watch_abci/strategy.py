@@ -106,41 +106,91 @@ class Decision:
     reason: str
 
 
+def buy_amount(investment: int, balances: List[int], side: int, fee: int) -> int:
+    """Quote a binary buy with the FPMM calcBuyAmount integer math.
+
+    :param investment: collateral in wei.
+    :param balances: YES and NO reserves in wei.
+    :param side: outcome index.
+    :param fee: market fee scaled by 10**18.
+    :return: outcome tokens in wei.
+    """
+    one = 10**18
+    net = investment - investment * fee // one
+    numerator = balances[side] * one * balances[1 - side]
+    denominator = balances[1 - side] + net
+    ending = (numerator + denominator - 1) // denominator
+    return balances[side] + net - (ending + one - 1) // one
+
+
 def decide(
     title: str,
     p_tool: float,
-    prices: List[float],
+    balances: List[int],
     requested: List[float],
     cfg: FastConfig,
+    fee: int,
 ) -> Decision:
-    """Apply the prior, edge, price, NO, slip, and capped Kelly rules.
+    """Find the largest stake within Kelly sizing and all execution bounds.
 
     :param title: market question.
     :param p_tool: tool probability for YES.
-    :param prices: live YES and NO prices.
+    :param balances: live YES and NO reserves in wei.
     :param requested: YES and NO prices at request time.
     :param cfg: strategy controls.
+    :param fee: market fee scaled by 10**18.
     :return: a bet or an explicit skip reason.
     """
     kind = template(title)
     p_hat = cfg.prior_weight * p_tool + (1 - cfg.prior_weight) * cfg.priors[kind]
     probabilities = [p_hat, 1 - p_hat]
+    if min(balances) <= 0 or not all(0 < value < 1 for value in requested):
+        return Decision(kind, p_hat, 0, 0.0, 0.0, 0.0, "invalid_price")
+    if not 0 <= fee < 10**18:
+        return Decision(kind, p_hat, 0, 0.0, 0.0, 0.0, "invalid_fee")
+    prices = [balances[1] / sum(balances), balances[0] / sum(balances)]
     side = max(range(2), key=lambda index: probabilities[index] - prices[index])
-    price = prices[side]
-    edge = probabilities[side] - price
-    reason = ""
-    if not all(0 < value < 1 for value in prices + requested):
-        reason = "invalid_price"
-    elif price > cfg.max_price:
-        reason = "max_price"
-    elif side == 1 and probabilities[side] < cfg.no_min_p:
-        reason = "no_min_p"
-    elif edge + 1e-12 < cfg.min_edge:
-        reason = "min_edge"
-    elif price - requested[side] > cfg.max_slip + 1e-12:
-        reason = "max_slip"
-    stake = 0.0 if reason else min(cfg.cap, cfg.kelly_bankroll * edge / (1 - price))
-    return Decision(kind, p_hat, side, price, edge, stake, reason)
+    probability = probabilities[side]
+
+    def skip_reason(price: float) -> str:
+        """Name the first failed execution bound.
+
+        :param price: average execution price.
+        :return: skip reason, or an empty string.
+        """
+        if price > cfg.max_price:
+            return "max_price"
+        if side == 1 and probability < cfg.no_min_p:
+            return "no_min_p"
+        if probability - price + 1e-12 < cfg.min_edge:
+            return "min_edge"
+        if price - requested[side] > cfg.max_slip + 1e-12:
+            return "max_slip"
+        return ""
+
+    # The zero-stake limit includes the fee. Impact can only increase the price.
+    price = prices[side] / (1 - fee / 10**18)
+    reason = skip_reason(price)
+    if reason:
+        return Decision(kind, p_hat, side, price, probability - price, 0.0, reason)
+
+    # Price rises with stake, while Kelly size falls. Bisect their feasible range.
+    # Check CAP first so an allowed capped bet keeps its exact amount.
+    low, high = 0.0, cfg.cap
+    stake = high
+    for _ in range(64):
+        investment = int(stake * 10**18)
+        tokens = buy_amount(investment, balances, side, fee)
+        executed = investment / tokens if tokens > 0 else float("inf")
+        if not skip_reason(executed) and stake <= (
+            cfg.kelly_bankroll * (probability - executed) / (1 - executed)
+        ):
+            low = stake
+            price = executed
+        else:
+            high = stake
+        stake = (low + high) / 2
+    return Decision(kind, p_hat, side, price, probability - price, low, "")
 
 
 def housekeeping_due(now: float, last: float, queued: bool, cfg: FastConfig) -> bool:

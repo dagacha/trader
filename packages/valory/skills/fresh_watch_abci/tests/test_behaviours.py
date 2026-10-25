@@ -86,7 +86,7 @@ def raw_market() -> Any:
         fee=0,
         collateralToken="token",
         outcomeSlotCount=2,
-        outcomeTokenAmounts=[100, 100],
+        outcomeTokenAmounts=[100 * 10**18, 100 * 10**18],
         outcomeTokenMarginalPrices=[0.5, 0.5],
         outcomes=["Yes", "No"],
         scaledLiquidityMeasure=100,
@@ -102,7 +102,7 @@ def test_select_and_restart(tmp_path: Any) -> None:
             SimpleNamespace(relevant_tools={"superforcaster"})
         ]
         b._fetch_fresh = lambda cursor, now: done([raw_market()])
-        b._get_pool_balances = lambda *args: done([100, 100])
+        b._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
         with patch(
             "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
             return_value=1050,
@@ -148,7 +148,9 @@ def test_select_requires_eligible_offchain_mech(
     b.context.state.penalized_mechs = penalized
     b.context.state.fast_background_running = True
     b.sleep = MagicMock(side_effect=lambda delay: done(None))
-    b._get_pool_balances = MagicMock(side_effect=lambda *args: done([100, 100]))
+    b._get_pool_balances = MagicMock(
+        side_effect=lambda *args: done([100 * 10**18, 100 * 10**18])
+    )
     queue = FreshQueue(tmp_path / "fresh_watch.json")
     row = raw_market()
     queue.pending = [row]
@@ -190,14 +192,15 @@ def test_select_requires_eligible_offchain_mech(
 @pytest.mark.parametrize(
     "prediction,balances,reason,stake",
     [
-        (0.9, [100, 100], "", 4),
-        (None, [100, 100], "mech_response", 0),
+        (0.9, [100 * 10**18, 100 * 10**18], "", 4),
+        (None, [100 * 10**18, 100 * 10**18], "mech_response", 0),
         (0.9, None, "live_price_unavailable", 0),
-        (0.9, [35, 65], "max_slip", 0),
+        (0.9, [35 * 10**18, 65 * 10**18], "max_slip", 0),
     ],
 )
+@pytest.mark.parametrize("fee", [0, 2 * 10**16])
 def test_evaluate(
-    tmp_path: Any, prediction: Any, balances: Any, reason: Any, stake: Any
+    tmp_path: Any, prediction: Any, balances: Any, reason: Any, stake: Any, fee: int
 ) -> None:
     """Evaluate a real sampled bet without policy setup or strategy loading."""
     b = make(FastDecisionBehaviour, tmp_path)
@@ -207,6 +210,7 @@ def test_evaluate(
         }
     }
     raw = raw_market()
+    raw["fee"] = fee
     raw.pop("condition")
     bet = Bet(**raw, market="omen_subgraph")
     with (
@@ -230,6 +234,17 @@ def test_evaluate(
             result = run(b.evaluate())
     assert result["reason"] == reason
     assert result["stake"] == stake
+    if stake:
+        from packages.valory.skills.fresh_watch_abci.strategy import buy_amount
+
+        investment = int(stake * 10**18)
+        expected_price = investment / buy_amount(
+            investment, balances, result["side"], fee
+        )
+        assert result["executed_price"] == expected_price
+        assert result["price"] == expected_price
+        assert result["request_price"] == 0.5
+        assert result["edge"] == pytest.approx(result["p_hat"] - expected_price)
     assert result["age_at_request"] == 50
     assert result["age_at_answer"] == 100
     assert result["mech"] == "0xselected"
@@ -377,7 +392,7 @@ def test_watch_paths(tmp_path: Any, case: str) -> None:
     queue.save()
     b._fetch_fresh = lambda *args: done(None if case == "unavailable" else [])
     b._get_pool_balances = lambda *args: done(
-        None if case == "no_quote" else [100, 100]
+        None if case == "no_quote" else [100 * 10**18, 100 * 10**18]
     )
     if case == "wait":
         b.context.state.fast_last_poll = 1050
@@ -419,7 +434,7 @@ def test_watch_paths(tmp_path: Any, case: str) -> None:
             sd.return_value.mechs_info = [
                 SimpleNamespace(relevant_tools=set(FastConfig().tools))
             ]
-            b._get_pool_balances = lambda *args: done([100, 100])
+            b._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
             assert run(b.select())["lane"] == "market"
 
 
@@ -483,7 +498,7 @@ def test_quote_failure_survives_restart(
     b.sleep.assert_called_once_with(FastConfig().poll_s)
     restarted = make(FreshWatchBehaviour, tmp_path) if restart else b
     restarted.context.state.fast_background_running = True
-    restarted._get_pool_balances = lambda *args: done([100, 100])
+    restarted._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
     with (
         patch.object(
             type(restarted), "synchronized_data", new_callable=PropertyMock
@@ -508,7 +523,7 @@ def test_string_timestamps_through_selection_and_decision(tmp_path: Any) -> None
     b = make(FreshWatchBehaviour, tmp_path)
     row = {**raw_market(), "creationTimestamp": "1000", "openingTimestamp": "100000"}
     b._fetch_fresh = lambda *args: done([row])
-    b._get_pool_balances = lambda *args: done([100, 100])
+    b._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
     with (
         patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
         patch(
@@ -527,7 +542,7 @@ def test_string_timestamps_through_selection_and_decision(tmp_path: Any) -> None
     assert bet.creationTimestamp == 1000
     assert bet.openingTimestamp == 100000
     decision._get_decision_prediction = lambda: SimpleNamespace(p_yes=0.9)
-    decision._get_pool_balances = lambda *args: done([100, 100])
+    decision._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
     with (
         patch.object(
             type(decision), "synchronized_data", new_callable=PropertyMock
@@ -615,9 +630,10 @@ def test_placement_log(tmp_path: Any, placed: bool, tokens: int) -> None:
         patch.object(type(b), "sampled_bet", new_callable=PropertyMock) as sampled,
     ):
         sampled.return_value.creationTimestamp = 1000
-        sd.return_value.db.get_strict.return_value = json.dumps(
-            dict(p_hat=0.875, stake=4, reason="")
-        )
+        sd.return_value.db.get_strict.side_effect = lambda key: {
+            "fast_decision": json.dumps(dict(p_hat=0.875, stake=4, reason="")),
+            "request_prices": [0.5, 0.5],
+        }[key]
         sd.return_value.bet_amount = 50
         sd.return_value.vote = 0
         with patch(
@@ -633,7 +649,7 @@ def test_placement_log(tmp_path: Any, placed: bool, tokens: int) -> None:
     assert args[0] == "[FAST_DECISION] %s"
     result = json.loads(args[1])
     assert result["age_at_bet"] == 100
-    assert result["stake"] == (4 if placed else 0)
+    assert result["stake"] == 4
 
 
 @pytest.mark.parametrize(
@@ -658,7 +674,7 @@ def test_closed_at_answer(tmp_path: Any, opening: int, reason: str, stake: int) 
             "request_prices": [0.5, 0.5],
         }[key]
         b._get_decision_prediction = lambda: SimpleNamespace(p_yes=0.9)
-        b._get_pool_balances = lambda *args: done([100, 100])
+        b._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
         with patch(
             "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
             return_value=1100,
@@ -784,7 +800,7 @@ def test_background_queue_has_priority(tmp_path: Any) -> None:
     queue = FreshQueue(tmp_path / "fresh_watch.json")
     queue.pending = [raw_market()]
     queue.save()
-    b._get_pool_balances = lambda *args: done([100, 100])
+    b._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
     with patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd:
         sd.return_value.mechs_info = [
             SimpleNamespace(relevant_tools=set(FastConfig().tools))
@@ -850,7 +866,7 @@ def test_queued_market_expires_before_request(
     queue = FreshQueue(tmp_path / "fresh_watch.json")
     queue.ingest([row], 1001, FastConfig().creators, 600)
     queue.save()
-    b._get_pool_balances = lambda *args: done([100, 100])
+    b._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
     with (
         patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
         patch(
@@ -897,7 +913,7 @@ def test_period_trade_cap(
         b.ts_checkpoint = 100
         b._compute_activity_status = lambda: done((met, met, 8, 8 if met else 3))
         b._fetch_fresh = lambda *args: done([raw_market()])
-        b._get_pool_balances = lambda *args: done([100, 100])
+        b._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
         b.sleep = lambda *args: done(None)
         queue = FreshQueue(tmp_path / "fresh_watch.json")
         queue.pending = [raw_market()]
@@ -943,7 +959,7 @@ def test_cap_resets_with_checkpoint(tmp_path: Any) -> None:
         json.dumps(dict(count=3, placement_keys=["old"], period_start=100))
     )
     b._fetch_fresh = lambda *args: done([raw_market()])
-    b._get_pool_balances = lambda *args: done([100, 100])
+    b._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
     with patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd:
         sd.return_value.successful_trade_count = 0
         sd.return_value.previous_checkpoint = 100
@@ -1048,7 +1064,9 @@ def test_watch_without_durable_counter(tmp_path: Any) -> None:
             assert run(b.select())["lane"] == "wait"
 
 
-@pytest.mark.parametrize("refresh", ["interval", "checkpoint"])
+@pytest.mark.parametrize(
+    "refresh", ["interval", "checkpoint", "trade", "consensus_trade"]
+)
 def test_activity_status_cached_across_watch_rounds(
     tmp_path: Any, refresh: str
 ) -> None:
@@ -1071,7 +1089,7 @@ def test_activity_status_cached_across_watch_rounds(
         restarted: Any = FreshWatchBehaviour(name="next", skill_context=b.context)
         restarted._compute_activity_status = reads
         restarted._select = b._select
-        clock.return_value = 11
+        clock.return_value = 27
         assert run(restarted.select())["previous_checkpoint"] == 100
         assert reads.call_count == 1
         if refresh == "checkpoint":
@@ -1079,8 +1097,115 @@ def test_activity_status_cached_across_watch_rounds(
                 b.context.state.synchronized_data.update(previous_checkpoint=200)
             )
             restarted.ts_checkpoint = 200
+            (tmp_path / "successful_trade_count.txt").write_text(
+                json.dumps(dict(count=1, placement_keys=[], period_start=200))
+            )
+        elif refresh == "trade":
+            (tmp_path / "successful_trade_count.txt").write_text(
+                json.dumps(dict(count=1, placement_keys=[], period_start=100))
+            )
+        elif refresh == "consensus_trade":
+            (tmp_path / "successful_trade_count.txt").unlink()
+            b.context.state.synchronized_data = (
+                b.context.state.synchronized_data.update(successful_trade_count=1)
+            )
         else:
-            clock.return_value = 25
+            clock.return_value = 10 + FastConfig().housekeeping_interval_s
             restarted.ts_checkpoint = 100
         run(restarted.select())
         assert reads.call_count == 2
+        if refresh == "checkpoint":
+            state = json.loads((tmp_path / "successful_trade_count.txt").read_text())
+            assert state["count"] == 1
+            assert state["period_start"] == 200
+
+
+@pytest.mark.parametrize(
+    "tokens,success,submitter,reason",
+    [
+        (0, True, "placement", "quote"),
+        (100, False, "placement", "quote"),
+        (50, True, "placement", "max_price"),
+        (70, True, "placement", "max_slip"),
+        (100, True, None, "balance"),
+        (100, True, "placement", "other"),
+    ],
+)
+def test_placement_failure_reason(
+    tmp_path: Any, tokens: int, success: bool, submitter: Any, reason: str
+) -> None:
+    """Name the failed check and retain the requested stake in the log."""
+    from packages.valory.skills.decision_maker_abci.behaviours.bet_placement import (
+        BetPlacementBehaviour,
+    )
+    from packages.valory.skills.decision_maker_abci.payloads import BetPlacementPayload
+
+    b = make(FastBetPlacementBehaviour, tmp_path)
+    b.quoted_tokens = tokens
+    with (
+        patch.object(
+            BetPlacementBehaviour, "_calc_buy_amount", return_value=done(success)
+        ),
+        patch.object(
+            BetPlacementBehaviour, "finish_behaviour", return_value=done(None)
+        ),
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch.object(type(b), "sampled_bet", new_callable=PropertyMock) as sampled,
+    ):
+        sampled.return_value.creationTimestamp = 1000
+        sd.return_value.bet_amount = 50
+        sd.return_value.vote = 0
+        sd.return_value.db.get_strict.side_effect = lambda key: {
+            "request_prices": [0.5, 0.5],
+            "fast_decision": json.dumps(
+                dict(p_hat=0.815, stake=4, reason="", price=0.6)
+            ),
+        }[key]
+        if submitter:
+            run(b._calc_buy_amount())
+        run(b.finish_behaviour(BetPlacementPayload("agent", tx_submitter=submitter)))
+    result = json.loads(b.context.logger.info.call_args.args[1])
+    assert result["reason"] == reason
+    assert result["request_price"] == 0.5
+    assert result["stake"] == 4
+    assert result["executed_price"] == (
+        50 / tokens if tokens and success and submitter else None
+    )
+    if result["executed_price"] is not None:
+        assert result["edge"] == pytest.approx(0.815 - result["executed_price"])
+
+
+def test_placement_quote_retry(tmp_path: Any) -> None:
+    """Clear an old execution price when a later quote read fails."""
+    from packages.valory.skills.decision_maker_abci.behaviours.bet_placement import (
+        BetPlacementBehaviour,
+    )
+    from packages.valory.skills.decision_maker_abci.payloads import BetPlacementPayload
+
+    b = make(FastBetPlacementBehaviour, tmp_path)
+    b.quoted_tokens = 100
+    with (
+        patch.object(
+            BetPlacementBehaviour,
+            "_calc_buy_amount",
+            side_effect=[done(True), done(False)],
+        ),
+        patch.object(
+            BetPlacementBehaviour, "finish_behaviour", return_value=done(None)
+        ),
+        patch.object(type(b), "sampled_bet", new_callable=PropertyMock) as sampled,
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+    ):
+        sampled.return_value.creationTimestamp = 1000
+        sd.return_value.bet_amount = 50
+        sd.return_value.vote = 0
+        sd.return_value.db.get_strict.side_effect = lambda key: {
+            "request_prices": [0.5, 0.5],
+            "fast_decision": json.dumps(dict(p_hat=0.815, stake=4, reason="")),
+        }[key]
+        assert run(b._calc_buy_amount())
+        assert not run(b._calc_buy_amount())
+        run(b.finish_behaviour(BetPlacementPayload("agent", tx_submitter="placement")))
+    result = json.loads(b.context.logger.info.call_args.args[1])
+    assert result["reason"] == "quote"
+    assert result["executed_price"] is None
