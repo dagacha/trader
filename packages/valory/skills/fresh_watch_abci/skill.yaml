@@ -14,11 +14,11 @@ fingerprint:
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
   models.py: bafybeia4nzzmxrtqorynrwiq5px3mpuq5ecbdtg7ygmbx6u75nw54s7gdu
   rounds.py: bafybeihpvt4reookpnr4pqcjwrag7qlgtrkn4lxtl5oaa6m32ig5455qte
-  strategy.py: bafybeidpospsbpucm4wldvoetppspo6a4geiianmrdj67gouzbdwdesx3a
+  strategy.py: bafybeigm7rhi4dprkxh55n74fjiibyj5qldp7l3sf4sio5t3bn7ecq5lvm
   tests/__init__.py: bafybeiebuokdlpgmmm6orggvfnnm537acc3eogkkrn6jyjaxzqyb7t7yzy
-  tests/test_behaviours.py: bafybeiddihpi7ozgelcs3ebkumtj6eup3cerwcpnjhtc3fva2gmeubrima
+  tests/test_behaviours.py: bafybeihcwyhlwnvxtmwosrautlqb5gcu5ytsiztzx5qf34wosnwjbl3lxu
   tests/test_rounds.py: bafybeiethtm2rdws2ecocfiznx7mewmmxo4k6aro3nzteg6easjbu6hvqe
-  tests/test_strategy.py: bafybeighqauebyvnplysxpguk3ag6jredudezqosqgv67qc5fvk7gmvcjq
+  tests/test_strategy.py: bafybeidg5u2gfkudquygzlit6svpqxspnfc2zvquo6j6kaugttohtdbw5q
 fingerprint_ignore_patterns: []
 connections: []
 contracts: []

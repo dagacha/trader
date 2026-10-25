@@ -184,7 +184,7 @@ def test_age_boundary(tmp_path: Any) -> None:
 
 
 def test_housekeeping() -> None:
-    """Queued work wins; inside the window, housekeeping is rate limited."""
+    """Queued work wins; housekeeping is rate limited inside and outside the window."""
     cfg = FastConfig()
     inside = datetime(2026, 10, 23, 1, tzinfo=timezone.utc).timestamp()
     outside = datetime(2026, 10, 23, 6, tzinfo=timezone.utc).timestamp()
@@ -192,7 +192,10 @@ def test_housekeeping() -> None:
     assert not housekeeping_due(inside, inside - 599, False, cfg)
     assert housekeeping_due(inside, inside - 600, False, cfg)
     assert not housekeeping_due(outside, 0, True, cfg)
-    assert housekeeping_due(outside, outside, False, cfg)
+    assert housekeeping_due(outside, 0, False, cfg)
+    assert not housekeeping_due(outside, outside, False, cfg)
+    assert not housekeeping_due(outside, outside - 599, False, cfg)
+    assert housekeeping_due(outside, outside - 600, False, cfg)
     assert not cfg.in_window(
         datetime(2026, 10, 23, 5, 30, tzinfo=timezone.utc).timestamp()
     )
