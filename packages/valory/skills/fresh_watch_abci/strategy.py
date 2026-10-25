@@ -164,7 +164,7 @@ def decide(
             return "max_price"
         if side == 1 and probability < cfg.no_min_p:
             return "no_min_p"
-        if probability - price + 1e-12 < cfg.min_edge:
+        if probability - price + 1e-12 < cfg.min_edge + cfg.price_margin:
             return "min_edge"
         if price - requested[side] > cfg.max_slip - cfg.price_margin + 1e-12:
             return "max_slip"

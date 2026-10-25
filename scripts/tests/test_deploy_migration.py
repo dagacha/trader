@@ -2466,6 +2466,7 @@ def test_missing_provenance_warns_for_custom_value(tmp_path):
         (None, "0.1", "0.1"),
         ([], "0.1", "0.1"),
         (["MAX_SLIP"], "0.1", "0.2"),
+        (["MAX_SLIP"], "0.10", "0.2"),
         (["MAX_SLIP"], "0.15", "0.15"),
         (["MAX_SLIP"], "0.2", "0.2"),
     ],
@@ -2676,13 +2677,14 @@ def test_slip_sync_retry_preserves_each_copy(tmp_path, monkeypatch, interrupt):
     [(kind, "wrapped") for kind in ("source", "saved", "cache", "agent", "k8s")]
     + [("cache", "scalar"), ("cache", "lower")],
 )
-def test_slip_upgrade_checks_each_copy(tmp_path, custom, layout):
+@pytest.mark.parametrize("old_default", [0.1, "0.10"])
+def test_slip_upgrade_checks_each_copy(tmp_path, custom, layout, old_default):
     """Upgrade only a copy whose scalar still equals the old default."""
     paths = fixture(tmp_path)
     for index, path in enumerate(paths):
         data = json.loads(path.read_text())
         data["env_variables"]["MAX_SLIP"] = entry(
-            0.15 if custom == ("source" if index == 0 else "cache") else 0.1
+            0.15 if custom == ("source" if index == 0 else "cache") else old_default
         )
         if index and layout == "scalar":
             data["env_variables"]["MAX_SLIP"] = data["env_variables"]["MAX_SLIP"][
@@ -2694,15 +2696,19 @@ def test_slip_upgrade_checks_each_copy(tmp_path, custom, layout):
     saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
     saved.write_text(
         json.dumps(
-            {"user_provided_args": {"MAX_SLIP": 0.15 if custom == "saved" else 0.1}}
+            {
+                "user_provided_args": {
+                    "MAX_SLIP": 0.15 if custom == "saved" else old_default
+                }
+            }
         )
     )
     agent = paths[1].parent / "agent_0.env"
     prefix = "SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_"
-    value = "0.15" if custom == "agent" else "0.1"
+    value = "0.15" if custom == "agent" else str(old_default)
     agent.write_text(f"MAX_SLIP={value}\n{prefix}MAX_SLIP={value}\n")
     build = paths[1].parent / "build.yaml"
-    value = "0.15" if custom == "k8s" else "0.1"
+    value = "0.15" if custom == "k8s" else str(old_default)
     build.write_text(f'env:\n  - name: {prefix}MAX_SLIP\n    value: "{value}"\n')
     marker = tmp_path / "configs/.fast_defaults_added.json"
     marker.write_text(json.dumps({"added": ["MAX_SLIP"]}))

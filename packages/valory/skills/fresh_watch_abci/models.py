@@ -124,6 +124,12 @@ class FastParams(TraderParams):
             for item in fields(FastConfig)
         }
         self.fast = FastConfig(**controls)
+        if (
+            not 0
+            <= self.fast.price_margin
+            < min(self.fast.max_slip, self.fast.max_price)
+        ):
+            raise ValueError("Require 0 <= price_margin < min(max_slip, max_price).")
         if kwargs.get("is_running_on_polymarket"):
             raise ValueError("The fast agent supports Omen only.")
         if self.fast.tools != FastConfig().tools:

@@ -316,3 +316,29 @@ def test_slip_and_minimum_stake_defaults() -> None:
     for key, value in defaults.items():
         assert config["env_variables"][key.upper()]["value"] == str(value)
         assert key.upper() in migration["FAST_ENV"]
+
+
+@pytest.mark.parametrize(
+    "margin,max_slip,max_price",
+    [(-0.01, 0.2, 0.9), (0.2, 0.2, 0.9), (0.3, 0.2, 0.9), (0.1, 0.2, 0.1)],
+)
+def test_invalid_price_margin(
+    tmp_path: Any, margin: float, max_slip: float, max_price: float
+) -> None:
+    """Reject a margin that leaves no permitted price or slip range."""
+    from unittest.mock import MagicMock
+
+    from packages.valory.skills.fresh_watch_abci.models import FastParams
+
+    config = yaml.safe_load(
+        (ROOT / "packages/valory/skills/omenstrat_fast_abci/skill.yaml").read_text()
+    )
+    args = {
+        **config["models"]["params"]["args"],
+        "store_path": str(tmp_path),
+        "price_margin": margin,
+        "max_slip": max_slip,
+        "max_price": max_price,
+    }
+    with pytest.raises(ValueError, match="0 <= price_margin < min"):
+        FastParams(name="params", skill_context=MagicMock(), **args)

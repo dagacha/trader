@@ -464,9 +464,17 @@ def sync_priority(mech, desired, changes):
     return changed
 
 
+def is_old_slip_default(value):
+    """Match numeric spellings of the old slip default."""
+    try:
+        return float(scalar(value)) == 0.1
+    except (ValueError, TypeError):
+        return False
+
+
 def keep_slip_override(key, value, upgrade_slip):
     """Keep each copy's operator value during the one-time slip upgrade."""
-    return upgrade_slip and key == "MAX_SLIP" and scalar(value) != "0.1"
+    return upgrade_slip and key == "MAX_SLIP" and not is_old_slip_default(value)
 
 
 def sync_cached_json(text, desired, upgrade_slip=False):
@@ -960,7 +968,7 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                     elif (
                         key == "MAX_SLIP"
                         and upgrade_slip
-                        and scalar(data["env_variables"][key].get("value")) == "0.1"
+                        and is_old_slip_default(data["env_variables"][key].get("value"))
                     ):
                         data["env_variables"][key]["value"] = source["value"]
                         updated = edit_json(updated, data, source["value"])

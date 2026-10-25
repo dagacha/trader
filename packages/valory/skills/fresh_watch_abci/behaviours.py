@@ -162,27 +162,29 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour, CheckStopTradingBehaviour)
         cache = self.context.state.fast_activity_status
         now = time.monotonic()
         count = None
-        if cache is not None and cache[1] == self.synchronized_data.previous_checkpoint:
+        if (
+            cache is not None
+            and cache[1] == self.synchronized_data.previous_checkpoint
+            and now - cache[0] < self.params.fast.housekeeping_interval_s
+        ):
             count, _ = read_successful_trade_count_state(
                 self.params.store_path, cache[1]
             )
             if count is None:
                 count = self.synchronized_data.successful_trade_count
-        if (
-            cache is None
-            or cache[1] != self.synchronized_data.previous_checkpoint
-            or cache[3] != count
-            or now - cache[0] >= self.params.fast.housekeeping_interval_s
-        ):
+        if count is None or cache is None or cache[3] != count:
             status = yield from self._compute_activity_status()
             period = (
                 self.ts_checkpoint
                 if self.service_staking_state == StakingState.STAKED
                 else self.synchronized_data.previous_checkpoint
             )
-            count, _ = read_successful_trade_count_state(self.params.store_path, period)
-            if count is None:
-                count = self.synchronized_data.successful_trade_count
+            if count is None or cache is None or cache[1] != period:
+                count, _ = read_successful_trade_count_state(
+                    self.params.store_path, period
+                )
+                if count is None:
+                    count = self.synchronized_data.successful_trade_count
             cache = (now, period, status, count)
             self.context.state.fast_activity_status = cache
         _, period, (kpi_met, target_met, target, completed), count = cache
@@ -519,6 +521,12 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
     _placement_failure = "other"
     _executed_price: Optional[float] = None
 
+    def async_act(self) -> Generator:
+        """Clear quote state before each placement attempt."""
+        self._placement_failure = "other"
+        self._executed_price = None
+        yield from super().async_act()
+
     def _get_decision_prediction(self) -> Optional[PredictionResponse]:
         """Read the calibrated prediction for the final execution check.
 
@@ -553,7 +561,7 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
         if price - requested > cfg.max_slip + 1e-12:
             self._placement_failure = "max_slip"
             return False
-        self._placement_failure = "other"
+        self._placement_failure = "edge_recheck"
         return True
 
     def finish_behaviour(self, payload: Any) -> Generator:
@@ -565,7 +573,10 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
         result = json.loads(self.synchronized_data.db.get_strict("fast_decision"))
         result["age_at_bet"] = time.time() - self.sampled_bet.creationTimestamp
         result["prepared"] = bool(payload.tx_hash)
-        if not payload.tx_hash:
+        if self.benchmarking_mode.enabled:
+            result["reason"] = "benchmarking"
+            result["prepared"] = None
+        elif not payload.tx_hash:
             result["reason"] = (
                 "balance" if payload.tx_submitter is None else self._placement_failure
             )

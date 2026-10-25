@@ -26,6 +26,9 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
+from packages.valory.skills.agent_performance_summary_abci.activity_goal import (
+    read_successful_trade_count_state,
+)
 from packages.valory.skills.fresh_watch_abci.behaviours import (
     FastBetPlacementBehaviour,
     FastDecisionBehaviour,
@@ -59,6 +62,7 @@ def make(cls: Any, tmp_path: Any) -> Any:
     context.params.fast = FastConfig(active_window_utc="00:00-23:59")
     context.state.fast_activity_status = None
     context.state.fast_last_poll = 0
+    context.benchmarking_mode.enabled = False
     context.params.max_trades = 3
     context.state.synchronized_data.successful_trade_count = 0
     context.state.synchronized_data.previous_checkpoint = None
@@ -1083,11 +1087,18 @@ def test_activity_status_cached_across_watch_rounds(
     b._select = lambda *args: done({"lane": "wait"})
     reads = MagicMock(side_effect=lambda: done((False, False, 8, 3)))
     b._compute_activity_status = reads
-    with patch(
-        "packages.valory.skills.fresh_watch_abci.behaviours.time.monotonic",
-        return_value=10,
-    ) as clock:
+    with (
+        patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.monotonic",
+            return_value=10,
+        ) as clock,
+        patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.read_successful_trade_count_state",
+            wraps=read_successful_trade_count_state,
+        ) as counts,
+    ):
         assert run(b.select())["activity_completed"] == 3
+        assert counts.call_count == 1
         restarted: Any = FreshWatchBehaviour(name="next", skill_context=b.context)
         restarted._compute_activity_status = reads
         restarted._select = b._select
@@ -1114,7 +1125,9 @@ def test_activity_status_cached_across_watch_rounds(
         else:
             clock.return_value = 10 + FastConfig().housekeeping_interval_s
             restarted.ts_checkpoint = 100
+        counts.reset_mock()
         run(restarted.select())
+        assert counts.call_count == 1
         assert reads.call_count == 2
         if refresh == "checkpoint":
             state = json.loads((tmp_path / "successful_trade_count.txt").read_text())
@@ -1130,7 +1143,7 @@ def test_activity_status_cached_across_watch_rounds(
         (50, True, "placement", "max_price"),
         (70, True, "placement", "max_slip"),
         (100, True, None, "balance"),
-        (100, True, "placement", "other"),
+        (100, True, "placement", "edge_recheck"),
     ],
 )
 def test_placement_failure_reason(
@@ -1217,7 +1230,8 @@ def test_placement_quote_retry(tmp_path: Any) -> None:
     assert result["executed_price"] is None
 
 
-def test_staked_activity_cache_after_consensus(tmp_path: Any) -> None:
+@pytest.mark.parametrize("lane", ["wait", "market", "housekeeping"])
+def test_staked_activity_cache_after_consensus(tmp_path: Any, lane: str) -> None:
     """Reuse the staked period after consensus replaces an old checkpoint."""
     from packages.valory.skills.abstract_round_abci.base import AbciAppDB
     from packages.valory.skills.decision_maker_abci.states.base import SynchronizedData
@@ -1248,7 +1262,7 @@ def test_staked_activity_cache_after_consensus(tmp_path: Any) -> None:
             b.service_staking_state = StakingState.STAKED
             b.ts_checkpoint = 200
             b._compute_activity_status = reads
-            b._select = lambda *args: done({"lane": "wait"})
+            b._select = lambda *args: done({"lane": lane})
             selection = run(b.select())
             assert selection["previous_checkpoint"] == 200
             round_ = FreshWatchRound(b.context.state.synchronized_data, MagicMock())
@@ -1256,7 +1270,14 @@ def test_staked_activity_cache_after_consensus(tmp_path: Any) -> None:
             outcome = round_.end_block()
             assert outcome is not None
             data, event = outcome
-            assert event == Event.WAIT
+            assert (
+                event
+                == {
+                    "wait": Event.WAIT,
+                    "market": Event.MARKET,
+                    "housekeeping": Event.HOUSEKEEPING,
+                }[lane]
+            )
             assert isinstance(data, SynchronizedData)
             assert data.previous_checkpoint == 200
             b.context.state.synchronized_data = data
@@ -1323,24 +1344,46 @@ def test_decided_amount_passes_placement(
     assert synced.vote is not None
     b = make(FastBetPlacementBehaviour, tmp_path)
     b.context.params.fast = cfg
-    b.quoted_tokens = buy_amount(synced.bet_amount, reserves, synced.vote, fee)
-    assert synced.bet_amount / b.quoted_tokens == decision.price
+    from packages.valory.protocols.contract_api.message import ContractApiMessage
+
+    response = MagicMock()
+    response.performative = ContractApiMessage.Performative.RAW_TRANSACTION
+    response.raw_transaction.body = {
+        "amount": buy_amount(synced.bet_amount, reserves, synced.vote, fee)
+    }
+    b.get_contract_api_response = MagicMock(side_effect=lambda **kwargs: done(response))
+    b.context.params.slippage = 0.01
     with (
-        patch.object(
-            BetPlacementBehaviour, "_calc_buy_amount", side_effect=lambda: done(True)
-        ),
         patch.object(
             type(b), "synchronized_data", new_callable=PropertyMock, return_value=synced
         ),
+        patch.object(
+            type(b),
+            "sampled_bet",
+            new_callable=PropertyMock,
+            return_value=SimpleNamespace(id="market", creationTimestamp=1000),
+        ),
     ):
         assert run(b._calc_buy_amount())
+        assert synced.bet_amount / b.quoted_tokens == decision.price
+        assert (
+            b.get_contract_api_response.call_args.kwargs["contract_callable"]
+            == "calc_buy_amount"
+        )
+        assert (
+            b.get_contract_api_response.call_args.kwargs["investment_amount"]
+            == synced.bet_amount
+        )
 
         other_buy = 10**15
         other_tokens = buy_amount(other_buy, reserves, synced.vote, fee)
         net = other_buy - other_buy * fee // 10**18
         moved = [reserve + net for reserve in reserves]
         moved[synced.vote] -= other_tokens
-        b.quoted_tokens = buy_amount(synced.bet_amount, moved, synced.vote, fee)
+        response.raw_transaction.body = {
+            "amount": buy_amount(synced.bet_amount, moved, synced.vote, fee)
+        }
+        run(b._calc_buy_amount())
         if margin:
             assert limit - margin < synced.bet_amount / b.quoted_tokens < limit
             assert run(b._calc_buy_amount())
@@ -1374,3 +1417,100 @@ def test_decided_amount_passes_placement(
             logged = json.loads(b.context.logger.info.call_args.args[1])
             assert logged["prepared"] is False
             assert logged["reason"] == bound
+
+
+@pytest.mark.parametrize("missing_prediction", [False, True])
+def test_placement_edge_recheck_log(tmp_path: Any, missing_prediction: bool) -> None:
+    """Name an edge abort after a real contract quote passes the fast bounds."""
+    from packages.valory.protocols.contract_api.message import ContractApiMessage
+    from packages.valory.skills.decision_maker_abci.behaviours.bet_placement import (
+        BetPlacementBehaviour,
+    )
+    from packages.valory.skills.decision_maker_abci.payloads import BetPlacementPayload
+
+    b = make(FastBetPlacementBehaviour, tmp_path)
+    b.context.params.is_running_on_polymarket = False
+    b.context.params.placement_min_edge = 0.03
+    b.context.params.slippage = 0.01
+    b.wait_for_condition_with_sleep = lambda *args: done(None)
+    response = MagicMock()
+    response.performative = ContractApiMessage.Performative.RAW_TRANSACTION
+    response.raw_transaction.body = {"amount": 100}
+    b.get_contract_api_response = lambda **kwargs: done(response)
+    b._build_buy_tx = MagicMock()
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch.object(
+            type(b),
+            "sampled_bet",
+            new_callable=PropertyMock,
+            return_value=SimpleNamespace(id="market", creationTimestamp=1000),
+        ),
+        patch.object(
+            BetPlacementBehaviour,
+            "finish_behaviour",
+            side_effect=lambda payload: done(None),
+        ),
+    ):
+        sd.return_value.bet_amount = 50
+        sd.return_value.vote = 0
+        sd.return_value.db.get_strict.side_effect = lambda key: {
+            "request_prices": [0.5, 0.5],
+            "fast_decision": json.dumps(dict(p_hat=0.52, stake=4, reason="")),
+        }[key]
+        if missing_prediction:
+            b._get_decision_prediction = lambda: None
+        tx_hash = run(b._prepare_safe_tx())
+        assert tx_hash is None
+        b._build_buy_tx.assert_not_called()
+        run(b.finish_behaviour(BetPlacementPayload("agent", "placement", tx_hash)))
+    logged = json.loads(b.context.logger.info.call_args.args[1])
+    assert logged["reason"] == "edge_recheck"
+    assert logged["prepared"] is False
+    assert logged["executed_price"] == 0.5
+
+
+@pytest.mark.parametrize("benchmarking", [False, True])
+def test_placement_reused_before_quote(tmp_path: Any, benchmarking: bool) -> None:
+    """Clear a prior quote before a balance skip or a simulated placement."""
+    from packages.valory.skills.decision_maker_abci.behaviours.bet_placement import (
+        BetPlacementBehaviour,
+    )
+    from packages.valory.skills.decision_maker_abci.payloads import BetPlacementPayload
+
+    b = make(FastBetPlacementBehaviour, tmp_path)
+    b._placement_failure = "max_slip"
+    b._executed_price = 0.8
+    b.context.benchmarking_mode.enabled = benchmarking
+    payload = BetPlacementPayload("agent", None, None, benchmarking)
+
+    def placement(self: Any) -> Any:
+        yield from self.finish_behaviour(payload)
+
+    with (
+        patch.object(BetPlacementBehaviour, "async_act", placement),
+        patch.object(
+            BetPlacementBehaviour,
+            "finish_behaviour",
+            side_effect=lambda payload: done(None),
+        ),
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch.object(
+            type(b),
+            "sampled_bet",
+            new_callable=PropertyMock,
+            return_value=SimpleNamespace(id="market", creationTimestamp=1000),
+        ),
+    ):
+        sd.return_value.vote = 0
+        sd.return_value.db.get_strict.side_effect = lambda key: {
+            "request_prices": [0.5, 0.5],
+            "fast_decision": json.dumps(dict(p_hat=0.815, stake=4, reason="")),
+        }[key]
+        run(b.async_act())
+    logged = json.loads(b.context.logger.info.call_args.args[1])
+    assert logged["reason"] == ("benchmarking" if benchmarking else "balance")
+    assert logged["prepared"] is (None if benchmarking else False)
+    assert logged["executed_price"] is None
+    assert logged["price"] is None
+    assert logged["edge"] is None

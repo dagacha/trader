@@ -327,7 +327,7 @@ def test_executed_kelly(
     assert (
         result.stake == pytest.approx(kelly, abs=1e-8)
         or result.price == pytest.approx(cfg.max_price - cfg.price_margin, abs=1e-8)
-        or result.edge == pytest.approx(cfg.min_edge, abs=1e-8)
+        or result.edge == pytest.approx(cfg.min_edge + cfg.price_margin, abs=1e-8)
         or result.price - requested[0]
         == pytest.approx(cfg.max_slip - cfg.price_margin, abs=1e-8)
     )
@@ -392,9 +392,14 @@ def test_trader_35_quote_replay() -> None:
     assert old_price - 0.65 <= FastConfig().max_slip
     result = decide("still", 0.78, reserves, [0.65, 0.35], FastConfig(), fee)
     assert result.reason == ""
-    assert result.stake == pytest.approx(2.8965418874612787)
-    assert result.price == pytest.approx(0.7395634674420816)
-    assert result.price - 0.65 <= FastConfig().max_slip
+    cfg = FastConfig()
+    assert cfg.min_stake <= result.stake < cfg.cap
+    assert result.price <= cfg.max_price - cfg.price_margin
+    assert result.price - 0.65 <= cfg.max_slip - cfg.price_margin + 1e-12
+    assert result.edge + 1e-12 >= cfg.min_edge + cfg.price_margin
+    assert result.stake <= cfg.kelly_bankroll * result.edge / (1 - result.price) + 1e-12
+    old_edge = result.p_hat - old_price
+    assert 4 > cfg.kelly_bankroll * old_edge / (1 - old_price)
 
 
 @pytest.mark.parametrize(
@@ -483,3 +488,22 @@ def test_no_kelly_stake() -> None:
     result = decide("still", 0.9, [10**20, 10**20], [0.5, 0.5], cfg, 0)
     assert result.stake == 0
     assert result.reason == "no_feasible_stake"
+
+
+@pytest.mark.parametrize("margin", [0.0, 0.01])
+def test_min_edge_margin(margin: float) -> None:
+    """Leave edge slack for a small adverse pool move before placement."""
+    from packages.valory.skills.fresh_watch_abci.strategy import buy_amount
+
+    cfg = replace(FastConfig(), min_edge=0.14, price_margin=margin, kelly_bankroll=1000)
+    reserves, fee = [35 * 10**18, 65 * 10**18], 2 * 10**16
+    result = decide("still", 0.78, reserves, [0.65, 0.35], cfg, fee)
+    assert result.stake > 0
+    assert result.edge == pytest.approx(cfg.min_edge + margin, abs=1e-10)
+    other_buy = 10**15
+    net = other_buy - other_buy * fee // 10**18
+    moved = [reserve + net for reserve in reserves]
+    moved[0] -= buy_amount(other_buy, reserves, 0, fee)
+    amount = int(result.stake * 10**18)
+    moved_edge = result.p_hat - amount / buy_amount(amount, moved, 0, fee)
+    assert (moved_edge >= cfg.min_edge) is bool(margin)
