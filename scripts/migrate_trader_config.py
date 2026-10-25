@@ -765,7 +765,7 @@ def cached_public_id(config):
     package = json.loads(config.read_text()).get("package_path")
     if not package:
         return None
-    service = Path(package) / "service.yaml"
+    service = config.parent / package / "service.yaml"
     if not service.is_file():
         return None
     # Service headers use plain or quoted scalar IDs. Ignore component overrides.

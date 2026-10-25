@@ -99,16 +99,16 @@ def fixture(qs):
     return paths
 
 
-def cached_package(config, name, author="valory"):
+def cached_package(config, name, author="valory", absolute=False):
     """Give an operate cache a service package with its public ID."""
-    package = config.parent / "service"
+    package = config.parent / name
     package.mkdir()
     (package / "service.yaml").write_text(
         f"name: '{name}' # cached package\nauthor: {author}\nversion: 0.1.0\n"
         "---\nname: other_component\nauthor: other_author\n"
     )
     data = json.loads(config.read_text())
-    data["package_path"] = str(package)
+    data["package_path"] = str(package) if absolute else package.name
     config.write_text(json.dumps(data, indent=4) + "\n")
 
 
@@ -124,8 +124,11 @@ def cached_package(config, name, author="valory"):
     ],
 )
 @pytest.mark.parametrize("newline", ["\n", "", "\r\n"])
-def test_service_public_id_migration(tmp_path, cached, service, newline):
+def test_service_public_id_migration(tmp_path, monkeypatch, cached, service, newline):
     """Permit each service switch and keep text, identity, and backups intact."""
+    working = tmp_path / "unrelated-working-directory"
+    working.mkdir()
+    monkeypatch.chdir(working)
     paths = fixture(tmp_path)
     if cached:
         for path in paths[1:]:
@@ -166,6 +169,14 @@ def test_service_public_id_migration(tmp_path, cached, service, newline):
     after = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     run(tmp_path, "--service", service)
     assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == after
+
+
+def test_absolute_cached_public_id(tmp_path):
+    """Keep support for a legacy cache with an absolute package path."""
+    paths = fixture(tmp_path)
+    cached_package(paths[1], "trader_pearl", absolute=True)
+    run(tmp_path, "--service", "omenstrat_fast")
+    assert json.loads(paths[0].read_text())["allow_different_service_public_id"] is True
 
 
 @pytest.mark.parametrize("existing", [True, False])
