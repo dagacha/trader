@@ -54,8 +54,9 @@ Outside it, housekeeping can run on each cycle. The lane runs redemption,
 staking checkpoint, performance summary, and ChatUI load. Existing funds-manager
 and HTTP-handler funding checks stay active. Bet placement also checks Safe
 balances and wraps xDAI if needed. Housekeeping is not preempted if a market
-appears while it runs; the poller queues it for the next watch. There is no full market refresh,
-ResetAndPause, benchmarking, staking KPI stop, or trade-cap check in this app.
+appears while it runs; the poller queues it for the next watch. There is no full
+market refresh, ResetAndPause, benchmarking, staking KPI stop, or trade-cap check
+in this app.
 
 `fresh_watch_abci` owns the two new rounds and the strategy. This keeps the
 normal `decision_maker_abci` cycle unchanged. The new composition reuses the
@@ -67,12 +68,20 @@ It keeps the new prepared transaction and does not reset Tendermint.
 The request records live pool prices. FastDecision reads the pool again, blends
 the YES probability with the title prior, then selects the side with the largest
 edge. Numeric phrases take priority over still-hold phrases. The NO probability
-is `1 - p_hat(YES)`. All bounds must pass. The stake is
-`min(CAP, KELLY_BANKROLL * (p_side - price) / (1 - price))` in xDAI.
+is `1 - p_hat(YES)`. All bounds must pass. The execution price includes the market
+fee and pool impact. A bounded search selects the largest stake within CAP,
+Kelly sizing, and all price bounds.
+A feasible stake below `MIN_STAKE` is skipped with reason `min_stake`.
+If the search finds no positive feasible stake, the reason is `no_feasible_stake`.
 The final execution quote also checks the blended edge, maximum price, and slip
 bound. `[FAST_DECISION]` records one terminal preparation decision per market,
-including age at request, answer, and bet preparation, plus `mech` and `latency_s`. A prepared bet is not proof
-that its transaction settled; use the existing settlement logs for that result.
+including age at request, answer, and bet preparation, plus `mech` and `latency_s`.
+Placement records `prepared=true` when a transaction was prepared and `prepared=false`
+when no transaction was prepared. A simulated placement uses reason
+`benchmarking` and `prepared=null`. `stake` is the attempted amount in both cases.
+If no placement quote is available, execution price, `price`, and `edge` are null.
+A prepared bet is not proof that its transaction settled; use the existing
+settlement logs for that result.
 
 ## Parameters
 
@@ -89,10 +98,12 @@ that its transaction settled; use the existing settlement logs for that result.
 | `PRIORS` | `still_hold: 0.85`, `numeric_threshold: 0.60`, `other_event: 0.18` |
 | `MIN_EDGE` | `0.03` |
 | `MAX_PRICE` | `0.90` |
+| `PRICE_MARGIN` | `0.01` absolute price; `0` disables it |
 | `NO_MIN_P` | `0.70` |
 | `CAP` | `4.0` xDAI |
 | `KELLY_BANKROLL` | `10.0` xDAI |
-| `MAX_SLIP` | `0.10` absolute price rise |
+| `MAX_SLIP` | `0.20` absolute price rise |
+| `MIN_STAKE` | `0.1` xDAI |
 | `USE_OFFCHAIN` | `true` |
 | `FAST_DYNAMIC_MECH` | `true`; controls `use_dynamic_mech_selection` |
 | `VALID_MECHS` | Normal Omen allowlist plus Mech 975 |
@@ -102,6 +113,29 @@ that its transaction settled; use the existing settlement logs for that result.
 | `RETRY_TIMEOUT` | `1` s, down from `3` |
 | `STOP_TRADING_IF_STAKING_KPI_MET` | `false` |
 | `STRATEGIES_KWARGS.absolute_max_bet_size` | `4000000000000000000` wei (4 xDAI); the fast formula uses `CAP` directly |
+
+`MAX_SLIP=0.2` permits an absolute price rise of at most 0.2 from the selected
+outcome's request-time spot price to its average execution price. The operator
+sets this limit as a trading policy. The 0.2 default doubles the allowed
+absolute price rise compared to the old 0.1 default. Set `MAX_SLIP=0.1` to
+restore the old limit. `MAX_PRICE=0.9` is a separate ceiling on the average
+execution price, including the fee and pool impact. Both limits must pass. For
+example, a request price of 0.65 permits an execution price up to 0.85; a request
+price of 0.8 still permits at most 0.9. This is an absolute price difference,
+not a percentage of the request price. `MIN_STAKE=0.1` xDAI is the minimum
+accepted stake; smaller or empty results are skipped before placement.
+
+`PRICE_MARGIN=0.01` sizes the stake against `MAX_PRICE - PRICE_MARGIN`,
+`request_price + MAX_SLIP - PRICE_MARGIN`, and `MIN_EDGE + PRICE_MARGIN`.
+This leaves 0.01 of absolute price room for adverse pool moves before placement.
+Placement still checks the real price, slip, and edge limits. The service sets
+`placement_min_edge` from `MIN_EDGE`. Larger moves can still cause refusal.
+Parameter loading requires `0 <= PRICE_MARGIN < min(MAX_SLIP, MAX_PRICE)`.
+
+Set `PRICE_MARGIN=0` to use the full limits. When price, slip, or edge
+binds with zero margin, the decision sizes the stake to that bound. Any adverse
+pool move before placement can then refuse the bet with that named reason,
+`prepared=false`, and no prepared transaction. This is expected behavior.
 
 The active window uses UTC regardless of the host timezone. `MAX_TRADES`
 defaults to `3` per staking period; `0` disables the cap. The durable counter

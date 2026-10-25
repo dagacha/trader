@@ -161,23 +161,33 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour, CheckStopTradingBehaviour)
         # in each fast round. The shared cache survives behaviour replacement.
         cache = self.context.state.fast_activity_status
         now = time.monotonic()
+        count = None
         if (
-            cache is None
-            or cache[1] != self.synchronized_data.previous_checkpoint
-            or now - cache[0] >= self.params.fast.poll_s
+            cache is not None
+            and cache[1] == self.synchronized_data.previous_checkpoint
+            and now - cache[0] < self.params.fast.housekeeping_interval_s
         ):
+            count, _ = read_successful_trade_count_state(
+                self.params.store_path, cache[1]
+            )
+            if count is None:
+                count = self.synchronized_data.successful_trade_count
+        if count is None or cache is None or cache[3] != count:
             status = yield from self._compute_activity_status()
             period = (
                 self.ts_checkpoint
                 if self.service_staking_state == StakingState.STAKED
                 else self.synchronized_data.previous_checkpoint
             )
-            cache = (now, period, status)
+            if count is None or cache is None or cache[1] != period:
+                count, _ = read_successful_trade_count_state(
+                    self.params.store_path, period
+                )
+                if count is None:
+                    count = self.synchronized_data.successful_trade_count
+            cache = (now, period, status, count)
             self.context.state.fast_activity_status = cache
-        _, period, (kpi_met, target_met, target, completed) = cache
-        count, _ = read_successful_trade_count_state(self.params.store_path, period)
-        if count is None:
-            count = self.synchronized_data.successful_trade_count
+        _, period, (kpi_met, target_met, target, completed), count = cache
         capped = self.params.max_trades > 0 and count >= self.params.max_trades
         if capped:
             marker = self.params.store_path / "fast_trade_cap.json"
@@ -438,6 +448,8 @@ class FastDecisionBehaviour(DecisionMakerBaseBehaviour):
             p_hat=None,
             side=None,
             price=None,
+            request_price=None,
+            executed_price=None,
             edge=None,
             stake=0.0,
             reason="mech_response",
@@ -470,15 +482,17 @@ class FastDecisionBehaviour(DecisionMakerBaseBehaviour):
         if bet.openingTimestamp <= time.time():
             result["reason"] = "market_closed"
             return result
-        prices = [balances[1] / sum(balances), balances[0] / sum(balances)]
         decision = decide(
             bet.title,
             prediction.p_yes,
-            prices,
+            balances,
             db.get_strict("request_prices"),
             self.params.fast,
+            bet.fee,
         )
         result.update(asdict(decision))
+        result["request_price"] = db.get_strict("request_prices")[decision.side]
+        result["executed_price"] = decision.price
         if decision.stake > 0:
             bet.strategy_vote = decision.side
             bet.prediction_response = PredictionResponse(
@@ -504,6 +518,15 @@ class FastDecisionBehaviour(DecisionMakerBaseBehaviour):
 class FastBetPlacementBehaviour(BetPlacementBehaviour):
     """Retain settlement and balance checks; use the calibrated probability."""
 
+    _placement_failure = "other"
+    _executed_price: Optional[float] = None
+
+    def async_act(self) -> Generator:
+        """Clear quote state before each placement attempt."""
+        self._placement_failure = "other"
+        self._executed_price = None
+        yield from super().async_act()
+
     def _get_decision_prediction(self) -> Optional[PredictionResponse]:
         """Read the calibrated prediction for the final execution check.
 
@@ -521,15 +544,25 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
         :yield: control during the contract quote.
         :return: whether the quoted buy satisfies the bounds.
         """
+        self._placement_failure = "quote"
+        self._executed_price = None
         success = yield from super()._calc_buy_amount()
         if not success or self.quoted_tokens <= 0:
             return False
         price = self.investment_amount / self.quoted_tokens
+        self._executed_price = price
         requested = self.synchronized_data.db.get_strict("request_prices")[
             self.outcome_index
         ]
         cfg = self.params.fast
-        return price <= cfg.max_price and price - requested <= cfg.max_slip + 1e-12
+        if price > cfg.max_price:
+            self._placement_failure = "max_price"
+            return False
+        if price - requested > cfg.max_slip + 1e-12:
+            self._placement_failure = "max_slip"
+            return False
+        self._placement_failure = "edge_recheck"
+        return True
 
     def finish_behaviour(self, payload: Any) -> Generator:
         """Log the final bet preparation outcome once.
@@ -539,11 +572,22 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
         """
         result = json.loads(self.synchronized_data.db.get_strict("fast_decision"))
         result["age_at_bet"] = time.time() - self.sampled_bet.creationTimestamp
-        if not payload.tx_hash:
-            result["reason"] = "placement_balance_quote_or_edge"
-            result["stake"] = 0.0
-        if self.quoted_tokens > 0:
-            result["price"] = self.investment_amount / self.quoted_tokens
+        result["prepared"] = bool(payload.tx_hash)
+        if self.benchmarking_mode.enabled:
+            result["reason"] = "benchmarking"
+            result["prepared"] = None
+        elif not payload.tx_hash:
+            result["reason"] = (
+                "balance" if payload.tx_submitter is None else self._placement_failure
+            )
+        result["request_price"] = self.synchronized_data.db.get_strict(
+            "request_prices"
+        )[self.outcome_index]
+        result["executed_price"] = self._executed_price
+        result["price"] = None
+        result["edge"] = None
+        if self._executed_price is not None:
+            result["price"] = self._executed_price
             p = result["p_hat"] if self.outcome_index == 0 else 1 - result["p_hat"]
             result["edge"] = p - result["price"]
         log_decision(self, result)

@@ -1,6 +1,6 @@
 {
     "name": "omenstrat_fast",
-    "hash": "bafybeictvcejd4pksdgn42te3v7vxyndhofiuch4g6hzpefzc4xbkcf73a",
+    "hash": "bafybeib5s3ar2zcqz7sbbwr6565omj7t2ujuzstaib7z6xarkczseh5m2i",
     "description": "Fresh-watch Omen agent with the fixed fast strategy.",
     "image": "https://operate.olas.network/_next/image?url=%2Fimages%2Fprediction-agent.png&w=3840&q=75",
     "service_version": "main",
@@ -292,10 +292,16 @@
             "value": "10.0",
             "provision_type": "user"
         },
+        "PRICE_MARGIN": {
+            "name": "Price margin",
+            "description": "Absolute price room for pool moves before placement; 0 disables it.",
+            "value": "0.01",
+            "provision_type": "user"
+        },
         "MAX_SLIP": {
             "name": "Max slip",
             "description": "",
-            "value": "0.1",
+            "value": "0.2",
             "provision_type": "user"
         },
         "SERVICE_ID": {
@@ -362,6 +368,12 @@
             "name": "Dynamic Mech selection",
             "description": "Select an allowed Mech by tool and rank. Use the priority Mech when false.",
             "value": "true",
+            "provision_type": "user"
+        },
+        "MIN_STAKE": {
+            "name": "Minimum stake",
+            "description": "Minimum fast bet amount in xDAI.",
+            "value": "0.1",
             "provision_type": "user"
         }
     }

@@ -103,6 +103,16 @@ def test_params_and_state(tmp_path: Any) -> None:
     params = FastParams(name="params", skill_context=context, **args)
     assert params.fast.overlap_s == 120
     assert params.fast.cap == 4
+    assert params.fast.min_stake == 0.1
+    assert params.fast.max_slip == 0.2
+    assert params.fast.price_margin == 0.01
+    custom = FastParams(
+        name="custom",
+        skill_context=context,
+        **{**args, "min_stake": 0.25, "price_margin": 0.0},
+    )
+    assert custom.fast.min_stake == 0.25
+    assert custom.fast.price_margin == 0.0
     assert params.use_offchain is True
     assert params.fast_dynamic_mech is True
     assert params.mech_marketplace_config.use_dynamic_mech_selection is True
@@ -269,3 +279,66 @@ def test_dynamic_param_declared_in_overriding_skills() -> None:
             (ROOT / "packages/valory/skills" / skill / "skill.yaml").read_text()
         )
         assert config["models"]["params"]["args"]["fast_dynamic_mech"] is default
+
+
+def test_slip_and_minimum_stake_defaults() -> None:
+    """Keep fast controls consistent across each deployment entry point."""
+    import json
+    import runpy
+
+    from packages.valory.skills.fresh_watch_abci.strategy import FastConfig
+
+    defaults = {"max_slip": 0.2, "min_stake": 0.1, "price_margin": 0.01}
+    for key, value in defaults.items():
+        assert getattr(FastConfig(), key) == value
+    for skill in ("fresh_watch_abci", "omenstrat_fast_abci"):
+        config = yaml.safe_load(
+            (ROOT / "packages/valory/skills" / skill / "skill.yaml").read_text()
+        )
+        for key, value in defaults.items():
+            assert config["models"]["params"]["args"][key] == value
+    for relative in (
+        "agents/omenstrat_fast/aea-config.yaml",
+        "services/omenstrat_fast/service.yaml",
+    ):
+        docs = list(
+            yaml.safe_load_all((ROOT / "packages/valory" / relative).read_text())
+        )
+        args = next(
+            doc
+            for doc in docs[1:]
+            if doc["public_id"].startswith("valory/omenstrat_fast_abci:")
+        )["models"]["params"]["args"]
+        for key, value in defaults.items():
+            assert args[key] == "${" + key.upper() + ":float:" + str(value) + "}"
+    config = json.loads((ROOT / "configs/config_omenstrat_fast.json").read_text())
+    migration = runpy.run_path(str(ROOT / "scripts/migrate_trader_config.py"))
+    for key, value in defaults.items():
+        assert config["env_variables"][key.upper()]["value"] == str(value)
+        assert key.upper() in migration["FAST_ENV"]
+
+
+@pytest.mark.parametrize(
+    "margin,max_slip,max_price",
+    [(-0.01, 0.2, 0.9), (0.2, 0.2, 0.9), (0.3, 0.2, 0.9), (0.1, 0.2, 0.1)],
+)
+def test_invalid_price_margin(
+    tmp_path: Any, margin: float, max_slip: float, max_price: float
+) -> None:
+    """Reject a margin that leaves no permitted price or slip range."""
+    from unittest.mock import MagicMock
+
+    from packages.valory.skills.fresh_watch_abci.models import FastParams
+
+    config = yaml.safe_load(
+        (ROOT / "packages/valory/skills/omenstrat_fast_abci/skill.yaml").read_text()
+    )
+    args = {
+        **config["models"]["params"]["args"],
+        "store_path": str(tmp_path),
+        "price_margin": margin,
+        "max_slip": max_slip,
+        "max_price": max_price,
+    }
+    with pytest.raises(ValueError, match="0 <= price_margin < min"):
+        FastParams(name="params", skill_context=MagicMock(), **args)
