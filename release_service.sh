@@ -18,6 +18,17 @@
 # Quickstart "hash" must be the selected SERVICE CID, never the agent hash.
 # The selected agent image is local-only; it is not on Docker Hub.
 # Each host must run release_service.sh / build_image_offline.sh or load the image.
+# If an Omen cache has a different service public ID, migration sets
+# allow_different_service_public_id=true before the hash edit. It keeps the
+# trader's name and description. Polymarket caches are skipped.
+# The check resolves package_path from each cached service's config directory.
+# It also repairs a quickstart whose hash already selects the new service.
+# A fresh quickstart or a cache with the same public ID needs no new flag.
+# Migration keeps an existing flag. This applies to both --service directions:
+# omenstrat_fast (deploy) and trader_pearl (rollback).
+# To preview a config repair from this repo, run:
+#   python3 scripts/migrate_trader_config.py /path/to/quickstart --service omenstrat_fast --dry-run
+# For rollback, select --service trader_pearl. Remove --dry-run to apply.
 #
 # Usage:
 #   ./release_service.sh                                    # release to ALL traders on this machine (see below)

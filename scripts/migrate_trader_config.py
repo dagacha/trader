@@ -23,6 +23,7 @@ Sync saved quickstart inputs and cached service, agent, and Kubernetes envs.
 Skip all files if configs/config_predict_trader.json is missing or declares
 IS_RUNNING_ON_POLYMARKET=true. In mixed caches, skip each Polymarket service
 as a group. The Omen profit threshold uses 18-decimal xDAI units.
+With --service, permit a public ID change when an Omen cache has another ID.
 """
 
 import argparse
@@ -757,6 +758,28 @@ def write_changes(path, updated, changes, dry_run=False, warn_only=False):
         destination.write(updated)
 
 
+def cached_public_id(config):
+    """Read the author and name from a cached package's service header."""
+    if not config.is_file():
+        return None
+    package = json.loads(config.read_text()).get("package_path")
+    if not package:
+        return None
+    service = config.parent / package / "service.yaml"
+    if not service.is_file():
+        return None
+    # Service headers use plain or quoted scalar IDs. Ignore component overrides.
+    header = service.read_text().split("\n---", 1)[0]
+    fields = [
+        re.search(
+            rf"(?m)^{key}:[ \t]*['\"]?([A-Za-z0-9_-]+)['\"]?[ \t]*(?:#.*)?$",
+            header,
+        )
+        for key in ("author", "name")
+    ]
+    return "/".join(field[1] for field in fields) if all(fields) else None
+
+
 def migrate(quickstart, dry_run=False, warn_only=False, service=None):
     """Migrate an Omen quickstart and skip Polymarket cached services."""
     config = quickstart / "configs/config_predict_trader.json"
@@ -802,6 +825,7 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
             return
     paths = [config, *saved]
     services = sorted((quickstart / ".operate/services").glob("sc-*"))
+    different_public_ids = set()
     if not services:
         print(f">> {quickstart}: no operate services; skipping cache")
     for cached_service in services:
@@ -817,6 +841,10 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                 break
         else:
             paths.extend(service_paths)
+            if service:
+                public_id = cached_public_id(service_paths[0])
+                if public_id and public_id != f"valory/{service}":
+                    different_public_ids.add(public_id)
     provenance = quickstart / "configs/.fast_defaults_added.json"
     recorded = None
     if provenance.is_file():
@@ -871,6 +899,20 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                 changes.extend(removed_changes)
         if path == paths[0]:
             data = json.loads(updated)
+            flag = "allow_different_service_public_id"
+            if different_public_ids and data.get(flag) is not True:
+                has_flag = flag in data
+                data[flag] = True
+                updated = edit_json(
+                    updated,
+                    data,
+                    value=True,
+                    addition=None if has_flag else (flag, True),
+                )
+                changes.append(
+                    f"{flag}=true (cached {', '.join(sorted(different_public_ids))} "
+                    f"-> valory/{service})"
+                )
             if selected_cid is not None and data.get("hash") != selected_cid:
                 has_hash = "hash" in data
                 data["hash"] = selected_cid

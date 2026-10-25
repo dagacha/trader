@@ -99,6 +99,122 @@ def fixture(qs):
     return paths
 
 
+def cached_package(config, name, author="valory", absolute=False):
+    """Give an operate cache a service package with its public ID."""
+    package = config.parent / name
+    package.mkdir()
+    (package / "service.yaml").write_text(
+        f"name: '{name}' # cached package\nauthor: {author}\nversion: 0.1.0\n"
+        "---\nname: other_component\nauthor: other_author\n"
+    )
+    data = json.loads(config.read_text())
+    data["package_path"] = str(package) if absolute else package.name
+    config.write_text(json.dumps(data, indent=4) + "\n")
+
+
+@pytest.mark.parametrize(
+    "cached,service",
+    [
+        ("trader_pearl", "omenstrat_fast"),
+        ("omenstrat_fast", "trader_pearl"),
+        ("trader_pearl", "trader_pearl"),
+        ("omenstrat_fast", "omenstrat_fast"),
+        (None, "omenstrat_fast"),
+        (None, "trader_pearl"),
+    ],
+)
+@pytest.mark.parametrize("newline", ["\n", "", "\r\n"])
+def test_service_public_id_migration(tmp_path, monkeypatch, cached, service, newline):
+    """Permit each service switch and keep text, identity, and backups intact."""
+    working = tmp_path / "unrelated-working-directory"
+    working.mkdir()
+    monkeypatch.chdir(working)
+    paths = fixture(tmp_path)
+    if cached:
+        for path in paths[1:]:
+            cached_package(path, cached)
+    else:
+        shutil.rmtree(tmp_path / ".operate")
+    config = json.loads(paths[0].read_text())
+    packages = json.loads((SCRIPT.parents[1] / "packages/packages.json").read_text())
+    # Trader 35 already has the fast hash but still has the pearl package.
+    config.update(
+        hash=packages["dev"]["service/valory/omenstrat_fast/0.1.0"],
+        name="Trader 35",
+        description="Trader 35's own on-chain description",
+    )
+    original = json.dumps(config, indent=4) + ("\n" if newline else "")
+    paths[0].write_bytes(original.replace("\n", newline or "\n").encode())
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    preview = run(tmp_path, "--service", service, "--dry-run")
+    mismatch = cached is not None and cached != service
+    assert ("allow_different_service_public_id" in preview) == mismatch
+    assert all(p.read_bytes() == content for p, content in before.items())
+    assert {p for p in tmp_path.rglob("*") if p.is_file()} == set(before)
+    output = run(tmp_path, "--service", service)
+    result = paths[0].read_bytes()
+    actual = json.loads(result)
+    assert ("allow_different_service_public_id" in output) == mismatch
+    if mismatch:
+        assert actual["allow_different_service_public_id"] is True
+    else:
+        assert "allow_different_service_public_id" not in actual
+    assert actual["name"] == config["name"]
+    assert actual["description"] == config["description"]
+    assert b'    "description": "Trader 35\'s own on-chain description"' in result
+    assert result.endswith(b"\n") == bool(newline)
+    if newline == "\r\n":
+        assert result.count(b"\n") == result.count(b"\r\n")
+    assert list(paths[0].parent.glob("*.bak-*"))[0].read_bytes() == before[paths[0]]
+    after = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    run(tmp_path, "--service", service)
+    assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == after
+
+
+def test_absolute_cached_public_id(tmp_path):
+    """Keep support for a legacy cache with an absolute package path."""
+    paths = fixture(tmp_path)
+    cached_package(paths[1], "trader_pearl", absolute=True)
+    run(tmp_path, "--service", "omenstrat_fast")
+    assert json.loads(paths[0].read_text())["allow_different_service_public_id"] is True
+
+
+@pytest.mark.parametrize("existing", [True, False])
+@pytest.mark.parametrize("mismatch", [True, False])
+def test_existing_public_id_flag(tmp_path, existing, mismatch):
+    """Keep an existing flag unless a switch needs it to be true."""
+    paths = fixture(tmp_path)
+    cached_package(paths[1], "trader_pearl" if mismatch else "omenstrat_fast")
+    data = json.loads(paths[0].read_text())
+    data["allow_different_service_public_id"] = existing
+    paths[0].write_text(json.dumps(data))
+    run(tmp_path, "--service", "omenstrat_fast")
+    actual = json.loads(paths[0].read_text())
+    assert actual["allow_different_service_public_id"] is (existing or mismatch)
+
+
+@pytest.mark.parametrize("polymarket", ["quickstart", "cache", None])
+def test_public_id_skips_polymarket(tmp_path, polymarket):
+    """Check all Omen package IDs and skip a whole Polymarket group."""
+    paths = fixture(tmp_path)
+    cached_package(paths[1], "omenstrat_fast")
+    cached_package(paths[2], "omenstrat_fast", author="other_author")
+    if polymarket:
+        flag = paths[0] if polymarket == "quickstart" else paths[2]
+        data = json.loads(flag.read_text())
+        data["env_variables"]["IS_RUNNING_ON_POLYMARKET"] = entry("true")
+        flag.write_text(json.dumps(data))
+    before = paths[2].read_bytes()
+    run(tmp_path, "--service", "omenstrat_fast")
+    actual = json.loads(paths[0].read_text())
+    assert actual.get("allow_different_service_public_id", False) == (
+        polymarket is None
+    )
+    if polymarket:
+        assert paths[2].read_bytes() == before
+        assert not list(paths[2].parent.glob("*.bak-*"))
+
+
 def test_json_migration(tmp_path):
     """Migrate all configs with backups and no unrelated text edits."""
     paths = fixture(tmp_path)
@@ -1955,7 +2071,10 @@ def test_fast_defaults_sync_all_copies(tmp_path, cap):
 
 @pytest.mark.parametrize("service", ["omenstrat_fast", "trader_pearl"])
 @pytest.mark.parametrize("dry_run", [False, True])
-def test_release_selects_service_and_skips_polymarket(tmp_path, service, dry_run):
+@pytest.mark.parametrize("released", [False, True])
+def test_release_selects_service_and_skips_polymarket(
+    tmp_path, service, dry_run, released
+):
     """Select the service agent image and change only Omen release fields."""
     repo = tmp_path / "repo"
     for relative in [
@@ -1989,6 +2108,7 @@ def test_release_selects_service_and_skips_polymarket(tmp_path, service, dry_run
         data = json.loads(paths[0].read_text())
         data.update(
             name="Trader Agent",
+            description="Trader 35's own on-chain description",
             agent_release={"repository": {"owner": "valory-xyz"}},
             configurations={"gnosis": {"agent_id": 14, "staking": "keep"}},
         )
@@ -2001,6 +2121,16 @@ def test_release_selects_service_and_skips_polymarket(tmp_path, service, dry_run
         omen_paths[0].write_text(json.dumps(config))
         # Start release rollback from an actual migrated fast quickstart.
         run(omen, "--service", "omenstrat_fast")
+    cached = "trader_pearl" if service == "omenstrat_fast" else "omenstrat_fast"
+    for path in omen_paths[1:]:
+        cached_package(path, cached)
+    if released:
+        # Match trader 35: the selected hash and owner are already released.
+        data = json.loads(omen_paths[0].read_text())
+        packages = json.loads((repo / "packages/packages.json").read_text())
+        data["hash"] = packages["dev"][f"service/valory/{service}/0.1.0"]
+        data["agent_release"]["repository"]["owner"] = "dagacha"
+        omen_paths[0].write_text(json.dumps(data))
     before = {p: p.read_bytes() for p in [*omen_paths, *poly_paths, pilot_config]}
     arguments = [] if service == "omenstrat_fast" else ["--service", service]
     arguments.append("--force-build")
@@ -2028,6 +2158,7 @@ def test_release_selects_service_and_skips_polymarket(tmp_path, service, dry_run
     agent = "omenstrat_fast" if service == "omenstrat_fast" else "trader"
     assert f"valory/oar-{agent}:" in output
     assert cid in output
+    assert "allow_different_service_public_id" in output
     assert "Polymarket" in output
     assert str(pilot) not in output
     assert pilot_config.read_bytes() == before[pilot_config]
@@ -2044,6 +2175,8 @@ def test_release_selects_service_and_skips_polymarket(tmp_path, service, dry_run
         old = json.loads(before[omen_paths[0]])
         assert actual["hash"] == cid
         assert actual["name"] == old["name"]
+        assert actual["description"] == old["description"]
+        assert actual["allow_different_service_public_id"] is True
         assert actual["configurations"] == old["configurations"]
         if service == "omenstrat_fast":
             assert actual["env_variables"]["MAX_TRADES"]["value"] == "3"
