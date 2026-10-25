@@ -639,6 +639,124 @@ def sync_cached_env(text, desired, env_file=False):
     return "".join(lines), changes
 
 
+def remove_json_key(text, data, key):
+    """Remove only the member that produces the expected JSON document."""
+    for match in re.finditer(re.escape(json.dumps(key)) + r"\s*:\s*", text):
+        _, end = DECODER.raw_decode(text, match.end())
+        start = match.start()
+        following = re.match(r"\s*,", text[end:])
+        if following:
+            end += following.end()
+        else:
+            preceding = re.search(r",\s*$", text[:start])
+            if preceding:
+                start = preceding.start()
+        candidate = text[:start] + text[end:]
+        if json.loads(candidate) == data:
+            return candidate
+    raise ValueError("Could not locate a unique JSON member to remove")
+
+
+def rollback_fast_inputs(text, added, json_file):
+    """Remove recorded fast inputs from quickstart, saved args, and caches."""
+    names = {}
+    for key in added:
+        for name in (key, PARAM_PREFIX + key, FAST_PARAM_PREFIX + key, key.lower()):
+            names[name] = key
+        if key == "TM_CHECK_SLEEP_DELAY":
+            names["tendermint_check_sleep_delay"] = key
+    changes = []
+    if json_file:
+        data = json.loads(text)
+        for obj in list(objects(data)):
+            for key in list(obj):
+                if key in names:
+                    del obj[key]
+                    text = remove_json_key(text, data, key)
+                    changes.append(f"remove fast default {names[key]}")
+    else:
+        lines = text.splitlines(keepends=True)
+        for index in range(len(lines) - 1, -1, -1):
+            pair = re.match(r"\s*- name: ([A-Z_0-9]+)\s*$", lines[index])
+            match = pair or re.match(r"\s*(?:-\s*)?([A-Z_0-9]+)(?:=|:)", lines[index])
+            if match and match[1] in names:
+                end = index + 1
+                if pair:
+                    if end >= len(lines) or not re.match(r"\s*value:", lines[end]):
+                        raise ValueError(f"Missing value for {match[1]}")
+                    end += 1
+                del lines[index:end]
+                changes.append(f"remove fast default {names[match[1]]}")
+        text = "".join(lines)
+    return text, changes
+
+
+def warn_pearl_defaults(text, path):
+    """Report explicit fast inputs that differ from pearl service defaults."""
+    service = Path(__file__).resolve().parents[1] / (
+        "packages/valory/services/trader_pearl/service.yaml"
+    )
+    defaults = dict(re.findall(r"\$\{([A-Z_0-9]+):[^:}]+:(.*?)\}", service.read_text()))
+    values = []
+    if path.suffix == ".json":
+        for obj in objects(json.loads(text)):
+            values.extend(obj.items())
+    else:
+        values.extend(
+            re.findall(
+                r"(?m)^\s*(?:-\s*)?([A-Z_0-9]+)[=:]\s*(.*?)\s*$"
+                r"|^\s*- name: ([A-Z_0-9]+)\s*\n\s*value:\s*(.*?)\s*$",
+                text,
+            )
+        )
+        values = [(a or c, b or d) for a, b, c, d in values]
+    different = set()
+    for key, value in values:
+        key = key.removeprefix(PARAM_PREFIX).removeprefix(FAST_PARAM_PREFIX).upper()
+        if key == "TENDERMINT_CHECK_SLEEP_DELAY":
+            key = "TM_CHECK_SLEEP_DELAY"
+        if key not in FAST_ENV or key not in defaults:
+            continue
+        if isinstance(value, dict):
+            value = value.get("value")
+
+        def parsed(raw):
+            try:
+                return decode_env(raw) if isinstance(raw, str) else raw
+            except ValueError:
+                return raw.strip("'\"")
+
+        if parsed(value) != parsed(defaults[key]):
+            different.add(key)
+    print(
+        f"WARNING: {path}: missing fast migration provenance; keeping all keys; "
+        "inputs differing from trader_pearl defaults: "
+        + (", ".join(sorted(different)) or "none")
+    )
+
+
+def write_changes(path, updated, changes, dry_run=False, warn_only=False):
+    """Report changes and back up an existing file before writing it."""
+    if warn_only:
+        return
+    if not changes:
+        print(f">> {path}: config unchanged")
+        return
+    print(
+        f">> {'(dry-run) would update' if dry_run else 'updated'} {path}: "
+        + "; ".join(changes)
+    )
+    if dry_run:
+        return
+    if path.exists():
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        backup = path.with_name(path.name + ".bak-" + stamp)
+        shutil.copy2(path, backup)
+        print(f"   backup: {backup}")
+    with path.open("w", encoding="utf-8", newline="") as destination:
+        destination.write(updated)
+
+
 def migrate(quickstart, dry_run=False, warn_only=False, service=None):
     """Migrate an Omen quickstart and skip Polymarket cached services."""
     config = quickstart / "configs/config_predict_trader.json"
@@ -662,6 +780,7 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
         and json.loads(config.read_text()).get("hash")
         == packages["dev"].get("service/valory/omenstrat_fast/0.1.0", "")
     )
+    rollback = service == "trader_pearl"
     defaults = {}
     if fast_mode:
         template = (
@@ -685,19 +804,43 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
     services = sorted((quickstart / ".operate/services").glob("sc-*"))
     if not services:
         print(f">> {quickstart}: no operate services; skipping cache")
-    for service in services:
-        service_paths = [service / "config.json"]
-        service_paths.extend(sorted(service.rglob("agent_0.env")))
-        service_paths.extend(sorted(service.rglob("build.yaml")))
+    for cached_service in services:
+        service_paths = [cached_service / "config.json"]
+        service_paths.extend(sorted(cached_service.rglob("agent_0.env")))
+        service_paths.extend(sorted(cached_service.rglob("build.yaml")))
         for path in service_paths:
             if path.is_file() and is_polymarket(path):
                 print(
-                    f"WARNING: {service}: Polymarket flag in {path}; "
+                    f"WARNING: {cached_service}: Polymarket flag in {path}; "
                     "skipping all service files"
                 )
                 break
         else:
             paths.extend(service_paths)
+    provenance = quickstart / "configs/.fast_defaults_added.json"
+    recorded = None
+    if provenance.is_file():
+        recorded = json.loads(provenance.read_text())["added"]
+        if not isinstance(recorded, list) or any(
+            key not in FAST_ENV for key in recorded
+        ):
+            raise ValueError(f"Invalid fast migration provenance: {provenance}")
+    if fast_mode:
+        env = json.loads(config.read_text()).get("env_variables", {})
+        added = sorted(set(recorded or []) | (set(defaults) - set(env)))
+        # Write provenance first, so an interrupted sync can still be rolled back.
+        write_changes(
+            provenance,
+            json.dumps({"added": added}) + "\n",
+            (
+                ["record added fast defaults: " + ", ".join(added)]
+                if recorded != added
+                else []
+            ),
+            dry_run,
+            warn_only,
+        )
+    removed = set(recorded or []) - {"MAX_TRADES"}
     stored = []
     desired = {}
     for path in paths:
@@ -712,12 +855,20 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
         priorities = []
         warnings = []
         # Saved inputs use plain values. Only sync explicit controls there.
-        if fast_mode or path.parent == quickstart / ".operate":
+        if fast_mode or rollback or path.parent == quickstart / ".operate":
             updated, changes = text, []
         else:
             updated, changes = (
                 migrate_json if path.suffix == ".json" else migrate_env
             )(text, priorities, hashes, warnings)
+        if rollback:
+            if recorded is None:
+                warn_pearl_defaults(text, path)
+            else:
+                updated, removed_changes = rollback_fast_inputs(
+                    updated, removed, path.suffix == ".json"
+                )
+                changes.extend(removed_changes)
         if path == paths[0]:
             data = json.loads(updated)
             if selected_cid is not None and data.get("hash") != selected_cid:
@@ -748,19 +899,20 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                 and isinstance(entry, dict)
                 and entry.get("value") not in (None, "")
             }
-        if desired:
+        if desired and (not rollback or recorded is not None):
             updated, synced = (
                 sync_cached_json(updated, desired)
                 if path.suffix == ".json"
                 else sync_cached_env(updated, desired, path.name == "agent_0.env")
             )
             changes.extend(synced)
-            if not fast_mode and path.suffix != ".json":
+            if not fast_mode and not rollback and path.suffix != ".json":
                 updated, synced = migrate_env(updated, [], hashes, [], desired)
                 changes.extend(synced)
             # Preview warnings use the old values. Real runs use the synced values.
             if (
                 not fast_mode
+                and not rollback
                 and not dry_run
                 and not warn_only
                 and path.parent != quickstart / ".operate"
@@ -778,22 +930,15 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
             )
             if all(value is not None for value in priority):
                 stored.append((path, priority))
-        if warn_only:
-            continue
-        if changes:
-            print(
-                f">> {'(dry-run) would update' if dry_run else 'updated'} {path}: "
-                + "; ".join(changes)
-            )
-            if not dry_run:
-                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-                backup = path.with_name(path.name + ".bak-" + stamp)
-                shutil.copy2(path, backup)
-                with path.open("w", encoding="utf-8", newline="") as destination:
-                    destination.write(updated)
-                print(f"   backup: {backup}")
-        else:
-            print(f">> {path}: config unchanged")
+        write_changes(path, updated, changes, dry_run, warn_only)
+    if rollback and recorded:
+        write_changes(
+            provenance,
+            json.dumps({"added": []}) + "\n",
+            ["clear rolled-back fast defaults (keep MAX_TRADES)"],
+            dry_run,
+            warn_only,
+        )
     if stored:
         reference_path, reference = stored[0]
         for path, priority in stored[1:]:

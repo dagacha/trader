@@ -152,8 +152,28 @@ Release selects the `omenstrat_fast` service hash and builds
 `valory/oar-omenstrat_fast:<agent-hash>`. Polymarket quickstarts are skipped.
 Use `--service trader_pearl` to switch back; this builds
 `valory/oar-trader:<agent-hash>`. Both paths keep the same on-chain service
-identity. They do not mint a new service. Fast-only env keys may remain after
-rollback; the standard agent ignores them.
+identity. They do not mint a new service.
+
+The fast migration records the keys it adds to the quickstart in
+`configs/.fast_defaults_added.json`. The quickstart is the source for saved
+inputs and caches. The record applies to all those copies, including caches
+that operate rebuilds later. This local sidecar is outside `.operate` and is
+not a tracked quickstart file. Operate redeploys and `update_all.sh` pulls do
+not replace it. Keep it with the quickstart config and include it in backups.
+
+On rollback, the migration removes recorded keys from the quickstart, saved
+user inputs, service configs, and generated env files. This removes shared
+fast overrides such as `USE_OFFCHAIN` and `FINALIZE_TIMEOUT`, so the pearl
+service defaults apply. Keys present in the quickstart before migration stay,
+even if they match fast defaults. `MAX_TRADES` stays too, including an added
+value of `3`, to keep the Omen trade cap. The record is cleared after rollback.
+Each changed file has a timestamped backup. Dry runs report all changes.
+
+Without a provenance record, rollback keeps every input key and value. It
+prints a warning for each config copy and lists inputs that differ from the
+pearl service defaults. It still selects the pearl service hash. This protects
+hand-made pilots and fleet settings from `enable_offchain_controls_all.sh`;
+matching a fast default is not evidence that migration added a key.
 
 The fast lane uses the persistent per-period trade counter. After the cap,
 `reason=trade_cap` is logged once per staking period, including across restarts.
