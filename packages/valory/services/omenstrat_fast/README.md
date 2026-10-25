@@ -116,12 +116,22 @@ must retain those two names in priority order.
 Follow the [three-step release guide](../../../../README.md#release-an-omen-trader):
 publish, run `release_service.sh`, then optionally run the config migration.
 Use `--quickstart /path/to/canary/quickstart --dry-run` first, then release and
-observe that one trader before the fleet. Existing configs keep their name,
+observe that one trader before the fleet. Existing configs keep their name, description,
 agent ID, staking settings, and user values. The fast JSON template is only a
 defaults source. Do not copy it over an existing trader config.
 
 Release builds `valory/oar-omenstrat_fast:<agent-hash>`. To roll back, use
 `--service trader_pearl`; release builds `valory/oar-trader:<agent-hash>`.
+In both directions, release checks the cached Omen service package's public ID.
+If it differs from the selected service, migration sets the top-level
+`allow_different_service_public_id` flag to `true` in
+`configs/config_predict_trader.json`. This also repairs a config whose hash
+already points to the selected service. A fresh quickstart or a cache with the
+same public ID needs no new flag. Migration keeps an existing flag.
+To preview a repair, run `python3 scripts/migrate_trader_config.py
+/path/to/quickstart --service omenstrat_fast --dry-run`. For rollback, select
+`--service trader_pearl`. Remove `--dry-run` to apply the repair. These changes
+keep the trader's own name and description, service ID, Safe, and staking settings.
 Neither path mints a service. The olas-scripts
 `enable_offchain_controls_all.sh` helper is not needed for fast traders.
 

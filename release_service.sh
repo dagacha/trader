@@ -18,6 +18,9 @@
 # Quickstart "hash" must be the selected SERVICE CID, never the agent hash.
 # The selected agent image is local-only; it is not on Docker Hub.
 # Each host must run release_service.sh / build_image_offline.sh or load the image.
+# If an Omen cache has a different service public ID, migration sets
+# allow_different_service_public_id=true before the hash edit. It keeps the
+# trader's name and description. Polymarket caches are skipped.
 #
 # Usage:
 #   ./release_service.sh                                    # release to ALL traders on this machine (see below)
