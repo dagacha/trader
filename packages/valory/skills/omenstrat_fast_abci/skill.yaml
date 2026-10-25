@@ -16,7 +16,7 @@ fingerprint:
   models.py: bafybeicihpfeq66ahhuboojdrf7f33xu6tmktmskzodh7oiqvxtggka4om
   tests/__init__.py: bafybeifx5qa3c7rsjbe4ujuif363osh23mvgprcd5jwv67t5kl3kgqrszu
   tests/test_composition.py: bafybeif73yo7ty5as3rvfc6u5yozco5noi2ucotbvu6ufhsxztxtdw7hqy
-  tests/test_config.py: bafybeiemddmmrgopw2xmwd627tn5wdf22r7t36zfdc643gfdjek22vmiii
+  tests/test_config.py: bafybeiaz3mn2apdxm4nudb5svv6pxbtclf5ltyqe22uziwjot6lvkfhbai
   tests/test_requests.py: bafybeif6cpspom5h65ikwp5c4umixkh4umxy3kkj2ib7mizjw455kfxvly
 fingerprint_ignore_patterns: []
 connections: []
@@ -34,7 +34,7 @@ skills:
 - valory/chatui_abci:0.1.0:bafybeihj5y6cecuw4iz2gshicoygghrgi5b6rzynnofx25ycsv56ehgdvq
 - valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
 - valory/trader_abci:0.1.0:bafybeififhp3fto5tvw7nbr3qft2ejio6xfggove5cvizuc3fhqq6oa2m4
-- valory/fresh_watch_abci:0.1.0:bafybeiby3prcbe7u2e7lkbtrievhztvilncjpevddivjl33avejwnka67e
+- valory/fresh_watch_abci:0.1.0:bafybeiaero67f4ua2tzmw3fpgrl2gsbkshgyajoawnigfarykd3pgkl24q
 behaviours:
   main:
     args: {}
@@ -376,6 +376,7 @@ models:
       no_min_p: 0.7
       cap: 4.0
       kelly_bankroll: 10.0
+      price_margin: 0.01
       max_slip: 0.2
       min_stake: 0.1
     class_name: FastParams

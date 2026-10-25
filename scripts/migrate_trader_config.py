@@ -81,6 +81,7 @@ FAST_ENV = (
     "CAP",
     "KELLY_BANKROLL",
     "MAX_SLIP",
+    "PRICE_MARGIN",
     "MIN_STAKE",
     "FAST_DYNAMIC_MECH",
     "USE_OFFCHAIN",
@@ -463,7 +464,12 @@ def sync_priority(mech, desired, changes):
     return changed
 
 
-def sync_cached_json(text, desired):
+def keep_slip_override(key, value, upgrade_slip):
+    """Keep each copy's operator value during the one-time slip upgrade."""
+    return upgrade_slip and key == "MAX_SLIP" and scalar(value) != "0.1"
+
+
+def sync_cached_json(text, desired, upgrade_slip=False):
     """Sync explicit quickstart controls without changing cached runtime values."""
     data = json.loads(text)
     changes = []
@@ -491,6 +497,8 @@ def sync_cached_json(text, desired):
                     saved[key] = value
                     text = edit_json(text, data, addition=(key, value))
                     changes.append(f"add saved input {key} from quickstart")
+                elif keep_slip_override(key, saved[key], upgrade_slip):
+                    continue
                 elif saved[key] != value:
                     saved[key] = value
                     text = edit_json(text, data, value)
@@ -503,6 +511,12 @@ def sync_cached_json(text, desired):
                     env[key] = dict(source)
                     text = edit_json(text, data, addition=(key, env[key]))
                     changes.append(f"sync {key} from quickstart")
+                elif keep_slip_override(
+                    key,
+                    env[key].get("value") if isinstance(env[key], dict) else env[key],
+                    upgrade_slip,
+                ):
+                    continue
                 elif isinstance(env[key], dict):
                     if env[key].get("value") != value:
                         env[key]["value"] = value
@@ -516,6 +530,8 @@ def sync_cached_json(text, desired):
             field = key.lower()
             if field not in obj:
                 continue
+            if keep_slip_override(key, obj[field], upgrade_slip):
+                continue
             value = source["value"]
             if not isinstance(obj[field], str):
                 value = json.loads(scalar(value))
@@ -526,7 +542,7 @@ def sync_cached_json(text, desired):
     return text, changes
 
 
-def sync_cached_env(text, desired, env_file=False):
+def sync_cached_env(text, desired, env_file=False, upgrade_slip=False):
     """Sync bare controls and existing component-path keys in agent env blocks."""
     values = {key: scalar(source["value"]) for key, source in desired.items()}
     lines = text.splitlines(keepends=True)
@@ -606,6 +622,8 @@ def sync_cached_env(text, desired, env_file=False):
                 existing = json.loads(old_value)
             except ValueError:
                 existing = old_value.strip("'\"")
+            if keep_slip_override(bare, existing, upgrade_slip):
+                continue
             if old_value != value and scalar(existing) != value:
                 lines[target] = replacement
                 changes.append(f"sync {key} from quickstart")
@@ -862,23 +880,15 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
     if fast_mode:
         env = json.loads(config.read_text()).get("env_variables", {})
         added = sorted(set(recorded or []) | (set(defaults) - set(env)))
-        upgrade_slip = (
-            "MAX_SLIP" in (recorded or [])
-            and "MAX_SLIP" not in upgraded
-            and scalar(env.get("MAX_SLIP", {}).get("value")) == "0.1"
-        )
+        upgrade_slip = "MAX_SLIP" in (recorded or []) and "MAX_SLIP" not in upgraded
         provenance_data = {"added": added}
-        if upgraded or "MAX_SLIP" in added:
-            provenance_data["upgraded"] = sorted(
-                set(upgraded) | ({"MAX_SLIP"} if "MAX_SLIP" in added else set())
-            )
+        if upgraded:
+            provenance_data["upgraded"] = upgraded
         changes = []
         if recorded != added:
             changes.append("record added fast defaults: " + ", ".join(added))
-        if "MAX_SLIP" in added and "MAX_SLIP" not in upgraded:
-            changes.append("record one-time MAX_SLIP upgrade check")
-        # Record the decision before syncing files. A retry must not overwrite
-        # a later operator choice. Keep added keys for rollback.
+        # Keep rollback ownership if a copy write fails. Mark the upgrade only
+        # after every copy has been written, so a retry checks remaining copies.
         write_changes(
             provenance, json.dumps(provenance_data) + "\n", changes, dry_run, warn_only
         )
@@ -947,8 +957,11 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                         data["env_variables"][key] = dict(source)
                         updated = edit_json(updated, data, addition=(key, source))
                         changes.append(f"add fast default {key}={source['value']}")
-                    elif key == "MAX_SLIP" and upgrade_slip:
-                        # Apply the one-time decision recorded before the sync.
+                    elif (
+                        key == "MAX_SLIP"
+                        and upgrade_slip
+                        and scalar(data["env_variables"][key].get("value")) == "0.1"
+                    ):
                         data["env_variables"][key]["value"] = source["value"]
                         updated = edit_json(updated, data, source["value"])
                         changes.append(
@@ -964,9 +977,11 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
             }
         if desired and (not rollback or recorded is not None):
             updated, synced = (
-                sync_cached_json(updated, desired)
+                sync_cached_json(updated, desired, upgrade_slip)
                 if path.suffix == ".json"
-                else sync_cached_env(updated, desired, path.name == "agent_0.env")
+                else sync_cached_env(
+                    updated, desired, path.name == "agent_0.env", upgrade_slip
+                )
             )
             changes.extend(synced)
             if not fast_mode and not rollback and path.suffix != ".json":
@@ -994,6 +1009,15 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
             if all(value is not None for value in priority):
                 stored.append((path, priority))
         write_changes(path, updated, changes, dry_run, warn_only)
+    if fast_mode and "MAX_SLIP" in added and "MAX_SLIP" not in upgraded:
+        provenance_data["upgraded"] = sorted(set(upgraded) | {"MAX_SLIP"})
+        write_changes(
+            provenance,
+            json.dumps(provenance_data) + "\n",
+            ["record one-time MAX_SLIP upgrade check"],
+            dry_run,
+            warn_only,
+        )
     if rollback and recorded:
         write_changes(
             provenance,

@@ -165,7 +165,10 @@ def test_service_public_id_migration(tmp_path, monkeypatch, cached, service, new
     assert result.endswith(b"\n") == bool(newline)
     if newline == "\r\n":
         assert result.count(b"\n") == result.count(b"\r\n")
-    assert list(paths[0].parent.glob("*.bak-*"))[0].read_bytes() == before[paths[0]]
+    assert (
+        list(paths[0].parent.glob(paths[0].name + ".bak-*"))[0].read_bytes()
+        == before[paths[0]]
+    )
     after = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
     run(tmp_path, "--service", service)
     assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == after
@@ -2486,15 +2489,24 @@ def test_upgrade_only_recorded_slip_default(tmp_path, recorded, value, expected)
         run(tmp_path, "--service", "omenstrat_fast", mode)
         assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
     run(tmp_path, "--service", "omenstrat_fast")
+    pending = recorded == ["MAX_SLIP"]
     for path in paths:
         assert (
             json.loads(path.read_text())["env_variables"]["MAX_SLIP"]["value"]
             == expected
         )
-    assert json.loads(saved.read_text())["user_provided_args"]["MAX_SLIP"] == expected
+    saved_expected = "stale" if pending else expected
+    assert (
+        json.loads(saved.read_text())["user_provided_args"]["MAX_SLIP"]
+        == saved_expected
+    )
     env = dict(line.split("=", 1) for line in agent.read_text().splitlines())
     assert env["MAX_SLIP"] == expected
-    assert env["SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_MAX_SLIP"] == expected
+    assert (
+        env["SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_MAX_SLIP"] == saved_expected
+    )
+    # The one-time upgrade is complete. Ordinary syncs use the source again.
+    run(tmp_path, "--service", "omenstrat_fast")
     after = {p: p.read_bytes() for p in [*tracked, marker]}
     backups = sorted(tmp_path.rglob("*.bak-*"))
     run(tmp_path, "--service", "omenstrat_fast")
@@ -2510,6 +2522,7 @@ def test_edited_fast_keys_sync_to_all_copies(tmp_path):
 
     migration = runpy.run_path(str(SCRIPT))
     keys = set(migration["FAST_ENV"])
+    assert "PRICE_MARGIN" in keys
     assert {field.name.upper() for field in fields(FastConfig)} <= keys
     template = json.loads(
         (SCRIPT.parents[1] / "configs/config_omenstrat_fast.json").read_text()
@@ -2524,6 +2537,13 @@ def test_edited_fast_keys_sync_to_all_copies(tmp_path):
     prefix = "SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_"
     agent = paths[1].parent / "agent_0.env"
     agent.write_text("".join(prefix + key + "=stale\n" for key in sorted(keys)))
+    build = paths[1].parent / "build.yaml"
+    build.write_text(
+        "env:\n"
+        + "".join(
+            f'  - name: {prefix}{key}\n    value: "stale"\n' for key in sorted(keys)
+        )
+    )
     run(tmp_path, "--service", "omenstrat_fast")
     for path in paths:
         actual = json.loads(path.read_text())["env_variables"]
@@ -2536,6 +2556,7 @@ def test_edited_fast_keys_sync_to_all_copies(tmp_path):
         assert actual[key] == value
         assert env[key] == value
         assert env[prefix + key] == value
+        assert f'  - name: {prefix}{key}\n    value: "{value}"' in build.read_text()
 
 
 @pytest.mark.parametrize("has_config", [False, True])
@@ -2607,8 +2628,8 @@ def test_slip_upgrade_check_retires_for_current_values(tmp_path, initial):
 
 
 @pytest.mark.parametrize("interrupt", [None, "source", "cache"])
-def test_slip_sync_retry_uses_source(tmp_path, monkeypatch, interrupt):
-    """Sync divergent copies from the source, also after an interrupted write."""
+def test_slip_sync_retry_preserves_each_copy(tmp_path, monkeypatch, interrupt):
+    """Keep custom slip values and retry an interrupted default upgrade."""
     paths = fixture(tmp_path)
     for path, value in zip(paths, ["0.1", "0.15", "0.1"]):
         data = json.loads(path.read_text())
@@ -2630,16 +2651,76 @@ def test_slip_sync_retry_uses_source(tmp_path, monkeypatch, interrupt):
             patcher.setattr(Path, "open", fail_write)
             with pytest.raises(OSError, match="interrupted write"):
                 run(tmp_path, "--service", "omenstrat_fast")
-        assert json.loads(marker.read_text())["upgraded"] == ["MAX_SLIP"]
+        assert "MAX_SLIP" not in json.loads(marker.read_text()).get("upgraded", [])
     run(tmp_path, "--service", "omenstrat_fast")
-    expected = "0.1" if interrupt == "source" else "0.2"
-    for path in paths:
+    assert json.loads(marker.read_text())["upgraded"] == ["MAX_SLIP"]
+    for path, expected in zip(paths, ["0.2", "0.15", "0.2"]):
         assert (
             json.loads(path.read_text())["env_variables"]["MAX_SLIP"]["value"]
             == expected
         )
+    run(tmp_path, "--service", "omenstrat_fast")
+    assert all(
+        json.loads(path.read_text())["env_variables"]["MAX_SLIP"]["value"] == "0.2"
+        for path in paths
+    )
     before = {path: path.read_bytes() for path in [*paths, marker]}
     backups = sorted(tmp_path.rglob("*.bak-*"))
     run(tmp_path, "--service", "omenstrat_fast")
     assert all(path.read_bytes() == content for path, content in before.items())
     assert sorted(tmp_path.rglob("*.bak-*")) == backups
+
+
+@pytest.mark.parametrize(
+    "custom,layout",
+    [(kind, "wrapped") for kind in ("source", "saved", "cache", "agent", "k8s")]
+    + [("cache", "scalar"), ("cache", "lower")],
+)
+def test_slip_upgrade_checks_each_copy(tmp_path, custom, layout):
+    """Upgrade only a copy whose scalar still equals the old default."""
+    paths = fixture(tmp_path)
+    for index, path in enumerate(paths):
+        data = json.loads(path.read_text())
+        data["env_variables"]["MAX_SLIP"] = entry(
+            0.15 if custom == ("source" if index == 0 else "cache") else 0.1
+        )
+        if index and layout == "scalar":
+            data["env_variables"]["MAX_SLIP"] = data["env_variables"]["MAX_SLIP"][
+                "value"
+            ]
+        if index and layout == "lower":
+            data["max_slip"] = data["env_variables"]["MAX_SLIP"]["value"]
+        path.write_text(json.dumps(data))
+    saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
+    saved.write_text(
+        json.dumps(
+            {"user_provided_args": {"MAX_SLIP": 0.15 if custom == "saved" else 0.1}}
+        )
+    )
+    agent = paths[1].parent / "agent_0.env"
+    prefix = "SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_"
+    value = "0.15" if custom == "agent" else "0.1"
+    agent.write_text(f"MAX_SLIP={value}\n{prefix}MAX_SLIP={value}\n")
+    build = paths[1].parent / "build.yaml"
+    value = "0.15" if custom == "k8s" else "0.1"
+    build.write_text(f'env:\n  - name: {prefix}MAX_SLIP\n    value: "{value}"\n')
+    marker = tmp_path / "configs/.fast_defaults_added.json"
+    marker.write_text(json.dumps({"added": ["MAX_SLIP"]}))
+    run(tmp_path, "--service", "omenstrat_fast")
+    for index, path in enumerate(paths):
+        expected = 0.15 if custom == "source" or (index and custom == "cache") else 0.2
+        actual = json.loads(path.read_text())
+        value = actual["env_variables"]["MAX_SLIP"]
+        assert float(value["value"] if isinstance(value, dict) else value) == expected
+        if index and layout == "lower":
+            assert actual["max_slip"] == expected
+    assert float(json.loads(saved.read_text())["user_provided_args"]["MAX_SLIP"]) == (
+        0.15 if custom in ("source", "saved") else 0.2
+    )
+    for key in ("MAX_SLIP", prefix + "MAX_SLIP"):
+        env = dict(line.split("=", 1) for line in agent.read_text().splitlines())
+        assert float(env[key]) == (0.15 if custom in ("source", "agent") else 0.2)
+    assert (
+        f'value: "{0.15 if custom in ("source", "k8s") else 0.2}"' in build.read_text()
+    )
+    assert json.loads(marker.read_text())["upgraded"] == ["MAX_SLIP"]

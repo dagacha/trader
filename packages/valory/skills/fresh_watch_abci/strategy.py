@@ -62,6 +62,7 @@ class FastConfig:
     cap: float = 4.0
     kelly_bankroll: float = 10.0
     max_slip: float = 0.20
+    price_margin: float = 0.01
     min_stake: float = 0.1
 
     def in_window(self, now: float) -> bool:
@@ -159,13 +160,13 @@ def decide(
         :param price: average execution price.
         :return: skip reason, or an empty string.
         """
-        if price > cfg.max_price:
+        if price > cfg.max_price - cfg.price_margin:
             return "max_price"
         if side == 1 and probability < cfg.no_min_p:
             return "no_min_p"
         if probability - price + 1e-12 < cfg.min_edge:
             return "min_edge"
-        if price - requested[side] > cfg.max_slip + 1e-12:
+        if price - requested[side] > cfg.max_slip - cfg.price_margin + 1e-12:
             return "max_slip"
         return ""
 
@@ -175,6 +176,7 @@ def decide(
     if reason:
         return Decision(kind, p_hat, side, price, probability - price, 0.0, reason)
 
+    # Leave the configured price margin for pool moves before placement.
     # Price rises with stake, while Kelly size falls. Bisect their feasible range.
     # Check CAP first so an allowed capped bet keeps its exact amount.
     low, high = 0.0, cfg.cap

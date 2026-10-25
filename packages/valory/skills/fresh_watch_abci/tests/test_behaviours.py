@@ -1265,7 +1265,10 @@ def test_staked_activity_cache_after_consensus(tmp_path: Any) -> None:
 
 
 @pytest.mark.parametrize("bound", ["max_price", "max_slip"])
-def test_decided_amount_passes_placement(tmp_path: Any, bound: str) -> None:
+@pytest.mark.parametrize("margin", [0.0, 0.01])
+def test_decided_amount_passes_placement(
+    tmp_path: Any, bound: str, margin: float
+) -> None:
     """Accept the consensus amount, then refuse it after an adverse small buy."""
     from dataclasses import asdict, replace
 
@@ -1284,15 +1287,21 @@ def test_decided_amount_passes_placement(tmp_path: Any, bound: str) -> None:
     cfg = replace(
         FastConfig(),
         prior_weight=1,
+        price_margin=margin,
         kelly_bankroll=1000000,
-        max_price=0.67 if bound == "max_price" else 0.9,
+        max_price=0.675 if bound == "max_price" else 0.9,
     )
-    requested = [0.65, 0.35] if bound == "max_price" else [0.47, 0.53]
+    requested = [0.65, 0.35] if bound == "max_price" else [0.475, 0.525]
     reserves, fee = [35 * 10**18, 65 * 10**18], 2 * 10**16
     decision = decide("still", 0.99, reserves, requested, cfg, fee)
     assert decision.stake >= cfg.min_stake
     limit = cfg.max_price if bound == "max_price" else requested[0] + cfg.max_slip
-    assert decision.price == pytest.approx(limit, abs=1e-10)
+    assert decision.price == pytest.approx(limit - margin, abs=1e-10)
+    if margin:
+        unprotected = decide(
+            "still", 0.99, reserves, requested, replace(cfg, price_margin=0), fee
+        )
+        assert decision.stake < unprotected.stake
     data = SynchronizedData(
         AbciAppDB(
             setup_data=dict(
@@ -1332,6 +1341,36 @@ def test_decided_amount_passes_placement(tmp_path: Any, bound: str) -> None:
         moved = [reserve + net for reserve in reserves]
         moved[synced.vote] -= other_tokens
         b.quoted_tokens = buy_amount(synced.bet_amount, moved, synced.vote, fee)
-        assert synced.bet_amount / b.quoted_tokens > limit
-        assert not run(b._calc_buy_amount())
-        assert b._placement_failure == bound
+        if margin:
+            assert limit - margin < synced.bet_amount / b.quoted_tokens < limit
+            assert run(b._calc_buy_amount())
+        else:
+            from packages.valory.skills.decision_maker_abci.payloads import (
+                BetPlacementPayload,
+            )
+
+            assert synced.bet_amount / b.quoted_tokens > limit
+            # Run the preparation path: the guard must stop before building a buy.
+            b.wait_for_condition_with_sleep = lambda *args: done(None)
+            b._build_buy_tx = MagicMock()
+            tx_hash = run(b._prepare_safe_tx())
+            assert tx_hash is None
+            b._build_buy_tx.assert_not_called()
+            assert b._placement_failure == bound
+            with (
+                patch.object(
+                    BetPlacementBehaviour, "finish_behaviour", return_value=done(None)
+                ),
+                patch.object(
+                    type(b), "sampled_bet", new_callable=PropertyMock
+                ) as sampled,
+            ):
+                sampled.return_value.creationTimestamp = 1000
+                run(
+                    b.finish_behaviour(
+                        BetPlacementPayload("agent", "placement", tx_hash)
+                    )
+                )
+            logged = json.loads(b.context.logger.info.call_args.args[1])
+            assert logged["prepared"] is False
+            assert logged["reason"] == bound

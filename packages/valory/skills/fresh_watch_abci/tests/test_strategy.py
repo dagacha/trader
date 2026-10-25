@@ -283,7 +283,13 @@ def test_queue_realitio_opening_is_trading_close(
     "balances,fee,requested,cfg,reason",
     [
         ([3.5, 6.5], 2 * 10**16, [0.65, 0.35], FastConfig(), ""),
-        ([35, 65], 2 * 10**16, [0.65, 0.35], replace(FastConfig(), max_price=0.67), ""),
+        (
+            [35, 65],
+            2 * 10**16,
+            [0.65, 0.35],
+            replace(FastConfig(), max_price=0.67, price_margin=0),
+            "",
+        ),
         ([35, 65], 2 * 10**16, [0.65, 0.35], replace(FastConfig(), min_edge=0.14), ""),
         ([35, 65], 2 * 10**17, [0.65, 0.35], FastConfig(), "min_edge"),
         (
@@ -320,9 +326,10 @@ def test_executed_kelly(
     assert result.stake <= kelly + 1e-9
     assert (
         result.stake == pytest.approx(kelly, abs=1e-8)
-        or result.price == pytest.approx(cfg.max_price, abs=1e-8)
+        or result.price == pytest.approx(cfg.max_price - cfg.price_margin, abs=1e-8)
         or result.edge == pytest.approx(cfg.min_edge, abs=1e-8)
-        or result.price - requested[0] == pytest.approx(cfg.max_slip, abs=1e-8)
+        or result.price - requested[0]
+        == pytest.approx(cfg.max_slip - cfg.price_margin, abs=1e-8)
     )
 
 
@@ -450,7 +457,11 @@ def test_stop_when_quote_amount_converges(bounded: bool) -> None:
 
     from packages.valory.skills.fresh_watch_abci.strategy import buy_amount
 
-    cfg = replace(FastConfig(), max_price=0.67) if bounded else FastConfig()
+    cfg = (
+        replace(FastConfig(), max_price=0.67, price_margin=0)
+        if bounded
+        else FastConfig()
+    )
     with patch(
         "packages.valory.skills.fresh_watch_abci.strategy.buy_amount", wraps=buy_amount
     ) as quotes:

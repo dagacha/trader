@@ -1,6 +1,6 @@
 {
     "name": "omenstrat_fast",
-    "hash": "bafybeialkxt7jq7lflssat5uym4ocjql6hb66fgr6d4myikrkfmpsl4xsi",
+    "hash": "bafybeifeht5vdyijfw5xelmq3f4r45czyqa3m73om7dyg4zyiaqorc67fe",
     "description": "Fresh-watch Omen agent with the fixed fast strategy.",
     "image": "https://operate.olas.network/_next/image?url=%2Fimages%2Fprediction-agent.png&w=3840&q=75",
     "service_version": "main",
@@ -290,6 +290,12 @@
             "name": "Kelly bankroll",
             "description": "",
             "value": "10.0",
+            "provision_type": "user"
+        },
+        "PRICE_MARGIN": {
+            "name": "Price margin",
+            "description": "Absolute price room for pool moves before placement; 0 disables it.",
+            "value": "0.01",
             "provision_type": "user"
         },
         "MAX_SLIP": {

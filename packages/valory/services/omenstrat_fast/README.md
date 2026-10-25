@@ -95,6 +95,7 @@ settlement logs for that result.
 | `PRIORS` | `still_hold: 0.85`, `numeric_threshold: 0.60`, `other_event: 0.18` |
 | `MIN_EDGE` | `0.03` |
 | `MAX_PRICE` | `0.90` |
+| `PRICE_MARGIN` | `0.01` absolute price; `0` disables it |
 | `NO_MIN_P` | `0.70` |
 | `CAP` | `4.0` xDAI |
 | `KELLY_BANKROLL` | `10.0` xDAI |
@@ -121,9 +122,15 @@ price of 0.8 still permits at most 0.9. This is an absolute price difference,
 not a percentage of the request price. `MIN_STAKE=0.1` xDAI is the minimum
 accepted stake; smaller or empty results are skipped before placement.
 
-A stake can sit on a price or slip bound. A later pool move can make placement
-refuse that stake with `max_price` or `max_slip`. This is expected: the placement
-quote must still pass both bounds. The stake search adds no reserve margin.
+`PRICE_MARGIN=0.01` sizes the stake against `MAX_PRICE - PRICE_MARGIN` and
+`request_price + MAX_SLIP - PRICE_MARGIN`. This leaves 0.01 of absolute price
+room for adverse pool moves before placement. Placement still checks the real
+`MAX_PRICE` and `MAX_SLIP` limits. Larger moves can still cause refusal.
+
+Set `PRICE_MARGIN=0` to use the full limits. When `max_price` or `max_slip`
+binds with zero margin, the decision sizes the stake to that bound. Any adverse
+pool move before placement can then refuse the bet with that named reason,
+`prepared=false`, and no prepared transaction. This is expected behavior.
 
 The active window uses UTC regardless of the host timezone. `MAX_TRADES`
 defaults to `3` per staking period; `0` disables the cap. The durable counter

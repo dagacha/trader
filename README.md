@@ -162,10 +162,17 @@ not a tracked quickstart file. Operate redeploys and `update_all.sh` pulls do
 not replace it. Keep it with the quickstart config and include it in backups.
 
 An unchanged `MAX_SLIP=0.1` recorded as migration-added is upgraded to `0.2`
-once. The record's `upgraded` list prevents another upgrade if the operator
-later chooses `0.1`. The key stays in `added` so rollback can still remove it.
+once. During this upgrade, each copy is checked separately. Only its old
+`0.1` scalar is replaced; a custom value such as `0.15` stays unchanged.
+If the source already has a custom value, old-default copies use that value.
+The `upgraded` marker is written after all copies are synced. An interrupted
+run leaves the check pending so a retry completes the remaining copies.
+Later ordinary syncs use the quickstart source again. The record's `upgraded`
+list prevents another upgrade if the operator later chooses `0.1`. The key
+stays in `added` so rollback can still remove it.
 An unrecorded value or a value that differs from the old default stays unchanged.
-`MIN_STAKE` defaults to `0.1` xDAI and is added only when absent.
+`MIN_STAKE` defaults to `0.1` xDAI. `PRICE_MARGIN` defaults to `0.01`
+(`0` disables it). Both are added only when absent.
 
 On rollback, the migration removes recorded keys from the quickstart, saved
 user inputs, service configs, and generated env files. This removes shared

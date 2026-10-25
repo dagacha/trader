@@ -14,11 +14,11 @@ fingerprint:
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
   models.py: bafybeifopsh2sda3fs3ry4lbciet6xdekpqmj7rw4brr6v7tquolstzlkm
   rounds.py: bafybeihpvt4reookpnr4pqcjwrag7qlgtrkn4lxtl5oaa6m32ig5455qte
-  strategy.py: bafybeibosgzvrigsztwiq5pgec47giaoqo4tfcby5o7bfphit2ygqpwpzi
+  strategy.py: bafybeigcxznppvnoq7i4vbpfsyknj7aipxcbywfztsxsmjdshssfdyc4vu
   tests/__init__.py: bafybeiebuokdlpgmmm6orggvfnnm537acc3eogkkrn6jyjaxzqyb7t7yzy
-  tests/test_behaviours.py: bafybeicjgpqs633q7l3wff7trtvhgjixqal2qq4mf6ahy7ovckobucp5ym
+  tests/test_behaviours.py: bafybeigelp5dvn7ncudss2wsxj44itgjk4nnzqmgvr7sxig4z5kxfrcb64
   tests/test_rounds.py: bafybeiethtm2rdws2ecocfiznx7mewmmxo4k6aro3nzteg6easjbu6hvqe
-  tests/test_strategy.py: bafybeifdz3utuunvha7woce4mzr6m77ew5rqy7ppkxobcl3xswv33hxy4u
+  tests/test_strategy.py: bafybeien3q3zc67wno5bylbuvx7jg36tapb5vpjck7wpl7ptcctw2al3yy
 fingerprint_ignore_patterns: []
 connections: []
 contracts: []
@@ -367,6 +367,7 @@ models:
       no_min_p: 0.7
       cap: 4.0
       kelly_bankroll: 10.0
+      price_margin: 0.01
       max_slip: 0.2
       min_stake: 0.1
     class_name: FastParams
