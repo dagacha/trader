@@ -20,7 +20,7 @@
 """Parameters and state for the fast Omen strategy."""
 
 from dataclasses import fields
-from typing import Any, Type
+from typing import Any, Optional, Tuple, Type
 
 from packages.valory.skills.abstract_round_abci.base import AbciApp
 from packages.valory.skills.fresh_watch_abci.rounds import FreshWatchAbciApp
@@ -145,6 +145,9 @@ class SharedState(TraderSharedState):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Initialize the poll timestamp."""
         super().__init__(*args, **kwargs)
+        self.fast_activity_status: Optional[
+            Tuple[float, Optional[int], Tuple[bool, bool, int, int]]
+        ] = None
         self.fast_last_poll = 0.0
         self.fast_background_running = False
         self.fast_polling = False

@@ -1,7 +1,8 @@
 # Omenstrat fast
 
-This single-agent Omen service uses agent id **25**. It uses the existing Safe,
-Mech HTTP client, transaction settlement, redemption, staking, and UI code.
+This single-agent Omen service template uses agent id **25**. Existing Omen
+quickstarts keep their configured agent ID when released. It uses the existing
+Safe, Mech HTTP client, transaction settlement, redemption, staking, and UI code.
 It has its own composition and strategy. The normal Omenstrat and Polystrat
 compositions are unchanged.
 
@@ -102,40 +103,27 @@ that its transaction settled; use the existing settlement logs for that result.
 | `STOP_TRADING_IF_STAKING_KPI_MET` | `false` |
 | `STRATEGIES_KWARGS.absolute_max_bet_size` | `4000000000000000000` wei (4 xDAI); the fast formula uses `CAP` directly |
 
-The active window uses UTC regardless of the host timezone. `MAX_TRADES` is not
-read by this composition. The new parameters are declared in both new skills,
-the new agent, and the new service. The two-tool allowlist is fixed; the parameter
+The active window uses UTC regardless of the host timezone. `MAX_TRADES`
+defaults to `3` per staking period; `0` disables the cap. The durable counter
+survives restarts. After the cap, only off-chain Mech requests run until the
+staking activity target is met. Then the agent waits and performs periodic
+housekeeping. An activity target met before the cap does not stop trading.
+Fast parameters are declared in both skills, the agent, and the service. The two-tool allowlist is fixed; the parameter
 must retain those two names in priority order.
 
-## Pilot through quickstart
+## Release through quickstart
 
-These are operator steps for a later authorized pilot. This change does not mint,
-publish, deploy, or change a server.
+Follow the [three-step release guide](../../../../README.md#release-an-omen-trader):
+publish, run `release_service.sh`, then optionally run the config migration.
+Use `--quickstart /path/to/canary/quickstart --dry-run` first, then release and
+observe that one trader before the fleet. Existing configs keep their name,
+agent ID, staking settings, and user values. The fast JSON template is only a
+defaults source. Do not copy it over an existing trader config.
 
-1. Review and build the branch from `dagacha/trader`. Check `getAgentIds` on the
-   intended service before any mint. Confirm that it expects agent id **25**.
-2. Supply a reviewed release artifact for this service before quickstart use.
-   The template records the local service CID. It is not available on IPFS until
-   a separate publication is authorized. Do not use the normal trader release
-   artifact for this agent. Quickstart also needs the matching agent release.
-   For a local image, pass `valory/omenstrat_fast:0.1.0:<agent-hash>` to
-   `build_image_offline.sh`. It builds `valory/oar-omenstrat_fast:<agent-hash>`
-   directly. No extra tag step is needed. Use `--print-tag` before the repository
-   path to check the image tag without a build.
-3. Copy `configs/config_omenstrat_fast.json` from this repository next to
-   `configs/config_predict_trader.json` in the quickstart checkout. Use a separate
-   quickstart instance and store volume for this pilot. Set the release version
-   and CID to the approved artifact. Keep `configurations.gnosis.agent_id = 25`.
-4. Set the RPC, Safe, service, staking, and funding inputs in that instance.
-   Retain the V2 marketplace and dynamic selection. Confirm the runtime config
-   still has the 1.5-second response poll interval. For static selection, set
-   `FAST_DYNAMIC_MECH=false` and supply the priority Mech HTTP endpoint in
-   `MECH_MARKETPLACE_CONFIG.offchain_url`.
-5. In that quickstart instance, run
-   `./run_service.sh configs/config_omenstrat_fast.json` only after deployment is
-   authorized. The trader migration skips fast templates and caches cleanly.
-6. Inspect `[FAST_DECISION]` and settlement logs. Check that the queue survives
-   a local restart before leaving the pilot unattended.
+Release builds `valory/oar-omenstrat_fast:<agent-hash>`. To roll back, use
+`--service trader_pearl`; release builds `valory/oar-trader:<agent-hash>`.
+Neither path mints a service. The olas-scripts
+`enable_offchain_controls_all.sh` helper is not needed for fast traders.
 
 ## Open items and limits
 

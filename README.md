@@ -9,7 +9,7 @@ The **Trader** repo hosts the [Olas](https://olas.network/) prediction-market ag
 
 Both services run as **single-agent (sovereign) deployments** distributed via [Pearl](https://olas.network/operate). The agent queries an [AI Mech](https://github.com/valory-xyz/mech) for probability estimates, evaluates profitability, and executes on-chain via a Safe multisig.
 
-A separate pilot agent and service, [`valory/omenstrat_fast`](packages/valory/services/omenstrat_fast/README.md), watches fresh Omen markets. It uses agent id 25, a fixed strategy, and a fast lane that skips the normal cycle delay. Its [quickstart template](configs/config_omenstrat_fast.json) needs a separately approved release before deployment.
+Omen releases select [`valory/omenstrat_fast`](packages/valory/services/omenstrat_fast/README.md) by default. It watches fresh markets and uses a fixed strategy without the normal cycle delay. Existing quickstarts keep their name, agent ID, staking settings, and user values. The [fast config](configs/config_omenstrat_fast.json) supplies missing defaults; do not replace an existing trader config with it.
 
 The high-level loop is the same in both standard flavors:
 
@@ -130,8 +130,60 @@ The migration syncs explicit controls to `.operate/*-quickstart-config.json`
 configs, and generated env files. Operate reads saved user inputs before it
 builds the service. Those inputs must match too, or a redeploy can restore a
 stale value. `release_service.sh` runs this migration even when the service hash
-has not changed. It builds and publishes artifacts; the separate quickstart
-repo starts the service.
+has not changed. For a fast service, it also adds missing fast defaults and
+`MAX_TRADES=3`. Existing quickstart values win. Each changed file gets a
+timestamped backup. Repeated migration makes no further changes.
+
+#### Release an Omen trader
+
+Use these three steps for an authorized deployment:
+
+1. Publish the locked packages: `uv run autonomy push-all --remote`.
+2. Release one canary first:
+   `./release_service.sh --skip-publish --quickstart /path/to/canary/quickstart`.
+   Preview with `--dry-run` first. This builds the selected service's agent image
+   and updates the existing quickstart config. Then start it through the
+   quickstart's `run_service.sh`. Check the cap and activity logs before you run
+   `./release_service.sh --skip-publish` for the other Omen traders.
+3. Optional: run `scripts/migrate_trader_config.py` before a later quickstart
+   run or after a quickstart update. Step 2 already runs it.
+
+Release selects the `omenstrat_fast` service hash and builds
+`valory/oar-omenstrat_fast:<agent-hash>`. Polymarket quickstarts are skipped.
+Use `--service trader_pearl` to switch back; this builds
+`valory/oar-trader:<agent-hash>`. Both paths keep the same on-chain service
+identity. They do not mint a new service.
+
+The fast migration records the keys it adds to the quickstart in
+`configs/.fast_defaults_added.json`. The quickstart is the source for saved
+inputs and caches. The record applies to all those copies, including caches
+that operate rebuilds later. This local sidecar is outside `.operate` and is
+not a tracked quickstart file. Operate redeploys and `update_all.sh` pulls do
+not replace it. Keep it with the quickstart config and include it in backups.
+
+On rollback, the migration removes recorded keys from the quickstart, saved
+user inputs, service configs, and generated env files. This removes shared
+fast overrides such as `USE_OFFCHAIN` and `FINALIZE_TIMEOUT`, so the pearl
+service defaults apply. Keys present in the quickstart before migration stay,
+even if they match fast defaults. `MAX_TRADES` stays too, including an added
+value of `3`, to keep the Omen trade cap. The record is cleared after rollback.
+Each changed file has a timestamped backup. Dry runs report all changes.
+
+Without a provenance record, rollback keeps every input key and value. It
+prints a warning for each config copy and lists inputs that differ from the
+pearl service defaults. It still selects the pearl service hash. This protects
+hand-made pilots and fleet settings from `enable_offchain_controls_all.sh`;
+matching a fast default is not evidence that migration added a key.
+
+The fast lane uses the persistent per-period trade counter. After the cap,
+`reason=trade_cap` is logged once per staking period, including across restarts.
+It sends Mech-only requests until the staking activity target is met, then waits
+while periodic housekeeping continues. Requests use `USE_OFFCHAIN` to select
+off-chain or on-chain payment. A target met before the cap does not stop trades
+below the cap. Staking activity reads are cached for one poll interval.
+
+The olas-scripts `enable_offchain_controls_all.sh` helper is not needed for fast
+traders. The migration adds missing fast controls and keeps explicit user values.
 
 The migration skips Polymarket. If `configs/config_predict_trader.json` is
 missing, or if it or any saved quickstart input

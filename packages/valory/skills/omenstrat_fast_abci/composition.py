@@ -40,6 +40,9 @@ from packages.valory.skills.chatui_abci.rounds import (
     ChatuiLoadRound,
     FinishedChatuiLoadRound,
 )
+from packages.valory.skills.decision_maker_abci.states.trade_count import (
+    TradeCountRound,
+)
 from packages.valory.skills.fresh_watch_abci.rounds import (
     FastDecisionRound,
     FinishedFastTxRound,
@@ -47,7 +50,6 @@ from packages.valory.skills.fresh_watch_abci.rounds import (
     FinishedRequestRound,
     FreshWatchAbciApp,
     FreshWatchRound,
-    PostBetUpdateRound,
 )
 from packages.valory.skills.mech_interact_abci.rounds import MechInteractAbciApp
 from packages.valory.skills.mech_interact_abci.states import final_states as mech
@@ -177,7 +179,7 @@ abci_app_transition_mapping: AbciAppTransitionMapping = {
     FinishedTransactionSubmissionRound: tx.PostTxSettlementRound,
     FailedRound: FreshWatchRound,
     tx.FailedMultiplexerRound: FreshWatchRound,
-    tx.FinishedBetPlacementTxRound: PostBetUpdateRound,
+    tx.FinishedBetPlacementTxRound: TradeCountRound,
     tx.FinishedRedeemingTxRound: CallCheckpointRound,
     FinishedHousekeepingRound: CallCheckpointRound,
     CheckpointCallPreparedRound: FastPreTxSettlementRound,

@@ -1,6 +1,6 @@
 {
     "name": "omenstrat_fast",
-    "hash": "bafybeidpedw7axyjvw4mmqjndhkfmwfzcr3jhwlzvuswzkgtmo6umgklge",
+    "hash": "bafybeictvcejd4pksdgn42te3v7vxyndhofiuch4g6hzpefzc4xbkcf73a",
     "description": "Fresh-watch Omen agent with the fixed fast strategy.",
     "image": "https://operate.olas.network/_next/image?url=%2Fimages%2Fprediction-agent.png&w=3840&q=75",
     "service_version": "main",
@@ -350,6 +350,12 @@
             "name": "Strategies kwargs",
             "description": "",
             "value": "{\"floor_balance\":0,\"default_max_bet_size\":800000000000000000,\"absolute_min_bet_size\":10000000000000000,\"absolute_max_bet_size\":4000000000000000000,\"n_bets\":1,\"min_edge\":0.03,\"min_oracle_prob\":0.5,\"fee_per_trade\":10000000000000000,\"grid_points\":500}",
+            "provision_type": "user"
+        },
+        "MAX_TRADES": {
+            "name": "Maximum trades per staking period",
+            "description": "Zero disables the trade cap.",
+            "value": "3",
             "provision_type": "user"
         },
         "FAST_DYNAMIC_MECH": {

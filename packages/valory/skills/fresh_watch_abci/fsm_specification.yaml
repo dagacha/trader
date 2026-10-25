@@ -5,10 +5,12 @@ alphabet_in:
 - HOUSEKEEPING
 - INSUFFICIENT_BALANCE
 - MARKET
+- MECH_ONLY
 - MOCK_MECH_REQUEST
 - MOCK_TX
 - NONE
 - NO_MAJORITY
+- NO_MARKETS
 - NO_REDEEMING
 - REDEEM_ROUND_TIMEOUT
 - ROUND_TIMEOUT
@@ -25,6 +27,7 @@ start_states:
 - FastDecisionRound
 - FreshWatchRound
 - PostBetUpdateRound
+- TradeCountRound
 states:
 - BetPlacementRound
 - DecisionRequestRound
@@ -33,8 +36,10 @@ states:
 - FinishedHousekeepingRound
 - FinishedRequestRound
 - FreshWatchRound
+- MechOnlySelectionRound
 - PostBetUpdateRound
 - RedeemRound
+- TradeCountRound
 transition_func:
     (BetPlacementRound, CALC_BUY_AMOUNT_FAILED): FreshWatchRound
     (BetPlacementRound, DONE): FinishedFastTxRound
@@ -53,9 +58,14 @@ transition_func:
     (FastDecisionRound, SKIP): FreshWatchRound
     (FreshWatchRound, HOUSEKEEPING): RedeemRound
     (FreshWatchRound, MARKET): DecisionRequestRound
+    (FreshWatchRound, MECH_ONLY): MechOnlySelectionRound
     (FreshWatchRound, NO_MAJORITY): FreshWatchRound
     (FreshWatchRound, ROUND_TIMEOUT): FreshWatchRound
     (FreshWatchRound, WAIT): FreshWatchRound
+    (MechOnlySelectionRound, DONE): FinishedRequestRound
+    (MechOnlySelectionRound, NO_MAJORITY): MechOnlySelectionRound
+    (MechOnlySelectionRound, NO_MARKETS): FreshWatchRound
+    (MechOnlySelectionRound, ROUND_TIMEOUT): FreshWatchRound
     (PostBetUpdateRound, DONE): FreshWatchRound
     (PostBetUpdateRound, NONE): PostBetUpdateRound
     (PostBetUpdateRound, NO_MAJORITY): PostBetUpdateRound
@@ -65,3 +75,7 @@ transition_func:
     (RedeemRound, NO_MAJORITY): RedeemRound
     (RedeemRound, NO_REDEEMING): FinishedHousekeepingRound
     (RedeemRound, REDEEM_ROUND_TIMEOUT): FinishedHousekeepingRound
+    (TradeCountRound, DONE): PostBetUpdateRound
+    (TradeCountRound, NONE): TradeCountRound
+    (TradeCountRound, NO_MAJORITY): TradeCountRound
+    (TradeCountRound, ROUND_TIMEOUT): TradeCountRound

@@ -57,8 +57,22 @@ def make(cls: Any, tmp_path: Any) -> Any:
     context = MagicMock()
     context.params.store_path = tmp_path
     context.params.fast = FastConfig(active_window_utc="00:00-23:59")
+    context.state.fast_activity_status = None
     context.state.fast_last_poll = 0
-    return cls(name="test", skill_context=context)
+    context.params.max_trades = 3
+    context.state.synchronized_data.successful_trade_count = 0
+    context.state.synchronized_data.previous_checkpoint = None
+    context.state.synchronized_data.mech_only_mode = False
+    behaviour = cls(name="test", skill_context=context)
+    from packages.valory.skills.staking_abci.rounds import StakingState
+
+    behaviour.service_staking_state = StakingState.STAKED
+    behaviour.ts_checkpoint = 100
+    counter = tmp_path / "successful_trade_count.txt"
+    if not counter.exists():
+        counter.write_text("0")
+    behaviour._compute_activity_status = lambda: done((False, False, 0, 0))
+    return behaviour
 
 
 def raw_market() -> Any:
@@ -855,3 +869,218 @@ def test_queued_market_expires_before_request(
     reloaded.ingest([row], quoted_at, FastConfig().creators, 600)
     reloaded.save()
     assert FreshQueue(queue.path).pending == []
+
+
+@pytest.mark.parametrize(
+    "count,cap,met,lane",
+    [
+        (2, 3, True, "market"),
+        (3, 3, False, "mech_only"),
+        (3, 3, True, "wait"),
+        (9, 0, True, "market"),
+    ],
+)
+def test_period_trade_cap(
+    tmp_path: Any, count: int, cap: int, met: bool, lane: str
+) -> None:
+    """Keep trading below the cap; finish activity without bets after it."""
+    from packages.valory.skills.staking_abci.rounds import StakingState
+
+    path = tmp_path / "successful_trade_count.txt"
+    path.write_text(json.dumps(dict(count=count, placement_keys=[], period_start=100)))
+    cap_logs: list[str] = []
+    for _ in range(2):  # Restart in the same staking period.
+        b = make(FreshWatchBehaviour, tmp_path)
+        b.context.params.max_trades = cap
+        b.context.params.use_offchain = True
+        b.service_staking_state = StakingState.STAKED
+        b.ts_checkpoint = 100
+        b._compute_activity_status = lambda: done((met, met, 8, 8 if met else 3))
+        b._fetch_fresh = lambda *args: done([raw_market()])
+        b._get_pool_balances = lambda *args: done([100, 100])
+        b.sleep = lambda *args: done(None)
+        queue = FreshQueue(tmp_path / "fresh_watch.json")
+        queue.pending = [raw_market()]
+        queue.asked = {}
+        queue.last_housekeeping = 1050
+        queue.save()
+        with patch.object(
+            type(b), "synchronized_data", new_callable=PropertyMock
+        ) as sd:
+            sd.return_value.successful_trade_count = 0
+            sd.return_value.previous_checkpoint = 100
+            sd.return_value.mechs_info = [
+                SimpleNamespace(relevant_tools={"superforcaster"})
+            ]
+            with patch(
+                "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+                return_value=1050,
+            ):
+                selection = run(b.select())
+        assert selection["lane"] == lane
+        assert selection["previous_checkpoint"] == 100
+        assert selection["is_activity_target_met"] is met
+        if lane != "market":
+            assert FreshQueue(queue.path).pending == [raw_market()]
+        cap_logs.extend(
+            str(call)
+            for call in b.context.logger.info.call_args_list
+            if "reason=trade_cap" in str(call)
+        )
+    assert len(cap_logs) == int(cap > 0 and count >= cap)
+
+
+def test_cap_resets_with_checkpoint(tmp_path: Any) -> None:
+    """A new staking period resets the durable cap and permits a trade."""
+    from packages.valory.skills.staking_abci.rounds import StakingState
+
+    b = make(FreshWatchBehaviour, tmp_path)
+    b.context.params.max_trades = 3
+    b.service_staking_state = StakingState.STAKED
+    b.ts_checkpoint = 200
+    b._compute_activity_status = lambda: done((False, False, 8, 0))
+    (tmp_path / "successful_trade_count.txt").write_text(
+        json.dumps(dict(count=3, placement_keys=["old"], period_start=100))
+    )
+    b._fetch_fresh = lambda *args: done([raw_market()])
+    b._get_pool_balances = lambda *args: done([100, 100])
+    with patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd:
+        sd.return_value.successful_trade_count = 0
+        sd.return_value.previous_checkpoint = 100
+        sd.return_value.mechs_info = [
+            SimpleNamespace(relevant_tools={"superforcaster"})
+        ]
+        with patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+            return_value=1050,
+        ):
+            assert run(b.select())["lane"] == "market"
+    assert (
+        json.loads((tmp_path / "successful_trade_count.txt").read_text())["count"] == 0
+    )
+
+
+def test_mech_only_answer_cannot_prepare_bet(tmp_path: Any) -> None:
+    """Discard capped responses before reading a sampled bet or pool."""
+    b = make(FastDecisionBehaviour, tmp_path)
+    with patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd:
+        sd.return_value.mech_only_mode = True
+        result = run(b.evaluate())
+    assert result["stake"] == 0
+    assert result["reason"] == "mech_only"
+
+
+@pytest.mark.parametrize("positional", [False, True])
+def test_watch_staking_contract_read(tmp_path: Any, positional: bool) -> None:
+    """Support the staking reader's default contract performative."""
+    from aea.configurations.base import PublicId
+
+    from packages.valory.protocols.contract_api.message import ContractApiMessage
+
+    b = make(FreshWatchBehaviour, tmp_path)
+    response = MagicMock()
+    response.performative = ContractApiMessage.Performative.RAW_TRANSACTION
+    response.raw_transaction.body = {"data": 123}
+    b.get_contract_api_response = MagicMock(
+        side_effect=lambda *args, **kwargs: done(response)
+    )
+    args = (ContractApiMessage.Performative.GET_RAW_TRANSACTION,) if positional else ()
+    assert run(
+        b.contract_interact(
+            *args,
+            contract_address="staking",
+            contract_public_id=PublicId.from_str("valory/service_staking_token:0.1.0"),
+            contract_callable="ts_checkpoint",
+            data_key="data",
+            placeholder="ts_checkpoint",
+        )
+    )
+    assert b.ts_checkpoint == 123
+    assert (
+        b.get_contract_api_response.call_args.args[0]
+        == ContractApiMessage.Performative.GET_RAW_TRANSACTION
+    )
+
+
+@pytest.mark.parametrize("housekeeping", [False, True])
+def test_capped_watch_without_offchain(tmp_path: Any, housekeeping: bool) -> None:
+    """Keep housekeeping and allow capped on-chain requests for unmet activity."""
+    from packages.valory.skills.staking_abci.rounds import StakingState
+
+    b = make(FreshWatchBehaviour, tmp_path)
+    b.context.params.use_offchain = False
+    b.service_staking_state = StakingState.UNSTAKED
+    b._compute_activity_status = lambda: done((False, False, 8, 3))
+    b.sleep = lambda *args: done(None)
+    (tmp_path / "successful_trade_count.txt").write_text(
+        json.dumps(dict(count=3, placement_keys=[], period_start=100))
+    )
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    queue.last_housekeeping = 0 if housekeeping else 1050
+    queue.save()
+    with patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd:
+        sd.return_value.previous_checkpoint = 100
+        with patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+            return_value=1050,
+        ):
+            assert run(b.select())["lane"] == (
+                "housekeeping" if housekeeping else "mech_only"
+            )
+
+
+def test_watch_without_durable_counter(tmp_path: Any) -> None:
+    """Use the consensus count if no durable state is available."""
+    b = make(FreshWatchBehaviour, tmp_path)
+    (tmp_path / "successful_trade_count.txt").unlink()
+    b.context.params.use_offchain = True
+    b._compute_activity_status = lambda: done((True, True, 8, 8))
+    b.sleep = lambda *args: done(None)
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    queue.last_housekeeping = 1050
+    queue.save()
+    with patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd:
+        sd.return_value.successful_trade_count = 3
+        with patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+            return_value=1050,
+        ):
+            assert run(b.select())["lane"] == "wait"
+
+
+@pytest.mark.parametrize("refresh", ["interval", "checkpoint"])
+def test_activity_status_cached_across_watch_rounds(
+    tmp_path: Any, refresh: str
+) -> None:
+    """Reuse activity reads across watch instances and refresh after expiry."""
+    b = make(FreshWatchBehaviour, tmp_path)
+    from packages.valory.skills.abstract_round_abci.base import AbciAppDB
+    from packages.valory.skills.decision_maker_abci.states.base import SynchronizedData
+
+    b.context.state.synchronized_data = SynchronizedData(
+        AbciAppDB(setup_data={"previous_checkpoint": [100]})
+    )
+    b._select = lambda *args: done({"lane": "wait"})
+    reads = MagicMock(side_effect=lambda: done((False, False, 8, 3)))
+    b._compute_activity_status = reads
+    with patch(
+        "packages.valory.skills.fresh_watch_abci.behaviours.time.monotonic",
+        return_value=10,
+    ) as clock:
+        assert run(b.select())["activity_completed"] == 3
+        restarted: Any = FreshWatchBehaviour(name="next", skill_context=b.context)
+        restarted._compute_activity_status = reads
+        restarted._select = b._select
+        clock.return_value = 11
+        assert run(restarted.select())["previous_checkpoint"] == 100
+        assert reads.call_count == 1
+        if refresh == "checkpoint":
+            b.context.state.synchronized_data = (
+                b.context.state.synchronized_data.update(previous_checkpoint=200)
+            )
+            restarted.ts_checkpoint = 200
+        else:
+            clock.return_value = 25
+            restarted.ts_checkpoint = 100
+        run(restarted.select())
+        assert reads.call_count == 2

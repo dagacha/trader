@@ -1414,6 +1414,7 @@ def test_release_sync_survives_saved_input_reload(tmp_path, released):
     for relative in [
         "release_service.sh",
         "scripts/migrate_trader_config.py",
+        "configs/config_omenstrat_fast.json",
         "packages/packages.json",
         "packages/valory/services/trader_pearl/service.yaml",
     ]:
@@ -1440,6 +1441,12 @@ def test_release_sync_survives_saved_input_reload(tmp_path, released):
             }
         )
     )
+    # Use a recorded fast migration. Missing provenance must keep saved inputs.
+    run(qs, "--service", "omenstrat_fast")
+    if released:
+        data = json.loads(paths[0].read_text())
+        data["hash"] = cid
+        paths[0].write_text(json.dumps(data))
     saved = qs / ".operate/Trader Agent-quickstart-config.json"
     saved.write_text(json.dumps({"user_provided_args": {"MAX_TRADES": "2"}}))
     env = dict(os.environ, PATH=str(binaries) + os.pathsep + os.environ["PATH"])
@@ -1448,6 +1455,8 @@ def test_release_sync_survives_saved_input_reload(tmp_path, released):
             "bash",
             str(repo / "release_service.sh"),
             "--skip-publish",
+            "--service",
+            "trader_pearl",
             "--quickstart",
             str(qs),
         ],
@@ -1876,3 +1885,439 @@ def test_skip_fast_cache_next_to_omen_trader(tmp_path):
     assert f"{fast}: omenstrat_fast: skipping trader migration" in output
     assert fast.read_bytes() == before
     assert "updated" in output
+
+
+@pytest.mark.parametrize("cap", [None, "1", "0"])
+def test_fast_defaults_sync_all_copies(tmp_path, cap):
+    """Add missing fast inputs and retain identity and explicit user values."""
+    repo = SCRIPT.parents[1]
+    packages = json.loads((repo / "packages/packages.json").read_text())
+    paths = fixture(tmp_path)
+    cfg = json.loads(paths[0].read_text())
+    cfg.update(
+        hash=packages["dev"]["service/valory/omenstrat_fast/0.1.0"],
+        name="Trader Agent",
+        configurations={"gnosis": {"agent_id": 14, "staking": "keep"}},
+    )
+    cfg["env_variables"]["POLL_S"] = entry("7")
+    if cap is not None:
+        cfg["env_variables"]["MAX_TRADES"] = entry(cap)
+    paths[0].write_text(json.dumps(cfg))  # Trader 24 has no trailing newline.
+    saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
+    saved.write_text(json.dumps({"user_provided_args": {"POLL_S": "99"}}))
+    env = paths[1].parent / "agent_0.env"
+    env.write_text("SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_POLL_S=99")
+    build = paths[1].parent / "build.yaml"
+    build.write_text(
+        "services:\n  agent:\n    environment:\n      SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_POLL_S: '99'\n  tendermint:\n    environment:\n      KEEP: yes\n"
+    )
+    all_paths = [*paths, saved, env, build]
+    before = {p: p.read_bytes() for p in all_paths}
+    preview = run(tmp_path, "--dry-run")
+    assert "MAX_TRADES" in preview
+    assert all(p.read_bytes() == before[p] for p in all_paths)
+    run(tmp_path)
+    result = json.loads(paths[0].read_text())
+    assert result["name"] == cfg["name"]
+    assert result["configurations"] == cfg["configurations"]
+    assert not paths[0].read_bytes().endswith(b"\n")
+    desired = {
+        "MAX_TRADES": cap or "3",
+        "POLL_S": "7",
+        "FAST_DYNAMIC_MECH": "true",
+        "USE_OFFCHAIN": "true",
+    }
+    for p in paths:
+        actual = json.loads(p.read_text())["env_variables"]
+        for key, value in desired.items():
+            assert actual[key]["value"] == value
+    args = json.loads(saved.read_text())["user_provided_args"]
+    for key, value in desired.items():
+        assert args[key] == value
+        assert f"{key}={value}" in env.read_text()
+    assert "SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_POLL_S=7" in env.read_text()
+    assert (
+        'SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_POLL_S: "7"' in build.read_text()
+    )
+    after = {p: p.read_bytes() for p in all_paths}
+    run(tmp_path)
+    assert all(p.read_bytes() == after[p] for p in all_paths)
+    for p in all_paths:
+        assert len(list(p.parent.glob(p.name + ".bak-*"))) == 1
+    # Rolling back keeps the inputs and uses the normal migration.
+    result["hash"] = packages["dev"]["service/valory/trader_pearl/0.1.0"]
+    paths[0].write_text(json.dumps(result))
+    run(tmp_path)
+    assert json.loads(paths[0].read_text())["env_variables"]["MAX_TRADES"]["value"] == (
+        cap or "3"
+    )
+
+
+@pytest.mark.parametrize("service", ["omenstrat_fast", "trader_pearl"])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_release_selects_service_and_skips_polymarket(tmp_path, service, dry_run):
+    """Select the service agent image and change only Omen release fields."""
+    repo = tmp_path / "repo"
+    for relative in [
+        "release_service.sh",
+        "scripts/migrate_trader_config.py",
+        "configs/config_omenstrat_fast.json",
+        "packages/packages.json",
+        "packages/valory/services/omenstrat_fast/service.yaml",
+        "packages/valory/services/trader_pearl/service.yaml",
+    ]:
+        target = repo / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(SCRIPT.parents[1] / relative, target)
+    binaries = repo / ".venv/bin"
+    binaries.mkdir(parents=True)
+    for command in ["autonomy", "aea", "docker", "curl"]:
+        target = binaries / command
+        target.write_text("#!/bin/sh\nexit 0\n")
+        target.chmod(0o755)
+    builder = repo / "build_image_offline.sh"
+    builder.write_text('#!/bin/sh\nprintf \'%s\\n\' "$2" > "$1/build-agent.txt"\n')
+    builder.chmod(0o755)
+    omen = tmp_path / "omen-trader/quickstart"
+    poly = tmp_path / "poly-trader/quickstart"
+    pilot = tmp_path / "pilot-trader/quickstart"
+    pilot_config = pilot / "configs/config_omenstrat_fast.json"
+    pilot_config.parent.mkdir(parents=True)
+    shutil.copy2(repo / "configs/config_omenstrat_fast.json", pilot_config)
+    omen_paths, poly_paths = fixture(omen), fixture(poly)
+    for paths, is_poly in [(omen_paths, False), (poly_paths, True)]:
+        data = json.loads(paths[0].read_text())
+        data.update(
+            name="Trader Agent",
+            agent_release={"repository": {"owner": "valory-xyz"}},
+            configurations={"gnosis": {"agent_id": 14, "staking": "keep"}},
+        )
+        data["env_variables"]["IS_RUNNING_ON_POLYMARKET"] = entry(str(is_poly).lower())
+        paths[0].write_text(json.dumps(data))
+    if service == "trader_pearl":
+        config = json.loads(omen_paths[0].read_text())
+        config["env_variables"]["MAX_TRADES"] = entry("1")
+        config["env_variables"]["POLL_S"] = entry("7")
+        omen_paths[0].write_text(json.dumps(config))
+        # Start release rollback from an actual migrated fast quickstart.
+        run(omen, "--service", "omenstrat_fast")
+    before = {p: p.read_bytes() for p in [*omen_paths, *poly_paths, pilot_config]}
+    arguments = [] if service == "omenstrat_fast" else ["--service", service]
+    arguments.append("--force-build")
+    if dry_run:
+        arguments.append("--dry-run")
+    env = dict(
+        os.environ,
+        HOME=str(tmp_path),
+        PATH=str(binaries) + os.pathsep + os.environ["PATH"],
+    )
+    output = subprocess.run(
+        [
+            "bash",
+            str(repo / "release_service.sh"),
+            "--skip-publish",
+            *arguments,
+        ],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    packages = json.loads((repo / "packages/packages.json").read_text())
+    cid = packages["dev"][f"service/valory/{service}/0.1.0"]
+    agent = "omenstrat_fast" if service == "omenstrat_fast" else "trader"
+    assert f"valory/oar-{agent}:" in output
+    assert cid in output
+    assert "Polymarket" in output
+    assert str(pilot) not in output
+    assert pilot_config.read_bytes() == before[pilot_config]
+    if dry_run:
+        print(f"\nRelease fixture: {service}\n{output}")
+    assert all(p.read_bytes() == before[p] for p in poly_paths)
+    if dry_run:
+        assert all(p.read_bytes() == before[p] for p in omen_paths)
+    else:
+        assert (repo / "build-agent.txt").read_text().strip() == (
+            f"valory/{agent}:0.1.0:" + packages["dev"][f"agent/valory/{agent}/0.1.0"]
+        )
+        actual = json.loads(omen_paths[0].read_text())
+        old = json.loads(before[omen_paths[0]])
+        assert actual["hash"] == cid
+        assert actual["name"] == old["name"]
+        assert actual["configurations"] == old["configurations"]
+        if service == "omenstrat_fast":
+            assert actual["env_variables"]["MAX_TRADES"]["value"] == "3"
+        else:
+            assert actual["env_variables"]["MAX_TRADES"] == entry("1")
+            assert actual["env_variables"]["POLL_S"] == entry("7")
+            assert "FAST_DYNAMIC_MECH" not in actual["env_variables"]
+            assert "FINALIZE_TIMEOUT" not in actual["env_variables"]
+
+
+def test_fast_defaults_without_env_mapping(tmp_path):
+    """Create the missing env mapping without replacing service identity."""
+    packages = json.loads((SCRIPT.parents[1] / "packages/packages.json").read_text())
+    config = tmp_path / "configs/config_predict_trader.json"
+    config.parent.mkdir()
+    config.write_text(
+        json.dumps(
+            {
+                "hash": packages["dev"]["service/valory/omenstrat_fast/0.1.0"],
+                "name": "Trader Agent",
+            }
+        )
+    )
+    run(tmp_path)
+    actual = json.loads(config.read_text())
+    assert actual["name"] == "Trader Agent"
+    assert actual["env_variables"]["MAX_TRADES"]["value"] == "3"
+    assert actual["env_variables"]["FAST_DYNAMIC_MECH"]["value"] == "true"
+    before = config.read_bytes()
+    run(tmp_path)
+    assert config.read_bytes() == before
+
+
+@pytest.mark.parametrize("cap", ["1", "0", "3"])
+@pytest.mark.parametrize("has_hash", [True, False])
+def test_explicit_service_migration_round_trip(tmp_path, cap, has_hash):
+    """Switch to fast and back with the locked hash and user values intact."""
+    paths = fixture(tmp_path)
+    config = json.loads(paths[0].read_text())
+    config.update(
+        hash="old-service",
+        name="Trader Agent",
+        configurations={"gnosis": {"agent_id": 14, "staking": "keep"}},
+    )
+    if not has_hash:
+        config.pop("hash")
+    config["env_variables"]["MAX_TRADES"] = entry(cap)
+    config["env_variables"]["POLL_S"] = entry("7")
+    paths[0].write_text(json.dumps(config))
+    packages = json.loads((SCRIPT.parents[1] / "packages/packages.json").read_text())
+    for service in ("omenstrat_fast", "trader_pearl"):
+        before = paths[0].read_bytes()
+        run(tmp_path, "--service", service, "--dry-run")
+        assert paths[0].read_bytes() == before
+        run(tmp_path, "--service", service)
+        actual = json.loads(paths[0].read_text())
+        assert actual["hash"] == packages["dev"][f"service/valory/{service}/0.1.0"]
+        assert actual["name"] == config["name"]
+        assert actual["configurations"] == config["configurations"]
+        assert actual["env_variables"]["MAX_TRADES"] == entry(cap)
+        assert actual["env_variables"]["POLL_S"] == entry("7")
+        after = paths[0].read_bytes()
+        run(tmp_path, "--service", service)
+        assert paths[0].read_bytes() == after
+    assert "FAST_DYNAMIC_MECH" not in actual["env_variables"]
+
+
+SHARED_FAST_KEYS = (
+    "USE_OFFCHAIN",
+    "STOP_TRADING_IF_STAKING_KPI_MET",
+    "FINALIZE_TIMEOUT",
+    "RETRY_TIMEOUT",
+    "TM_CHECK_SLEEP_DELAY",
+    "VALID_MECHS",
+)
+
+
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize("style", ["env", "mapping", "list", "kubernetes"])
+def test_rollback_removes_only_added_fast_defaults(tmp_path, existing, style):
+    """Restore pearl defaults in every copy and keep explicit fast values."""
+    import yaml
+
+    paths = fixture(tmp_path)
+    template = json.loads(
+        (SCRIPT.parents[1] / "configs/config_omenstrat_fast.json").read_text()
+    )
+    original = {"MAX_TRADES": entry("1")} if existing else {}
+    if existing:
+        for key in (*SHARED_FAST_KEYS, "FAST_DYNAMIC_MECH"):
+            original[key] = template["env_variables"][key]
+    paths[0].write_text(json.dumps({"hash": "old", "env_variables": original}))
+    saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
+    saved.write_text(json.dumps({"user_provided_args": {"KEEP": "yes"}}))
+    for path in paths[1:]:
+        path.write_text(
+            json.dumps({"env_variables": {}, "user_params": {"finalize_timeout": 15.0}})
+        )
+    env = paths[1].parent / "agent_0.env"
+    env.write_text("KEEP=yes\n")
+    build = paths[1].parent / "build.yaml"
+    prefix = "SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_"
+    values = {prefix + "FINALIZE_TIMEOUT": "15.0", "KEEP": "yes"}
+    if style == "env":
+        values = {prefix + "FINALIZE_TIMEOUT": "15.0", "KEEP": "yes"}
+        build.write_text(
+            "environment:\n"
+            + "".join("  " + k + "=" + v + "\n" for k, v in values.items())
+        )
+    else:
+        if style == "list":
+            values = [k + "=" + v for k, v in values.items()]
+        elif style == "kubernetes":
+            values = [{"name": k, "value": v} for k, v in values.items()]
+        build.write_text(yaml.safe_dump({"environment": values}))
+    tracked = [*paths, saved, env, build]
+    before = {p: p.read_bytes() for p in tracked}
+    marker = tmp_path / "configs/.fast_defaults_added.json"
+    for flag in ["--dry-run", "--warn-only"]:
+        run(tmp_path, "--service", "omenstrat_fast", flag)
+        assert not marker.exists()
+        assert all(p.read_bytes() == before[p] for p in tracked)
+    run(tmp_path, "--service", "omenstrat_fast")
+    added = json.loads(marker.read_text())["added"]
+    assert ("USE_OFFCHAIN" in added) is (not existing)
+    assert ("MAX_TRADES" in added) is (not existing)
+    first_fast = {p: p.read_bytes() for p in [*tracked, marker]}
+    run(tmp_path, "--service", "omenstrat_fast")
+    assert all(p.read_bytes() == first_fast[p] for p in first_fast)
+    for flag in ["--dry-run", "--warn-only"]:
+        preview = run(tmp_path, "--service", "trader_pearl", flag)
+        assert all(p.read_bytes() == first_fast[p] for p in first_fast)
+        if flag == "--dry-run":
+            assert "remove fast default FRESH_MAX_AGE_S" in preview
+    run(tmp_path, "--service", "trader_pearl")
+    expected = dict(original)
+    expected.setdefault("MAX_TRADES", entry("3"))
+    actual = json.loads(paths[0].read_text())["env_variables"]
+    assert {k: v["value"] for k, v in actual.items()} == {
+        k: v["value"] for k, v in expected.items()
+    }
+    for path in paths[1:]:
+        data = json.loads(path.read_text())
+        assert set(data["env_variables"]) == set(expected)
+        assert ("finalize_timeout" in data["user_params"]) is existing
+    args = json.loads(saved.read_text())["user_provided_args"]
+    assert set(args) == {*expected, "KEEP"}
+    for key in (*SHARED_FAST_KEYS, "FAST_DYNAMIC_MECH"):
+        assert (key + "=" in env.read_text()) is existing
+    assert (prefix + "FINALIZE_TIMEOUT" in build.read_text()) is existing
+    assert "KEEP" in build.read_text()
+    assert json.loads(marker.read_text()) == {"added": []}
+    after = {p: p.read_bytes() for p in [*tracked, marker]}
+    backups = sorted(tmp_path.rglob("*.bak-*"))
+    run(tmp_path, "--service", "trader_pearl")
+    assert all(p.read_bytes() == after[p] for p in after)
+    assert sorted(tmp_path.rglob("*.bak-*")) == backups
+    # A new fast cycle records only the keys that are still absent.
+    run(tmp_path, "--service", "omenstrat_fast")
+    run(tmp_path, "--service", "trader_pearl")
+    assert all(p.read_bytes() == after[p] for p in after)
+
+
+def test_rollback_without_provenance_keeps_all_keys(tmp_path):
+    """Keep pilot and fleet settings even when they equal fast defaults."""
+    paths = fixture(tmp_path)
+    template = json.loads(
+        (SCRIPT.parents[1] / "configs/config_omenstrat_fast.json").read_text()
+    )
+    for path in paths:
+        path.write_text(json.dumps(template))
+    saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
+    saved.write_text(json.dumps({"user_provided_args": {"USE_OFFCHAIN": "true"}}))
+    before = {p: p.read_bytes() for p in [*paths, saved]}
+    preview = run(tmp_path, "--service", "trader_pearl", "--dry-run")
+    assert all(p.read_bytes() == before[p] for p in before)
+    output = run(tmp_path, "--service", "trader_pearl")
+    for report in [preview, output]:
+        assert "WARNING" in report and "provenance" in report
+        for key in SHARED_FAST_KEYS:
+            assert key in report
+    actual = json.loads(paths[0].read_text())
+    assert actual["env_variables"] == template["env_variables"]
+    assert all(p.read_bytes() == before[p] for p in [*paths[1:], saved])
+    assert not (tmp_path / "configs/.fast_defaults_added.json").exists()
+
+
+@pytest.mark.parametrize("style", ["env", "mapping", "list", "kubernetes"])
+def test_missing_provenance_warns_for_cached_env(tmp_path, style):
+    """Report cached differences without changing any saved key."""
+    paths = fixture(tmp_path)
+    paths[0].write_text(json.dumps({"env_variables": {}}))
+    paths[1].write_text(
+        json.dumps({"user_params": {"tendermint_check_sleep_delay": 1}})
+    )
+    path = paths[1].parent / ("agent_0.env" if style == "env" else "build.yaml")
+    key = "SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_USE_OFFCHAIN"
+    if style == "kubernetes":
+        text = f'env:\n- name: {key}\n  value: "true"\n'
+    elif style == "mapping":
+        text = f'environment:\n  {key}: "true"\n'
+    else:
+        text = ("environment:\n  - " if style == "list" else "") + key + "=true\n"
+    path.write_text(text)
+    output = run(tmp_path, "--service", "trader_pearl")
+    assert path.read_text() == text
+    warning = next(
+        line for line in output.splitlines() if "WARNING" in line and str(path) in line
+    )
+    assert "USE_OFFCHAIN" in warning
+    assert "TM_CHECK_SLEEP_DELAY" in output
+
+
+def test_missing_provenance_reports_matching_defaults(tmp_path):
+    """Do not flag values that match pearl, including quoted env scalars."""
+    paths = fixture(tmp_path)
+    paths[0].write_text(json.dumps({"env_variables": {"USE_OFFCHAIN": entry(False)}}))
+    path = paths[1].parent / "agent_0.env"
+    path.write_text("USE_OFFCHAIN='false'\n")
+    output = run(tmp_path, "--service", "trader_pearl")
+    warning = next(
+        line for line in output.splitlines() if "WARNING" in line and str(path) in line
+    )
+    assert warning.endswith("defaults: none")
+
+
+@pytest.mark.parametrize("recorded", ["USE_OFFCHAIN", ["UNRELATED_KEY"]])
+def test_invalid_provenance_stops_before_writes(tmp_path, recorded):
+    """Reject invalid records before changing configs or caches."""
+    paths = fixture(tmp_path)
+    marker = tmp_path / "configs/.fast_defaults_added.json"
+    marker.write_text(json.dumps({"added": recorded}))
+    before = {path: path.read_bytes() for path in [*paths, marker]}
+    with pytest.raises(ValueError, match="Invalid fast migration provenance"):
+        run(tmp_path, "--service", "trader_pearl")
+    assert all(path.read_bytes() == value for path, value in before.items())
+    assert not list(tmp_path.rglob("*.bak-*"))
+
+
+@pytest.mark.parametrize("tail", ["", "\n  broken: true\n"])
+def test_rollback_rejects_missing_kubernetes_value(tmp_path, tail):
+    """Stop on a malformed cached env entry and keep its original bytes."""
+    fixture(tmp_path)
+    run(tmp_path, "--service", "omenstrat_fast")
+    path = tmp_path / ".operate/services/sc-one/build.yaml"
+    text = "env:\n- name: FINALIZE_TIMEOUT" + tail
+    path.write_text(text)
+    with pytest.raises(ValueError, match="Missing value for FINALIZE_TIMEOUT"):
+        run(tmp_path, "--service", "trader_pearl")
+    assert path.read_text() == text
+    assert not list(path.parent.glob("build.yaml.bak-*"))
+    # Provenance remains available to retry after the cache is repaired.
+    assert json.loads((tmp_path / "configs/.fast_defaults_added.json").read_text())[
+        "added"
+    ]
+
+
+def test_json_removal_validates_target_document():
+    """Locate the intended nested member and reject an inconsistent edit."""
+    helper = runpy.run_path(str(SCRIPT))["remove_json_key"]
+    text = '{"first": {"USE_OFFCHAIN": true}, "second": {"USE_OFFCHAIN": false}}'
+    expected = {"first": {"USE_OFFCHAIN": True}, "second": {}}
+    assert json.loads(helper(text, expected, "USE_OFFCHAIN")) == expected
+    with pytest.raises(ValueError, match="Could not locate a unique JSON member"):
+        helper(text, {"unrelated": True}, "USE_OFFCHAIN")
+
+
+def test_missing_provenance_warns_for_custom_value(tmp_path):
+    """Keep and report an operator value that is not a JSON scalar."""
+    paths = fixture(tmp_path)
+    paths[0].write_text(
+        json.dumps({"env_variables": {"USE_OFFCHAIN": entry("custom")}})
+    )
+    original = paths[0].read_bytes()
+    output = run(tmp_path, "--service", "trader_pearl", "--warn-only")
+    assert "USE_OFFCHAIN" in output
+    assert paths[0].read_bytes() == original
