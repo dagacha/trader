@@ -2543,7 +2543,7 @@ def test_edited_fast_keys_sync_to_all_copies(tmp_path):
         cache["env_variables"]["FAST_TOOLS"] = (
             entry('["stale"]') if index == 0 else '["stale"]'
         )
-        cache["user_params"] = {"fast_tools": ["stale"]}
+        cache["user_params"] = {"tools": ["stale"], "fast_tools": ["keep"]}
         path.write_text(json.dumps(cache))
     saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
     cached_values = dict.fromkeys(keys, "stale")
@@ -2572,7 +2572,10 @@ def test_edited_fast_keys_sync_to_all_copies(tmp_path):
             assert actual_value == value
             assert actual_value != template["env_variables"][key]["value"]
         if path != paths[0]:
-            assert cache["user_params"]["fast_tools"] == ["operator-tool"]
+            assert cache["user_params"] == {
+                "tools": ["operator-tool"],
+                "fast_tools": ["keep"],
+            }
     actual = json.loads(saved.read_text())["user_provided_args"]
     env = dict(line.split("=", 1) for line in agent.read_text().splitlines())
     for key, value in values.items():
@@ -2582,6 +2585,53 @@ def test_edited_fast_keys_sync_to_all_copies(tmp_path):
         assert (
             f"  - name: {prefix}{key}\n    value: {json.dumps(value)}"
             in build.read_text()
+        )
+
+
+def test_fast_tools_syncs_only_skill_argument_copy(tmp_path):
+    """Sync a cache that stores tools only under the skill argument name."""
+    paths = fixture(tmp_path)
+    source = json.loads(paths[0].read_text())
+    source["env_variables"]["FAST_TOOLS"] = entry('["operator-tool"]')
+    paths[0].write_text(json.dumps(source))
+    for path in paths[1:]:
+        path.write_text(json.dumps({"user_params": {"tools": ["stale"]}}))
+
+    run(tmp_path, "--service", "omenstrat_fast")
+
+    for path in paths[1:]:
+        assert json.loads(path.read_text())["user_params"] == {
+            "tools": ["operator-tool"]
+        }
+
+
+@pytest.mark.parametrize("owned", [False, True])
+def test_fast_tools_argument_rollback_uses_provenance(tmp_path, owned):
+    """Remove migration-owned tools and keep the user's tool argument."""
+    paths = fixture(tmp_path)
+    if owned:
+        source = json.loads(paths[0].read_text())
+        source["env_variables"]["FAST_TOOLS"] = entry('["operator-tool"]')
+        paths[0].write_text(json.dumps(source))
+    for path in paths[1:]:
+        path.write_text(
+            json.dumps({"user_params": {"tools": ["stale"], "fast_tools": ["keep"]}})
+        )
+
+    run(tmp_path, "--service", "omenstrat_fast")
+    expected = json.loads(
+        json.loads(paths[0].read_text())["env_variables"]["FAST_TOOLS"]["value"]
+    )
+    marker = tmp_path / "configs/.fast_defaults_added.json"
+    assert ("FAST_TOOLS" in json.loads(marker.read_text())["added"]) is (not owned)
+    run(tmp_path, "--service", "trader_pearl")
+
+    for path in paths[1:]:
+        actual = json.loads(path.read_text())["user_params"]
+        assert actual == (
+            {"tools": expected, "fast_tools": ["keep"]}
+            if owned
+            else {"fast_tools": ["keep"]}
         )
 
 
@@ -2779,7 +2829,6 @@ def test_fast_tools_rename_all_copies(tmp_path, conflict, style, prefix):
         "TOOLS_ACCURACY_HASH": "accuracy",
         "IRRELEVANT_TOOLS": "irrelevant",
         "MECH_MARKETPLACE_V1_SUITABLE_TOOLS": "suitable",
-        "tools": ["runtime"],
     }
     expected = json.dumps([f"{'new' if conflict else 'old'}-0"])
     for index, path in enumerate(paths):
@@ -2793,6 +2842,8 @@ def test_fast_tools_rename_all_copies(tmp_path, conflict, style, prefix):
         values.update(
             unrelated if path == saved else {k: entry(v) for k, v in unrelated.items()}
         )
+        if path not in (paths[0], saved):
+            data["user_params"] = {"tools": ["runtime"]}
         path.write_text(json.dumps(data))
     agent = paths[1].parent / "agent_0.env"
     agent.write_bytes(
@@ -2842,6 +2893,8 @@ def test_fast_tools_rename_all_copies(tmp_path, conflict, style, prefix):
         assert (actual if path == saved else actual["value"]) == expected
         for key, value in unrelated.items():
             assert (values[key] if path == saved else values[key]["value"]) == value
+        if path not in (paths[0], saved):
+            assert data["user_params"] == {"tools": json.loads(expected)}
     assert f"{prefix}FAST_TOOLS={expected}\r\n".encode() in agent.read_bytes()
     assert b"TOOLS_ACCURACY_HASH=accuracy\r\n" in agent.read_bytes()
     if style == "env":

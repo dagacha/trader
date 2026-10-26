@@ -535,7 +535,7 @@ def sync_cached_json(text, desired, upgrade_slip=False):
                     text = edit_json(text, data, value)
                     changes.append(f"sync {key} from quickstart")
         for key, source in desired.items():
-            field = key.lower()
+            field = "tools" if key == "FAST_TOOLS" else key.lower()
             if field not in obj:
                 continue
             if keep_slip_override(key, obj[field], upgrade_slip):
@@ -748,7 +748,12 @@ def rollback_fast_inputs(text, added, json_file):
     """Remove recorded fast inputs from quickstart, saved args, and caches."""
     names = {}
     for key in added:
-        for name in (key, PARAM_PREFIX + key, FAST_PARAM_PREFIX + key, key.lower()):
+        for name in (
+            key,
+            PARAM_PREFIX + key,
+            FAST_PARAM_PREFIX + key,
+            "tools" if key == "FAST_TOOLS" else key.lower(),
+        ):
             names[name] = key
         if key == "TM_CHECK_SLEEP_DELAY":
             names["tendermint_check_sleep_delay"] = key
