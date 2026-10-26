@@ -93,7 +93,7 @@ settlement logs for that result.
 | `POLL_S` | `15` |
 | `ACTIVE_WINDOW_UTC` | `00:00-05:30` (start included, end excluded) |
 | `HOUSEKEEPING_INTERVAL_S` | `600` |
-| `TOOLS` | `superforcaster_calibrated_full_search`, then `superforcaster` |
+| `FAST_TOOLS` | `superforcaster_calibrated_full_search`, then `superforcaster` |
 | `PRIOR_WEIGHT` | `0.5` (tool weight; prior weight is its complement) |
 | `PRIORS` | `still_hold: 0.85`, `numeric_threshold: 0.60`, `other_event: 0.18` |
 | `MIN_EDGE` | `0.03` |

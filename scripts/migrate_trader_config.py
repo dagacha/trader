@@ -72,7 +72,7 @@ FAST_ENV = (
     "POLL_S",
     "ACTIVE_WINDOW_UTC",
     "HOUSEKEEPING_INTERVAL_S",
-    "TOOLS",
+    "FAST_TOOLS",
     "PRIOR_WEIGHT",
     "PRIORS",
     "MIN_EDGE",
@@ -535,7 +535,7 @@ def sync_cached_json(text, desired, upgrade_slip=False):
                     text = edit_json(text, data, value)
                     changes.append(f"sync {key} from quickstart")
         for key, source in desired.items():
-            field = key.lower()
+            field = "tools" if key == "FAST_TOOLS" else key.lower()
             if field not in obj:
                 continue
             if keep_slip_override(key, obj[field], upgrade_slip):
@@ -550,10 +550,8 @@ def sync_cached_json(text, desired, upgrade_slip=False):
     return text, changes
 
 
-def sync_cached_env(text, desired, env_file=False, upgrade_slip=False):
-    """Sync bare controls and existing component-path keys in agent env blocks."""
-    values = {key: scalar(source["value"]) for key, source in desired.items()}
-    lines = text.splitlines(keepends=True)
+def cached_env_blocks(lines, values, env_file):
+    """Locate separate agent env blocks in deployment files."""
     blocks = [(0, len(lines), None)] if env_file else []
     if not env_file:
         for index, line in enumerate(lines):
@@ -581,6 +579,14 @@ def sync_cached_env(text, desired, env_file=False, upgrade_slip=False):
                 )
             ):
                 blocks.append((index + 1, end, level))
+    return blocks
+
+
+def sync_cached_env(text, desired, env_file=False, upgrade_slip=False):
+    """Sync bare controls and existing component-path keys in agent env blocks."""
+    values = {key: scalar(source["value"]) for key, source in desired.items()}
+    lines = text.splitlines(keepends=True)
+    blocks = cached_env_blocks(lines, values, env_file)
     changes = []
     for start, end, _level in reversed(blocks):
         present = set()
@@ -685,11 +691,69 @@ def remove_json_key(text, data, key):
     raise ValueError("Could not locate a unique JSON member to remove")
 
 
+def rename_fast_tools(text, json_file, env_file=False):
+    """Rename only the fast env key and keep an existing FAST_TOOLS value."""
+    names = {
+        prefix + "TOOLS": prefix + "FAST_TOOLS"
+        for prefix in ("", PARAM_PREFIX, FAST_PARAM_PREFIX)
+    }
+    changes = []
+    if json_file:
+        data = json.loads(text)
+        for obj in list(objects(data)):
+            for old, new in names.items():
+                if old not in obj:
+                    continue
+                value = obj.pop(old)
+                text = remove_json_key(text, data, old)
+                if new in obj:
+                    changes.append(
+                        f"{old} -> {new}: remove old key; keep existing {new}"
+                    )
+                else:
+                    obj[new] = value
+                    text = edit_json(text, data, addition=(new, value))
+                    changes.append(f"{old} -> {new}")
+        return text, changes
+    lines = text.splitlines(keepends=True)
+    for start, end, _ in reversed(
+        cached_env_blocks(lines, (*names, *names.values()), env_file)
+    ):
+        entries = []
+        for index in range(start, end):
+            pair = re.match(r"\s*- name: ([A-Z_0-9]+)\s*$", lines[index])
+            match = pair or re.match(r"\s*(?:-\s*)?([A-Z_0-9]+)(?:=|:)", lines[index])
+            if match:
+                entries.append((index, match[1], bool(pair)))
+        present = {key for _, key, _ in entries}
+        for index, old, pair in reversed(entries):
+            if old not in names:
+                continue
+            new = names[old]
+            if new in present:
+                stop = index + 1
+                if pair:
+                    if stop >= len(lines) or not re.match(r"\s*value:", lines[stop]):
+                        raise ValueError(f"Missing value for {old}")
+                    stop += 1
+                del lines[index:stop]
+                changes.append(f"{old} -> {new}: remove old key; keep existing {new}")
+            else:
+                lines[index] = re.sub(r"\b" + old + r"\b", new, lines[index], count=1)
+                changes.append(f"{old} -> {new}")
+    return "".join(lines), changes
+
+
 def rollback_fast_inputs(text, added, json_file):
     """Remove recorded fast inputs from quickstart, saved args, and caches."""
     names = {}
     for key in added:
-        for name in (key, PARAM_PREFIX + key, FAST_PARAM_PREFIX + key, key.lower()):
+        for name in (
+            key,
+            PARAM_PREFIX + key,
+            FAST_PARAM_PREFIX + key,
+            "tools" if key == "FAST_TOOLS" else key.lower(),
+        ):
             names[name] = key
         if key == "TM_CHECK_SLEEP_DELAY":
             names["tendermint_check_sleep_delay"] = key
@@ -875,30 +939,52 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
     provenance = quickstart / "configs/.fast_defaults_added.json"
     recorded = None
     upgraded = []
+    provenance_changes = []
     if provenance.is_file():
         record = json.loads(provenance.read_text())
         recorded = record["added"]
         upgraded = record.get("upgraded", [])
         if any(
-            not isinstance(keys, list) or any(key not in FAST_ENV for key in keys)
+            not isinstance(keys, list)
+            or any(key not in (*FAST_ENV, "TOOLS") for key in keys)
             for keys in (recorded, upgraded)
         ):
             raise ValueError(f"Invalid fast migration provenance: {provenance}")
+        if "TOOLS" in recorded or "TOOLS" in upgraded:
+            recorded = sorted(
+                {"FAST_TOOLS" if key == "TOOLS" else key for key in recorded}
+            )
+            upgraded = sorted(
+                {"FAST_TOOLS" if key == "TOOLS" else key for key in upgraded}
+            )
+            provenance_changes.append("rename provenance TOOLS -> FAST_TOOLS")
     upgrade_slip = False
     if fast_mode:
         env = json.loads(config.read_text()).get("env_variables", {})
+        if "TOOLS" in env:
+            env = {**env, "FAST_TOOLS": env["TOOLS"]}
         added = sorted(set(recorded or []) | (set(defaults) - set(env)))
         upgrade_slip = "MAX_SLIP" in (recorded or []) and "MAX_SLIP" not in upgraded
         provenance_data = {"added": added}
         if upgraded:
             provenance_data["upgraded"] = upgraded
-        changes = []
+        changes = list(provenance_changes)
         if recorded != added:
             changes.append("record added fast defaults: " + ", ".join(added))
         # Keep rollback ownership if a copy write fails. Mark the upgrade only
         # after every copy has been written, so a retry checks remaining copies.
         write_changes(
             provenance, json.dumps(provenance_data) + "\n", changes, dry_run, warn_only
+        )
+    elif provenance_changes and not (rollback and recorded):
+        record["added"] = recorded
+        record["upgraded"] = upgraded
+        write_changes(
+            provenance,
+            json.dumps(record) + "\n",
+            provenance_changes,
+            dry_run,
+            warn_only,
         )
     removed = set(recorded or []) - {"MAX_TRADES"}
     stored = []
@@ -921,6 +1007,10 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
             updated, changes = (
                 migrate_json if path.suffix == ".json" else migrate_env
             )(text, priorities, hashes, warnings)
+        updated, renamed = rename_fast_tools(
+            updated, path.suffix == ".json", path.name == "agent_0.env"
+        )
+        changes.extend(renamed)
         if rollback:
             if recorded is None:
                 warn_pearl_defaults(text, path)
