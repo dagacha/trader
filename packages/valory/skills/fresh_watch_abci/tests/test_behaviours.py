@@ -358,6 +358,7 @@ def test_query_pages(tmp_path: Any, pages: Any) -> None:
     "case",
     [
         "outside",
+        "outside_recent",
         "wait",
         "unavailable",
         "no_tool",
@@ -377,8 +378,10 @@ def test_watch_paths(tmp_path: Any, case: str) -> None:
     b.sleep = lambda *args: done(None)
     queue = FreshQueue(tmp_path / "fresh_watch.json")
     queue.last_housekeeping = 1050
-    if case == "outside":
+    if case in {"outside", "outside_recent"}:
         b.context.params.fast = replace(FastConfig(), active_window_utc="01:00-02:00")
+    if case == "outside":
+        queue.last_housekeeping = 1050 - FastConfig().housekeeping_interval_s
     elif case in {
         "no_tool",
         "no_quote",

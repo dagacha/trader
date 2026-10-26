@@ -206,7 +206,7 @@ def decide(
 
 
 def housekeeping_due(now: float, last: float, queued: bool, cfg: FastConfig) -> bool:
-    """Give queued work priority and rate-limit housekeeping in the window.
+    """Give queued work priority and rate-limit housekeeping at all times.
 
     :param now: current timestamp.
     :param last: timestamp of the last housekeeping entry.
@@ -214,9 +214,7 @@ def housekeeping_due(now: float, last: float, queued: bool, cfg: FastConfig) -> 
     :param cfg: lane controls.
     :return: whether to enter housekeeping.
     """
-    return not queued and (
-        not cfg.in_window(now) or now - last >= cfg.housekeeping_interval_s
-    )
+    return not queued and now - last >= cfg.housekeeping_interval_s
 
 
 class FreshQueue:
