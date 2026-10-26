@@ -20,13 +20,13 @@
         "skill/valory/chatui_abci/0.1.0": "bafybeihj5y6cecuw4iz2gshicoygghrgi5b6rzynnofx25ycsv56ehgdvq",
         "skill/valory/abstract_round_abci/0.1.0": "bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4",
         "skill/valory/funds_manager/0.1.0": "bafybeia3ercbrdugw36ji2d5cl46ed5y623ju7qztek3eqzvtsueos5nu4",
-        "skill/valory/fresh_watch_abci/0.1.0": "bafybeig4gy4mkkslevk53olfnrvif34ks2iigclgpk5dc27qvygko3tspi",
-        "skill/valory/omenstrat_fast_abci/0.1.0": "bafybeih7mzugdsyzweczvejpykgbcjmmfx7mv3ohladonjje5n6m2yypi4",
+        "skill/valory/fresh_watch_abci/0.1.0": "bafybeicqdurbnyxpnebvmsr3gyemvkgmvba5oidhxbqduisu5x7jxjycgu",
+        "skill/valory/omenstrat_fast_abci/0.1.0": "bafybeigzzo43usiwv73sou4zlh7jnjim72hism2wqdqudiixwpr4cyuz3q",
         "agent/valory/trader/0.1.0": "bafybeigqviitafn2crpaerghp3rb2mdsor5wvifes2a2sfhqwzwaqbvd5q",
-        "agent/valory/omenstrat_fast/0.1.0": "bafybeiahikpnfejkxkme3rryaekx6vt7nmcdhpqpsbk42y4kmdzawpaawq",
+        "agent/valory/omenstrat_fast/0.1.0": "bafybeigzguscwk34w7yfzalfgn23ibdbfdvmklip2b6sj7xle6mrrysqi4",
         "service/valory/trader_pearl/0.1.0": "bafybeigidezcdxcb4byxvorhmw7gigei4fueizox5v6zawvaxldc76g6xq",
         "service/valory/polymarket_trader/0.1.0": "bafybeieloowpv66smarqeupti2pivipmaxhz67hd5hcoudk6j2rd4heu7u",
-        "service/valory/omenstrat_fast/0.1.0": "bafybeid4nwpxb7bp5gslkldr5eptbo5xgvn7mrh2wgsmh2tp2csks3v2hm"
+        "service/valory/omenstrat_fast/0.1.0": "bafybeibxv5rgthwim6iimz4pedfvybu77jnpxq6ps7rbhsiqz262bfpha4"
     },
     "third_party": {
         "protocol/valory/acn_data_share/0.1.0": "bafybeieqisfr6lhaaesq37lk7vyaxza2h6nucshksgyo2djqfyf2saqo4i",
