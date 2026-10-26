@@ -344,29 +344,51 @@ def test_invalid_price_margin(
         FastParams(name="params", skill_context=MagicMock(), **args)
 
 
+def list_prefix_collisions(lists: Any, names: Any) -> Any:
+    """Return (list name, other name) pairs that aea's parse_list would mix.
+
+    :param lists: names of list placeholders.
+    :param names: all env names.
+    :return: sorted collisions.
+    """
+    return sorted(
+        (name, other)
+        for name in lists
+        for other in names
+        if other != name and other.startswith(name)
+    )
+
+
+def test_list_prefix_rule_matches_aea() -> None:
+    """aea collects every name that starts with the list name, with or without "_"."""
+    assert list_prefix_collisions({"FAST_TOOLS"}, {"FAST_TOOLS", "FAST_TOOLSET"}) == [
+        ("FAST_TOOLS", "FAST_TOOLSET")
+    ]
+
+
 def test_list_env_names_do_not_prefix_other_names() -> None:
     """A missing list variable must not collect another variable's value.
 
     When a named list variable X is not set, aea builds the list from every
-    variable that starts with "X_". A second name "X_<suffix>" then breaks
-    the agent start with a JSONDecodeError.
+    variable whose name starts with "X". A second such name then breaks the
+    agent start with a JSONDecodeError.
     """
+    import json
     import re
 
     files = [
         *(ROOT / "packages/valory/agents").glob("*/aea-config.yaml"),
         *(ROOT / "packages/valory/services").glob("*/service.yaml"),
     ]
+    templates = list((ROOT / "configs").glob("config_*.json"))
+    assert files and templates
     names = set()
     lists = set()
     for path in files:
         text = path.read_text()
         names.update(re.findall(r"\$\{([A-Z][A-Z0-9_]*):", text))
         lists.update(re.findall(r"\$\{([A-Z][A-Z0-9_]*):list:", text))
-    collisions = sorted(
-        (name, other)
-        for name in lists
-        for other in names
-        if other.startswith(name + "_")
-    )
-    assert not collisions
+    for path in templates:
+        names.update(json.loads(path.read_text()).get("env_variables", {}))
+    assert lists
+    assert not list_prefix_collisions(lists, names)
