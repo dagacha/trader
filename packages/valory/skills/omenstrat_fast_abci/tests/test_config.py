@@ -360,7 +360,7 @@ def list_prefix_collisions(lists: Any, names: Any) -> Any:
 
 
 def test_list_prefix_rule_matches_aea() -> None:
-    """aea collects every name that starts with the list name, with or without "_"."""
+    """Check that the rule matches aea: any name that starts with the list name."""
     assert list_prefix_collisions({"FAST_TOOLS"}, {"FAST_TOOLS", "FAST_TOOLSET"}) == [
         ("FAST_TOOLS", "FAST_TOOLSET")
     ]

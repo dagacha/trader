@@ -16,7 +16,7 @@ fingerprint:
   models.py: bafybeicihpfeq66ahhuboojdrf7f33xu6tmktmskzodh7oiqvxtggka4om
   tests/__init__.py: bafybeifx5qa3c7rsjbe4ujuif363osh23mvgprcd5jwv67t5kl3kgqrszu
   tests/test_composition.py: bafybeif73yo7ty5as3rvfc6u5yozco5noi2ucotbvu6ufhsxztxtdw7hqy
-  tests/test_config.py: bafybeian5dd5i2jpwnrle4tsnnwrex6dswmibpeeiwgwdustlrqlmunrwa
+  tests/test_config.py: bafybeigzsnspz3offnwsy2zlke7hknrxdmokjby5qvac652kmwmrp7tshi
   tests/test_requests.py: bafybeif6cpspom5h65ikwp5c4umixkh4umxy3kkj2ib7mizjw455kfxvly
 fingerprint_ignore_patterns: []
 connections: []
