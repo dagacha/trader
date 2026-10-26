@@ -2533,15 +2533,20 @@ def test_edited_fast_keys_sync_to_all_copies(tmp_path):
         (SCRIPT.parents[1] / "configs/config_omenstrat_fast.json").read_text()
     )
     values = {key: "operator-" + key for key in keys}
+    values["FAST_TOOLS"] = json.dumps(["operator-tool"])
     paths = fixture(tmp_path)
     source = json.loads(paths[0].read_text())
     source["env_variables"].update({key: entry(value) for key, value in values.items()})
     paths[0].write_text(json.dumps(source))
+    for index, path in enumerate(paths[1:]):
+        cache = json.loads(path.read_text())
+        cache["env_variables"]["FAST_TOOLS"] = (
+            entry('["stale"]') if index == 0 else '["stale"]'
+        )
+        cache["user_params"] = {"fast_tools": ["stale"]}
+        path.write_text(json.dumps(cache))
     saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
-    # Tool lists belong to each copy. Other inputs still sync from quickstart.
-    cached_values = {
-        key: value if key == "FAST_TOOLS" else "stale" for key, value in values.items()
-    }
+    cached_values = dict.fromkeys(keys, "stale")
     saved.write_text(json.dumps({"user_provided_args": cached_values}))
     prefix = "SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_"
     agent = paths[1].parent / "agent_0.env"
@@ -2552,23 +2557,32 @@ def test_edited_fast_keys_sync_to_all_copies(tmp_path):
     build.write_text(
         "env:\n"
         + "".join(
-            f'  - name: {prefix}{key}\n    value: "{cached_values[key]}"\n'
+            f"  - name: {prefix}{key}\n    value: {json.dumps(cached_values[key])}\n"
             for key in sorted(keys)
         )
     )
     run(tmp_path, "--service", "omenstrat_fast")
     for path in paths:
-        actual = json.loads(path.read_text())["env_variables"]
+        cache = json.loads(path.read_text())
+        actual = cache["env_variables"]
         for key, value in values.items():
-            assert actual[key]["value"] == value
-            assert actual[key]["value"] != template["env_variables"][key]["value"]
+            actual_value = actual[key]
+            if isinstance(actual_value, dict):
+                actual_value = actual_value["value"]
+            assert actual_value == value
+            assert actual_value != template["env_variables"][key]["value"]
+        if path != paths[0]:
+            assert cache["user_params"]["fast_tools"] == ["operator-tool"]
     actual = json.loads(saved.read_text())["user_provided_args"]
     env = dict(line.split("=", 1) for line in agent.read_text().splitlines())
     for key, value in values.items():
         assert actual[key] == value
         assert env[key] == value
         assert env[prefix + key] == value
-        assert f'  - name: {prefix}{key}\n    value: "{value}"' in build.read_text()
+        assert (
+            f"  - name: {prefix}{key}\n    value: {json.dumps(value)}"
+            in build.read_text()
+        )
 
 
 @pytest.mark.parametrize("has_config", [False, True])
@@ -2754,7 +2768,9 @@ def test_slip_upgrade_checks_each_copy(tmp_path, custom, layout, old_default):
     ],
 )
 def test_fast_tools_rename_all_copies(tmp_path, conflict, style, prefix):
-    """Rename exact env keys and retain each copy's explicit tool list."""
+    """Rename exact env keys and sync every copy from quickstart."""
+    import yaml
+
     paths = fixture(tmp_path)
     saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
     saved.write_text(json.dumps({"user_provided_args": {}}))
@@ -2765,6 +2781,7 @@ def test_fast_tools_rename_all_copies(tmp_path, conflict, style, prefix):
         "MECH_MARKETPLACE_V1_SUITABLE_TOOLS": "suitable",
         "tools": ["runtime"],
     }
+    expected = json.dumps([f"{'new' if conflict else 'old'}-0"])
     for index, path in enumerate(paths):
         data = json.loads(path.read_text())
         values = data["user_provided_args" if path == saved else "env_variables"]
@@ -2817,23 +2834,28 @@ def test_fast_tools_rename_all_copies(tmp_path, conflict, style, prefix):
     assert "TOOLS -> FAST_TOOLS" in output
     if conflict:
         assert "keep existing" in output and "FAST_TOOLS" in output
-    for index, path in enumerate(paths):
+    for path in paths:
         data = json.loads(path.read_text())
         values = data["user_provided_args" if path == saved else "env_variables"]
         assert "TOOLS" not in values
         actual = values["FAST_TOOLS"]
-        assert (actual if path == saved else actual["value"]) == json.dumps(
-            [f"{'new' if conflict else 'old'}-{index}"]
-        )
+        assert (actual if path == saved else actual["value"]) == expected
         for key, value in unrelated.items():
             assert (values[key] if path == saved else values[key]["value"]) == value
-    assert (
-        f"{prefix}FAST_TOOLS={'new' if conflict else 'old'}-agent\r\n".encode()
-        in agent.read_bytes()
-    )
+    assert f"{prefix}FAST_TOOLS={expected}\r\n".encode() in agent.read_bytes()
     assert b"TOOLS_ACCURACY_HASH=accuracy\r\n" in agent.read_bytes()
-    assert "old-other" in build.read_text()
-    assert ("new-build" if conflict else "old-build") in build.read_text()
+    if style == "env":
+        assert re.findall(
+            r"(?m)^      " + prefix + r"FAST_TOOLS=(.*)$", build.read_text()
+        ) == [expected, expected]
+    else:
+        for service in yaml.safe_load(build.read_text())["services"].values():
+            actual = service["environment"]
+            if style == "kubernetes":
+                actual = {item["name"]: item["value"] for item in actual}
+            elif style == "list":
+                actual = dict(item.split("=", 1) for item in actual)
+            assert actual[prefix + "FAST_TOOLS"] == expected
     assert not re.search(
         r"\b" + prefix + r"TOOLS(?:[=:]|\s*$)", build.read_text(), re.M
     )

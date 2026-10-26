@@ -505,9 +505,7 @@ def sync_cached_json(text, desired, upgrade_slip=False):
                     saved[key] = value
                     text = edit_json(text, data, addition=(key, value))
                     changes.append(f"add saved input {key} from quickstart")
-                elif key == "FAST_TOOLS" or keep_slip_override(
-                    key, saved[key], upgrade_slip
-                ):
+                elif keep_slip_override(key, saved[key], upgrade_slip):
                     continue
                 elif saved[key] != value:
                     saved[key] = value
@@ -521,7 +519,7 @@ def sync_cached_json(text, desired, upgrade_slip=False):
                     env[key] = dict(source)
                     text = edit_json(text, data, addition=(key, env[key]))
                     changes.append(f"sync {key} from quickstart")
-                elif key == "FAST_TOOLS" or keep_slip_override(
+                elif keep_slip_override(
                     key,
                     env[key].get("value") if isinstance(env[key], dict) else env[key],
                     upgrade_slip,
@@ -540,7 +538,7 @@ def sync_cached_json(text, desired, upgrade_slip=False):
             field = key.lower()
             if field not in obj:
                 continue
-            if key == "FAST_TOOLS" or keep_slip_override(key, obj[field], upgrade_slip):
+            if keep_slip_override(key, obj[field], upgrade_slip):
                 continue
             value = source["value"]
             if not isinstance(obj[field], str):
@@ -638,7 +636,7 @@ def sync_cached_env(text, desired, env_file=False, upgrade_slip=False):
                 existing = json.loads(old_value)
             except ValueError:
                 existing = old_value.strip("'\"")
-            if bare == "FAST_TOOLS" or keep_slip_override(bare, existing, upgrade_slip):
+            if keep_slip_override(bare, existing, upgrade_slip):
                 continue
             if old_value != value and scalar(existing) != value:
                 lines[target] = replacement
