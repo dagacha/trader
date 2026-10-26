@@ -22,6 +22,7 @@
 import io
 import json
 import os
+import re
 import runpy
 import shutil
 import subprocess
@@ -2524,7 +2525,10 @@ def test_edited_fast_keys_sync_to_all_copies(tmp_path):
     migration = runpy.run_path(str(SCRIPT))
     keys = set(migration["FAST_ENV"])
     assert "PRICE_MARGIN" in keys
-    assert {field.name.upper() for field in fields(FastConfig)} <= keys
+    assert {
+        "FAST_TOOLS" if field.name == "tools" else field.name.upper()
+        for field in fields(FastConfig)
+    } <= keys
     template = json.loads(
         (SCRIPT.parents[1] / "configs/config_omenstrat_fast.json").read_text()
     )
@@ -2534,15 +2538,22 @@ def test_edited_fast_keys_sync_to_all_copies(tmp_path):
     source["env_variables"].update({key: entry(value) for key, value in values.items()})
     paths[0].write_text(json.dumps(source))
     saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
-    saved.write_text(json.dumps({"user_provided_args": {key: "stale" for key in keys}}))
+    # Tool lists belong to each copy. Other inputs still sync from quickstart.
+    cached_values = {
+        key: value if key == "FAST_TOOLS" else "stale" for key, value in values.items()
+    }
+    saved.write_text(json.dumps({"user_provided_args": cached_values}))
     prefix = "SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_"
     agent = paths[1].parent / "agent_0.env"
-    agent.write_text("".join(prefix + key + "=stale\n" for key in sorted(keys)))
+    agent.write_text(
+        "".join(prefix + key + "=" + cached_values[key] + "\n" for key in sorted(keys))
+    )
     build = paths[1].parent / "build.yaml"
     build.write_text(
         "env:\n"
         + "".join(
-            f'  - name: {prefix}{key}\n    value: "stale"\n' for key in sorted(keys)
+            f'  - name: {prefix}{key}\n    value: "{cached_values[key]}"\n'
+            for key in sorted(keys)
         )
     )
     run(tmp_path, "--service", "omenstrat_fast")
@@ -2730,3 +2741,186 @@ def test_slip_upgrade_checks_each_copy(tmp_path, custom, layout, old_default):
         f'value: "{0.15 if custom in ("source", "k8s") else 0.2}"' in build.read_text()
     )
     assert json.loads(marker.read_text())["upgraded"] == ["MAX_SLIP"]
+
+
+@pytest.mark.parametrize("conflict", [False, True])
+@pytest.mark.parametrize("style", ["env", "mapping", "list", "kubernetes"])
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "",
+        "SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_",
+        "SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_",
+    ],
+)
+def test_fast_tools_rename_all_copies(tmp_path, conflict, style, prefix):
+    """Rename exact env keys and retain each copy's explicit tool list."""
+    paths = fixture(tmp_path)
+    saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
+    saved.write_text(json.dumps({"user_provided_args": {}}))
+    paths.append(saved)
+    unrelated = {
+        "TOOLS_ACCURACY_HASH": "accuracy",
+        "IRRELEVANT_TOOLS": "irrelevant",
+        "MECH_MARKETPLACE_V1_SUITABLE_TOOLS": "suitable",
+        "tools": ["runtime"],
+    }
+    for index, path in enumerate(paths):
+        data = json.loads(path.read_text())
+        values = data["user_provided_args" if path == saved else "env_variables"]
+        old = json.dumps([f"old-{index}"])
+        new = json.dumps([f"new-{index}"])
+        values["TOOLS"] = old if path == saved else entry(old)
+        if conflict:
+            values["FAST_TOOLS"] = new if path == saved else entry(new)
+        values.update(
+            unrelated if path == saved else {k: entry(v) for k, v in unrelated.items()}
+        )
+        path.write_text(json.dumps(data))
+    agent = paths[1].parent / "agent_0.env"
+    agent.write_bytes(
+        (
+            f"{prefix}TOOLS=old-agent\r\n"
+            + (f"{prefix}FAST_TOOLS=new-agent\r\n" if conflict else "")
+            + "TOOLS_ACCURACY_HASH=accuracy\r\n"
+        ).encode()
+    )
+    build = paths[1].parent / "build.yaml"
+
+    def block(value, both=False):
+        values = {prefix + "TOOLS": "old-" + value}
+        if both:
+            values[prefix + "FAST_TOOLS"] = "new-" + value
+        if style == "kubernetes":
+            return "".join(
+                f'      - name: {k}\n        value: "{v}"\n' for k, v in values.items()
+            )
+        if style == "mapping":
+            return "".join(f'      {k}: "{v}"\n' for k, v in values.items())
+        return "".join(
+            f"      {'- ' if style == 'list' else ''}{k}={v}\n"
+            for k, v in values.items()
+        )
+
+    build.write_text(
+        "services:\n  agent:\n    environment:\n"
+        + block("build", conflict)
+        + "  other:\n    environment:\n"
+        + block("other")
+    )
+    tracked = [*paths, agent, build]
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    for flag in ("--dry-run", "--warn-only"):
+        run(tmp_path, "--service", "omenstrat_fast", flag)
+        assert {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
+    output = run(tmp_path, "--service", "omenstrat_fast")
+    assert "TOOLS -> FAST_TOOLS" in output
+    if conflict:
+        assert "keep existing" in output and "FAST_TOOLS" in output
+    for index, path in enumerate(paths):
+        data = json.loads(path.read_text())
+        values = data["user_provided_args" if path == saved else "env_variables"]
+        assert "TOOLS" not in values
+        actual = values["FAST_TOOLS"]
+        assert (actual if path == saved else actual["value"]) == json.dumps(
+            [f"{'new' if conflict else 'old'}-{index}"]
+        )
+        for key, value in unrelated.items():
+            assert (values[key] if path == saved else values[key]["value"]) == value
+    assert (
+        f"{prefix}FAST_TOOLS={'new' if conflict else 'old'}-agent\r\n".encode()
+        in agent.read_bytes()
+    )
+    assert b"TOOLS_ACCURACY_HASH=accuracy\r\n" in agent.read_bytes()
+    assert "old-other" in build.read_text()
+    assert ("new-build" if conflict else "old-build") in build.read_text()
+    assert not re.search(
+        r"\b" + prefix + r"TOOLS(?:[=:]|\s*$)", build.read_text(), re.M
+    )
+    marker = tmp_path / "configs/.fast_defaults_added.json"
+    assert "FAST_TOOLS" not in json.loads(marker.read_text())["added"]
+    after = {p: p.read_bytes() for p in [*tracked, marker]}
+    backups = sorted(tmp_path.rglob("*.bak-*"))
+    run(tmp_path, "--service", "omenstrat_fast")
+    assert all(p.read_bytes() == value for p, value in after.items())
+    assert sorted(tmp_path.rglob("*.bak-*")) == backups
+    for path, content in before.items():
+        assert list(path.parent.glob(path.name + ".bak-*"))[0].read_bytes() == content
+    run(tmp_path, "--service", "trader_pearl")
+    assert "FAST_TOOLS" in json.loads(paths[0].read_text())["env_variables"]
+
+
+@pytest.mark.parametrize("service", ["omenstrat_fast", "trader_pearl"])
+@pytest.mark.parametrize("owned", [False, True])
+def test_fast_tools_rename_provenance(tmp_path, service, owned):
+    """Keep migration ownership when old provenance names the tool list."""
+    paths = fixture(tmp_path)
+    for path in paths:
+        data = json.loads(path.read_text())
+        data["env_variables"]["TOOLS"] = entry('["operator"]')
+        path.write_text(json.dumps(data))
+    marker = tmp_path / "configs/.fast_defaults_added.json"
+    marker.write_text(
+        json.dumps({"added": ["TOOLS"] if owned else [], "upgraded": ["TOOLS"]})
+    )
+    before = {p: p.read_bytes() for p in [*paths, marker]}
+    run(tmp_path, "--service", service, "--dry-run")
+    assert all(p.read_bytes() == content for p, content in before.items())
+    run(tmp_path, "--service", service)
+    record = json.loads(marker.read_text())
+    assert "TOOLS" not in record["added"]
+    if service == "omenstrat_fast":
+        assert ("FAST_TOOLS" in record["added"]) is owned
+        assert "FAST_TOOLS" in record["upgraded"]
+        run(tmp_path, "--service", "trader_pearl")
+    if not owned and service == "trader_pearl":
+        assert json.loads(marker.read_text())["upgraded"] == ["FAST_TOOLS"]
+    for path in paths:
+        values = json.loads(path.read_text())["env_variables"]
+        assert "TOOLS" not in values
+        assert ("FAST_TOOLS" in values) is (not owned)
+
+
+def test_fast_tools_rename_without_service(tmp_path):
+    """Rename old keys during the normal Omen migration too."""
+    paths = fixture(tmp_path)
+    for path in paths:
+        data = json.loads(path.read_text())
+        data["env_variables"]["TOOLS"] = entry('["operator"]')
+        path.write_text(json.dumps(data))
+    marker = tmp_path / "configs/.fast_defaults_added.json"
+    marker.write_text(json.dumps({"added": ["TOOLS"], "upgraded": ["TOOLS"]}))
+    run(tmp_path)
+    for path in paths:
+        values = json.loads(path.read_text())["env_variables"]
+        assert "TOOLS" not in values
+        assert values["FAST_TOOLS"]["value"] == '["operator"]'
+    assert json.loads(marker.read_text()) == {
+        "added": ["FAST_TOOLS"],
+        "upgraded": ["FAST_TOOLS"],
+    }
+
+
+def test_fast_tools_rename_skips_polymarket_cache(tmp_path):
+    """Leave every file of a Polymarket cache unchanged."""
+    paths = fixture(tmp_path)
+    data = json.loads(paths[1].read_text())
+    data["env_variables"].update(
+        {"IS_RUNNING_ON_POLYMARKET": entry("true"), "TOOLS": entry('["poly"]')}
+    )
+    paths[1].write_text(json.dumps(data))
+    agent = paths[1].parent / "agent_0.env"
+    agent.write_text('TOOLS=["poly"]\n')
+    before = {path: path.read_bytes() for path in [paths[1], agent]}
+    run(tmp_path, "--service", "omenstrat_fast")
+    assert all(path.read_bytes() == content for path, content in before.items())
+    assert not list(paths[1].parent.glob("*.bak-*"))
+
+
+@pytest.mark.parametrize("tail", ["", "\n  broken: true\n"])
+def test_fast_tools_conflict_requires_kubernetes_value(tail):
+    """Reject a malformed old env pair before removing a conflicting key."""
+    helper = runpy.run_path(str(SCRIPT))["rename_fast_tools"]
+    text = 'env:\n  - name: FAST_TOOLS\n    value: "keep"\n  - name: TOOLS' + tail
+    with pytest.raises(ValueError, match="Missing value for TOOLS"):
+        helper(text, False)
