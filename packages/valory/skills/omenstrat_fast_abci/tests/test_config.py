@@ -342,3 +342,31 @@ def test_invalid_price_margin(
     }
     with pytest.raises(ValueError, match="0 <= price_margin < min"):
         FastParams(name="params", skill_context=MagicMock(), **args)
+
+
+def test_list_env_names_do_not_prefix_other_names() -> None:
+    """A missing list variable must not collect another variable's value.
+
+    When a named list variable X is not set, aea builds the list from every
+    variable that starts with "X_". A second name "X_<suffix>" then breaks
+    the agent start with a JSONDecodeError.
+    """
+    import re
+
+    files = [
+        *(ROOT / "packages/valory/agents").glob("*/aea-config.yaml"),
+        *(ROOT / "packages/valory/services").glob("*/service.yaml"),
+    ]
+    names = set()
+    lists = set()
+    for path in files:
+        text = path.read_text()
+        names.update(re.findall(r"\$\{([A-Z][A-Z0-9_]*):", text))
+        lists.update(re.findall(r"\$\{([A-Z][A-Z0-9_]*):list:", text))
+    collisions = sorted(
+        (name, other)
+        for name in lists
+        for other in names
+        if other.startswith(name + "_")
+    )
+    assert not collisions
