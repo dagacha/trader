@@ -237,6 +237,40 @@ class TestSetup:
                 behaviour.setup()
         mock_recover.assert_called_once()
 
+    @pytest.mark.parametrize("stored", ["missing", None, "", "None"])
+    def test_setup_recovers_tools_file_when_db_map_is_missing(
+        self, stored: Any
+    ) -> None:
+        """A missing or empty DB map is restored from utilized_tools.json.
+
+        Review of PR #35: the DB property must stay strict, or setup() skips
+        the recovery and the next store overwrites the file with {}.
+
+        :param stored: the DB value, or "missing" when the key is not set.
+        """
+        from packages.valory.skills.abstract_round_abci.base import AbciAppDB
+        from packages.valory.skills.decision_maker_abci.states.base import (
+            SynchronizedData,
+        )
+
+        behaviour = _make_behaviour()
+        setup_data = {} if stored == "missing" else {"utilized_tools": [stored]}
+        synced = SynchronizedData(AbciAppDB(setup_data=setup_data))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / UTILIZED_TOOLS_STORE).write_text('{"0xbet": "tool1"}')
+            with (
+                patch.object(
+                    type(behaviour), "synchronized_data", new_callable=PropertyMock
+                ) as mock_sd,
+                patch.object(
+                    type(behaviour), "params", new_callable=PropertyMock
+                ) as mock_params,
+            ):
+                mock_sd.return_value = synced
+                mock_params.return_value = MagicMock(store_path=Path(tmpdir))
+                behaviour.setup()
+        assert behaviour.utilized_tools == {"0xbet": "tool1"}
+
 
 class TestSetMechAgentSpecs:
     """Tests for set_mech_agent_specs."""

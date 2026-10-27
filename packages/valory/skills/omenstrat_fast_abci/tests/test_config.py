@@ -397,10 +397,29 @@ def test_list_env_names_do_not_prefix_other_names() -> None:
 
 
 def test_fast_service_and_agent_slippage_default() -> None:
-    """The fast agent and service default the on-chain buy slippage to 3%."""
-    agent = (ROOT / "packages/valory/agents/omenstrat_fast/aea-config.yaml").read_text()
-    service = (
-        ROOT / "packages/valory/services/omenstrat_fast/service.yaml"
-    ).read_text()
-    assert "      slippage: ${float:0.03}" in agent
-    assert "      slippage: ${SLIPPAGE:float:0.03}" in service
+    """The fast skills, agent and service resolve the buy slippage to 3%."""
+    from aea.helpers.env_vars import apply_env_variables
+
+    for name in ("fresh_watch_abci", "omenstrat_fast_abci"):
+        skill = yaml.safe_load(
+            (ROOT / "packages/valory/skills" / name / "skill.yaml").read_text()
+        )
+        assert skill["models"]["params"]["args"]["slippage"] == 0.03
+    for relative in (
+        "agents/omenstrat_fast/aea-config.yaml",
+        "services/omenstrat_fast/service.yaml",
+    ):
+        docs = yaml.safe_load_all((ROOT / "packages/valory" / relative).read_text())
+        override = next(
+            doc
+            for doc in list(docs)[1:]
+            if doc["public_id"].startswith("valory/omenstrat_fast_abci:")
+        )
+        args = override["models"]["params"]["args"]
+        resolved = apply_env_variables({"slippage": args["slippage"]}, {})
+        assert resolved == {"slippage": 0.03}
+        overridden = apply_env_variables(
+            {"slippage": args["slippage"]}, {"SLIPPAGE": "0.05"}
+        )
+        if "SLIPPAGE" in args["slippage"]:
+            assert overridden == {"slippage": 0.05}

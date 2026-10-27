@@ -107,21 +107,6 @@ def test_mech_tool(sync_data: SynchronizedData, mocked_db: MagicMock) -> None:
     mocked_db.get_strict.assert_called_once_with("mech_tool")
 
 
-@pytest.mark.parametrize("stored", [None, "", "None"])
-def test_utilized_tools_missing_is_empty(stored: Optional[str]) -> None:
-    """A lane without tool selection has no stored map; read it as empty.
-
-    The fast lane never runs ToolSelectionRound. Its first settled bet must
-    not crash PostTxSettlementRound, which reads this map.
-
-    :param stored: the stored value, or None when the key is not set.
-    """
-    from packages.valory.skills.abstract_round_abci.base import AbciAppDB
-
-    db = AbciAppDB(setup_data={} if stored is None else {"utilized_tools": [stored]})
-    assert SynchronizedData(db).utilized_tools == {}
-
-
 def test_utilized_tools(sync_data: SynchronizedData, mocked_db: MagicMock) -> None:
     """Test the utilized_tools property."""
     mocked_db.get_strict.return_value = '{"tx1": "tool1"}'

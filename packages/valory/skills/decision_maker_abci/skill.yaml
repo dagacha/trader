@@ -58,7 +58,7 @@ fingerprint:
   rounds.py: bafybeiead6y2al3g6ssqlu6p3d6jwx3xyryykasy3mcvqe6vip62habkaq
   rounds_info.py: bafybeiab5tmeiztg2iyxdue2xstpp5hvpnyimolvfwbf3ukoin5ck4sedi
   states/__init__.py: bafybeid23llnyp6j257dluxmrnztugo5llsrog7kua53hllyktz4dqhqoy
-  states/base.py: bafybeicscla2nlda6xpcqts3b5ksw5mcjwp5yz34ig4yhsl7mcqwzd5jgu
+  states/base.py: bafybeiegjgu4u5rplxwd6mo6zj2fmp5ftkmzrv5lwewanhccgl3tpzixoa
   states/bet_placement.py: bafybeigxqet2qc7ocnkglhdylx63z5puiolwcl2g4vfksfdf6qoxveej4a
   states/blacklisting.py: bafybeic4y6m5uyf25qzsdbjcwrfjil3tj77lr7wxjdhwtps7p2hzxw53fm
   states/check_benchmarking.py: bafybeifpv7cv4wf3m4emrdkrcrcmd72m4vg4ei3vl6lty2bpym3ownbsge
@@ -125,14 +125,14 @@ fingerprint:
   tests/behaviours/test_sampling.py: bafybeicopnx3osqr6xfy7id743mmhudyk65twcwpzfde6n7jboowzlc7pq
   tests/behaviours/test_sampling_fresh.py: bafybeih7p2eaibiu3vgmfkbcyw32vo453j74kfyfhdkfcjd4aytkqmaq7y
   tests/behaviours/test_sell_outcome_tokens.py: bafybeiej3ci4irissz45kk5ooy4notxcjl2dtbxioljqlzqtwex3elrqqq
-  tests/behaviours/test_storage_manager.py: bafybeiakiazltjfnucvg5k5kochrmsyum5je7fzgjgsxdo2mew3bnsgt5m
+  tests/behaviours/test_storage_manager.py: bafybeifznssuys73c6qqciu7jjw7rnexwhszyazihqu66qpqrpold3j6bi
   tests/behaviours/test_tool_selection.py: bafybeieaspiro5sd4atfv25zbry4o2zsp7abrtzkw2dxe4lvajv2r74zce
   tests/behaviours/test_trade_cap.py: bafybeihhmgreif2aqjljdxrtsavelwesxm2jen2tkit4pjzeyaukuwgaqm
   tests/behaviours/test_trade_count.py: bafybeia4sehdztq4ruhsu7737womcz3sshuca2vl4uk7bsz72gh5tsixi4
   tests/conftest.py: bafybeifhufbb2izwbomfa5tjpspmc6iwpeulzmqkaxaye23gktnnuz7xmm
   tests/io_/__init__.py: bafybeieix5jroitmrjfpwakoywslzq3b3cwsfnx6z2ij7ahy4plmntzgqm
   tests/io_/test_loader.py: bafybeidd2zyzrhhxv75ijofg7mqzobmf4yu32lsscqdi3zd3hwlrwe2kne
-  tests/states/test_base.py: bafybeiam54vulbzghh2pmyutzf6czozgjmouzr3kmdrtcbnweyscbdajbi
+  tests/states/test_base.py: bafybeiaa7n27f2cfldbfw3j55nm7igpi7ij52qelxm3evxcp3a2h3kk55e
   tests/states/test_bet_placement.py: bafybeiaf3ehkmjk3354y7o7xi6a3tyscnepmza456izgpiw24asmge337y
   tests/states/test_blacklising.py: bafybeiaixxhpmyo5si2j7re6e6ir7sjglgqgaeptphng4hsiukpa4sqci4
   tests/states/test_check_benchmarking.py: bafybeif2glegcd4y6vs4qwebaxqbtdehxgm23434ddkkdl52zq7cdseqrm

@@ -20,7 +20,7 @@
 """This module contains the tests for rounds of TxSettlementMultiplexerAbciApp."""
 
 import json
-from typing import Dict, Set
+from typing import Any, Dict, List, Set
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -794,28 +794,44 @@ class TestTxSettlementMultiplexerAbciApp:
         assert post_transitions[Event.ROUND_TIMEOUT] is PostTxSettlementRound
 
 
-def test_settled_fast_bet_without_tool_map_does_not_crash() -> None:
+@pytest.mark.parametrize(
+    "submitter,done",
+    [
+        (BetPlacementRound.auto_round_id(), Event.BET_PLACEMENT_DONE),
+        (SellOutcomeTokensRound.auto_round_id(), Event.SELL_OUTCOME_TOKENS_DONE),
+    ],
+)
+@pytest.mark.parametrize("stored", ["missing", None, "", "None"])
+def test_settled_tx_without_tool_map_does_not_crash(
+    submitter: str, done: Event, stored: object
+) -> None:
     """A settled fast bet reaches PostTxSettlementRound with no stored tool map.
 
-    The fast lane never runs ToolSelectionRound. Before the fix,
-    ``utilized_tools`` raised JSONDecodeError here, and the replayed block
-    crash-looped the agent (trader 1, 2026-10-27).
+    The fast lane never runs ToolSelectionRound. Before the fix, reading
+    ``utilized_tools`` raised here, and the replayed block crash-looped the
+    agent (trader 1, 2026-10-27). The round now starts from an empty map and
+    still records the tool for the settled tx.
+
+    :param submitter: the round that submitted the settled tx.
+    :param done: the expected event.
+    :param stored: the stored map, or "missing" when the key is not set.
     """
     from packages.valory.skills.abstract_round_abci.base import AbciAppDB
 
-    db = AbciAppDB(
-        setup_data={
-            "tx_submitter": [BetPlacementRound.auto_round_id()],
-            "final_tx_hash": ["0x9b71c847"],
-            "mech_tool": ["superforcaster_calibrated_full_search"],
-        }
-    )
+    setup_data: Dict[str, List[Any]] = {
+        "tx_submitter": [submitter],
+        "final_tx_hash": ["0x9b71c847"],
+        "mech_tool": ["superforcaster_calibrated_full_search"],
+    }
+    if stored != "missing":
+        setup_data["utilized_tools"] = [stored]
     round_ = PostTxSettlementRound(
-        synchronized_data=SynchronizedData(db), context=MagicMock()
+        synchronized_data=SynchronizedData(AbciAppDB(setup_data=setup_data)),
+        context=MagicMock(),
     )
     result = round_.end_block()
     assert result is not None
-    assert result[1] == Event.BET_PLACEMENT_DONE
+    assert result[1] == done
     assert result[0].db.get("utilized_tools") == json.dumps(
         {"0x9b71c847": "superforcaster_calibrated_full_search"}
     )

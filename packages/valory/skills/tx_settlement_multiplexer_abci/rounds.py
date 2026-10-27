@@ -171,7 +171,13 @@ class PostTxSettlementRound(CollectSameUntilThresholdRound):
 
         # if a bet was just placed, edit the utilized tools mapping
         if event in (Event.BET_PLACEMENT_DONE, Event.SELL_OUTCOME_TOKENS_DONE):
-            utilized_tools = synced_data.utilized_tools
+            # The fast lane never runs ToolSelectionRound, so the map can be
+            # missing or empty here. Start from an empty map; the property
+            # stays strict so the storage manager still recovers the file.
+            try:
+                utilized_tools = synced_data.utilized_tools
+            except ValueError:
+                utilized_tools = {}
             if synced_data.final_tx_hash is None:
                 self.context.logger.warning(
                     f"The tx hash was not set. This is unexpected as {event} has just been emitted!"
