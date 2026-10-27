@@ -177,10 +177,12 @@ class PostTxSettlementRound(CollectSameUntilThresholdRound):
             try:
                 utilized_tools = synced_data.utilized_tools
             except ValueError:
+                utilized_tools = None
+            if not isinstance(utilized_tools, dict):
                 stored = synced_data.db.get("utilized_tools", None)
                 if stored not in (None, "", "None"):
                     self.context.logger.warning(
-                        f"Stored utilized_tools is not valid JSON: {stored!r}. "
+                        f"Stored utilized_tools is not a JSON object: {stored!r}. "
                         "Starting from an empty map."
                     )
                 utilized_tools = {}

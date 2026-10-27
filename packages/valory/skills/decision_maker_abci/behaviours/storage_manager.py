@@ -147,6 +147,8 @@ class StorageManagerBehaviour(DecisionMakerBaseBehaviour, ABC):
             synced = self.synchronized_data.utilized_tools
         except Exception:
             synced = None
+        if not isinstance(synced, dict):
+            synced = None
         recovered = self._try_recover_utilized_tools()
         self.utilized_tools = {**recovered, **(synced or {})}
 

@@ -237,7 +237,9 @@ class TestSetup:
                 behaviour.setup()
         mock_recover.assert_called_once()
 
-    @pytest.mark.parametrize("stored", ["missing", None, "", "None", "{}"])
+    @pytest.mark.parametrize(
+        "stored", ["missing", None, "", "None", "{}", "[]", '["x"]']
+    )
     def test_setup_recovers_tools_file_when_db_map_is_missing(
         self, stored: Any
     ) -> None:
