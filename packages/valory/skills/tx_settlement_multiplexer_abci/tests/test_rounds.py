@@ -792,3 +792,30 @@ class TestTxSettlementMultiplexerAbciApp:
         """Test that PostTxSettlementRound self-loops on ROUND_TIMEOUT."""
         post_transitions = abci_app.transition_function[PostTxSettlementRound]
         assert post_transitions[Event.ROUND_TIMEOUT] is PostTxSettlementRound
+
+
+def test_settled_fast_bet_without_tool_map_does_not_crash() -> None:
+    """A settled fast bet reaches PostTxSettlementRound with no stored tool map.
+
+    The fast lane never runs ToolSelectionRound. Before the fix,
+    ``utilized_tools`` raised JSONDecodeError here, and the replayed block
+    crash-looped the agent (trader 1, 2026-10-27).
+    """
+    from packages.valory.skills.abstract_round_abci.base import AbciAppDB
+
+    db = AbciAppDB(
+        setup_data={
+            "tx_submitter": [BetPlacementRound.auto_round_id()],
+            "final_tx_hash": ["0x9b71c847"],
+            "mech_tool": ["superforcaster_calibrated_full_search"],
+        }
+    )
+    round_ = PostTxSettlementRound(
+        synchronized_data=SynchronizedData(db), context=MagicMock()
+    )
+    result = round_.end_block()
+    assert result is not None
+    assert result[1] == Event.BET_PLACEMENT_DONE
+    assert result[0].db.get("utilized_tools") == json.dumps(
+        {"0x9b71c847": "superforcaster_calibrated_full_search"}
+    )

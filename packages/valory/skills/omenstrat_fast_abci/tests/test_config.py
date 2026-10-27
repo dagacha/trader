@@ -106,6 +106,8 @@ def test_params_and_state(tmp_path: Any) -> None:
     assert params.fast.min_stake == 0.1
     assert params.fast.max_slip == 0.2
     assert params.fast.price_margin == 0.01
+    # The fast lane buys fresh markets that move fast; 1% made 8 of 9 bets revert.
+    assert params.slippage == 0.03
     custom = FastParams(
         name="custom",
         skill_context=context,
@@ -392,3 +394,13 @@ def test_list_env_names_do_not_prefix_other_names() -> None:
         names.update(json.loads(path.read_text()).get("env_variables", {}))
     assert lists
     assert not list_prefix_collisions(lists, names)
+
+
+def test_fast_service_and_agent_slippage_default() -> None:
+    """The fast agent and service default the on-chain buy slippage to 3%."""
+    agent = (ROOT / "packages/valory/agents/omenstrat_fast/aea-config.yaml").read_text()
+    service = (
+        ROOT / "packages/valory/services/omenstrat_fast/service.yaml"
+    ).read_text()
+    assert "      slippage: ${float:0.03}" in agent
+    assert "      slippage: ${SLIPPAGE:float:0.03}" in service

@@ -217,9 +217,20 @@ class SynchronizedData(
 
     @property
     def utilized_tools(self) -> Dict[str, str]:
-        """Get a mapping of the utilized tools' indexes for each transaction."""
-        tools = str(self.db.get_strict("utilized_tools"))
-        return json.loads(tools)
+        """Get a mapping of the utilized tools' indexes for each transaction.
+
+        A lane without tool selection (the fast lane) has no stored map yet.
+        Read a missing or empty value as an empty map.
+
+        :return: the transaction hash to tool key mapping.
+        """
+        try:
+            tools = self.db.get_strict("utilized_tools")
+        except ValueError:
+            return {}
+        if tools is None or str(tools) in ("", "None"):
+            return {}
+        return json.loads(str(tools))
 
     @property
     def redeemed_condition_ids(self) -> Set[str]:

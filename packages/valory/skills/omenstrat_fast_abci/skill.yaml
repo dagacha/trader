@@ -16,7 +16,7 @@ fingerprint:
   models.py: bafybeicihpfeq66ahhuboojdrf7f33xu6tmktmskzodh7oiqvxtggka4om
   tests/__init__.py: bafybeifx5qa3c7rsjbe4ujuif363osh23mvgprcd5jwv67t5kl3kgqrszu
   tests/test_composition.py: bafybeif73yo7ty5as3rvfc6u5yozco5noi2ucotbvu6ufhsxztxtdw7hqy
-  tests/test_config.py: bafybeigzsnspz3offnwsy2zlke7hknrxdmokjby5qvac652kmwmrp7tshi
+  tests/test_config.py: bafybeicr6ykbznd7n54g66epc26g3kcbljscexomjifefn6cgfbztbfdmu
   tests/test_requests.py: bafybeif6cpspom5h65ikwp5c4umixkh4umxy3kkj2ib7mizjw455kfxvly
 fingerprint_ignore_patterns: []
 connections: []
@@ -27,14 +27,14 @@ skills:
 - valory/registration_abci:0.1.0:bafybeicwfwrzdu5kjcjh4ntzgo7dghy5rs4o6ddbwgo2vz7bomi67gn5wa
 - valory/transaction_settlement_abci:0.1.0:bafybeidmmhjcgp7chozxovensq3zplkufvaityd2w3zladtssu4ijvqbzm
 - valory/termination_abci:0.1.0:bafybeig5lk6agmjpctxh4smrqvtbylynda7a5kwgtdlss2sjnnabedzuem
-- valory/decision_maker_abci:0.1.0:bafybeigpgscs5zzar3ibwksb5arhna3azcid4yblvfq6tdlvc6xpihwdpa
-- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeihnwzqig42nksht233lxydj4mwykiozotce5czd2kbjs5rsgh3zsu
+- valory/decision_maker_abci:0.1.0:bafybeib36apdow7n4tkjcptvm3nnseqbphoqo5erg4rrwvcmh2tjmdh5nm
+- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeiaesiunw3il5gm4tqtbludtkhnjdpak2b2kedcispyps3w3ljopru
 - valory/staking_abci:0.1.0:bafybeihjsvg6qmpcvca24hlj34ppdgnhx6wnbi56ddcnnfdj2p7bg66mii
 - valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m
 - valory/chatui_abci:0.1.0:bafybeihj5y6cecuw4iz2gshicoygghrgi5b6rzynnofx25ycsv56ehgdvq
 - valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
-- valory/trader_abci:0.1.0:bafybeififhp3fto5tvw7nbr3qft2ejio6xfggove5cvizuc3fhqq6oa2m4
-- valory/fresh_watch_abci:0.1.0:bafybeicqdurbnyxpnebvmsr3gyemvkgmvba5oidhxbqduisu5x7jxjycgu
+- valory/trader_abci:0.1.0:bafybeiezueooz5ptaacjnplg3ssempwcak6do5erselxtxoedwz767z6ba
+- valory/fresh_watch_abci:0.1.0:bafybeig2j3iszquwtnbqr3fqealzp22ecs3wzwohrppffcypwzuwdyizqe
 behaviours:
   main:
     args: {}
@@ -230,7 +230,7 @@ models:
       max_filtering_retries: 6
       minimum_batch_size: 500
       redeeming_batch_size: 5
-      slippage: 0.01
+      slippage: 0.03
       withdrawal_slippage: 0.01
       withdrawal_return_buffer: 0.05
       dust_epsilon_wxdai: 10000000000000000

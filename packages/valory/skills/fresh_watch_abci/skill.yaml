@@ -30,8 +30,8 @@ skills:
 - valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
 - valory/abstract_round_abci:0.1.0:bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4
 - valory/market_manager_abci:0.1.0:bafybeicle4v4hbzfitrndz4iezmpzqft7q26eijmzpqpfs7o4ccv7pkfcu
-- valory/decision_maker_abci:0.1.0:bafybeigpgscs5zzar3ibwksb5arhna3azcid4yblvfq6tdlvc6xpihwdpa
-- valory/trader_abci:0.1.0:bafybeififhp3fto5tvw7nbr3qft2ejio6xfggove5cvizuc3fhqq6oa2m4
+- valory/decision_maker_abci:0.1.0:bafybeib36apdow7n4tkjcptvm3nnseqbphoqo5erg4rrwvcmh2tjmdh5nm
+- valory/trader_abci:0.1.0:bafybeiezueooz5ptaacjnplg3ssempwcak6do5erselxtxoedwz767z6ba
 behaviours:
   main:
     args: {}
@@ -227,7 +227,7 @@ models:
       max_filtering_retries: 6
       minimum_batch_size: 500
       redeeming_batch_size: 5
-      slippage: 0.01
+      slippage: 0.03
       withdrawal_slippage: 0.01
       withdrawal_return_buffer: 0.05
       dust_epsilon_wxdai: 10000000000000000
