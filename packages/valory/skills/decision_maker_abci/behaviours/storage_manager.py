@@ -136,14 +136,19 @@ class StorageManagerBehaviour(DecisionMakerBaseBehaviour, ABC):
         return self.context.agent_tools
 
     def setup(self) -> None:
-        """Set the behaviour up."""
+        """Set the behaviour up.
+
+        Merge the stored file with the synchronized map. A settlement can
+        write the map before this behaviour runs (fast lane), so the file
+        can hold pending entries that the map does not have. The map wins
+        for the same transaction.
+        """
         try:
-            self.utilized_tools = self.synchronized_data.utilized_tools
+            synced = self.synchronized_data.utilized_tools
         except Exception:
-            self.utilized_tools = self._try_recover_utilized_tools()
-        else:
-            if self.utilized_tools is None:
-                self.utilized_tools = self._try_recover_utilized_tools()
+            synced = None
+        recovered = self._try_recover_utilized_tools()
+        self.utilized_tools = {**recovered, **(synced or {})}
 
     def set_mech_agent_specs(self) -> None:
         """Set the mech's agent specs."""

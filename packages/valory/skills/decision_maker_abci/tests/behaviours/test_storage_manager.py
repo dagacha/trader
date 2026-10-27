@@ -237,7 +237,7 @@ class TestSetup:
                 behaviour.setup()
         mock_recover.assert_called_once()
 
-    @pytest.mark.parametrize("stored", ["missing", None, "", "None"])
+    @pytest.mark.parametrize("stored", ["missing", None, "", "None", "{}"])
     def test_setup_recovers_tools_file_when_db_map_is_missing(
         self, stored: Any
     ) -> None:
@@ -270,6 +270,51 @@ class TestSetup:
                 mock_params.return_value = MagicMock(store_path=Path(tmpdir))
                 behaviour.setup()
         assert behaviour.utilized_tools == {"0xbet": "tool1"}
+
+    def test_setup_merges_file_after_settlement_wrote_db_map(self) -> None:
+        """The file survives when a settled bet writes the DB map first.
+
+        Review of PR #35: the fast lane can settle a bet before the storage
+        manager runs. PostTxSettlementRound then writes {new_tx: tool}, and
+        setup() must still keep the pending entries from utilized_tools.json.
+        """
+        from packages.valory.skills.abstract_round_abci.base import AbciAppDB
+        from packages.valory.skills.decision_maker_abci.states.base import (
+            SynchronizedData,
+        )
+        from packages.valory.skills.decision_maker_abci.states.bet_placement import (
+            BetPlacementRound,
+        )
+        from packages.valory.skills.tx_settlement_multiplexer_abci.rounds import (
+            PostTxSettlementRound,
+        )
+
+        db = AbciAppDB(
+            setup_data={
+                "tx_submitter": [BetPlacementRound.auto_round_id()],
+                "final_tx_hash": ["0xnew"],
+                "mech_tool": ["tool_new"],
+            }
+        )
+        result = PostTxSettlementRound(
+            synchronized_data=SynchronizedData(db), context=MagicMock()
+        ).end_block()
+        assert result is not None
+        behaviour = _make_behaviour()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / UTILIZED_TOOLS_STORE).write_text('{"0xold": "tool_old"}')
+            with (
+                patch.object(
+                    type(behaviour), "synchronized_data", new_callable=PropertyMock
+                ) as mock_sd,
+                patch.object(
+                    type(behaviour), "params", new_callable=PropertyMock
+                ) as mock_params,
+            ):
+                mock_sd.return_value = SynchronizedData(result[0].db)
+                mock_params.return_value = MagicMock(store_path=Path(tmpdir))
+                behaviour.setup()
+        assert behaviour.utilized_tools == {"0xold": "tool_old", "0xnew": "tool_new"}
 
 
 class TestSetMechAgentSpecs:

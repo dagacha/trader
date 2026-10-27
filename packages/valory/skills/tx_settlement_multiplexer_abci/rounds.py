@@ -172,11 +172,17 @@ class PostTxSettlementRound(CollectSameUntilThresholdRound):
         # if a bet was just placed, edit the utilized tools mapping
         if event in (Event.BET_PLACEMENT_DONE, Event.SELL_OUTCOME_TOKENS_DONE):
             # The fast lane never runs ToolSelectionRound, so the map can be
-            # missing or empty here. Start from an empty map; the property
-            # stays strict so the storage manager still recovers the file.
+            # missing or empty here. Start from an empty map; the storage
+            # manager merges its file with this map when it runs.
             try:
                 utilized_tools = synced_data.utilized_tools
             except ValueError:
+                stored = synced_data.db.get("utilized_tools", None)
+                if stored not in (None, "", "None"):
+                    self.context.logger.warning(
+                        f"Stored utilized_tools is not valid JSON: {stored!r}. "
+                        "Starting from an empty map."
+                    )
                 utilized_tools = {}
             if synced_data.final_tx_hash is None:
                 self.context.logger.warning(

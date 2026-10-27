@@ -835,3 +835,26 @@ def test_settled_tx_without_tool_map_does_not_crash(
     assert result[0].db.get("utilized_tools") == json.dumps(
         {"0x9b71c847": "superforcaster_calibrated_full_search"}
     )
+
+
+def test_settled_tx_with_corrupted_tool_map_logs_warning() -> None:
+    """A corrupted stored map is reported, not reset silently."""
+    from packages.valory.skills.abstract_round_abci.base import AbciAppDB
+
+    db = AbciAppDB(
+        setup_data={
+            "tx_submitter": [BetPlacementRound.auto_round_id()],
+            "final_tx_hash": ["0x9b71c847"],
+            "mech_tool": ["tool"],
+            "utilized_tools": ["{not json"],
+        }
+    )
+    context = MagicMock()
+    round_ = PostTxSettlementRound(
+        synchronized_data=SynchronizedData(db), context=context
+    )
+    result = round_.end_block()
+    assert result is not None
+    assert result[1] == Event.BET_PLACEMENT_DONE
+    warnings = [str(c) for c in context.logger.warning.call_args_list]
+    assert any("utilized_tools" in w for w in warnings)

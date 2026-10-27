@@ -64,18 +64,18 @@ protocols:
 - valory/acn_data_share:0.1.0:bafybeieqisfr6lhaaesq37lk7vyaxza2h6nucshksgyo2djqfyf2saqo4i
 - valory/srr:0.1.0:bafybeibfs6osw7guctdpollf4iwt4vhd6yk7ai34tqk5djuxtgowjwdjb4
 skills:
-- valory/trader_abci:0.1.0:bafybeigwfh3i2o4ej4uwucrfvzyyesml4zwsrsehnp2qy5hw63picbk66y
-- valory/fresh_watch_abci:0.1.0:bafybeidsjzfmcxogrrdxqvtlb3s3e32vqh2ynm4y6bu2jrfmlcog33qali
+- valory/trader_abci:0.1.0:bafybeihjapjggw2qwvomp5y2xtujwyewwj65xrzhmxkr62efbacgusquka
+- valory/fresh_watch_abci:0.1.0:bafybeifokr62tbeek7nevogsnwtunzscjmgrr46zrtdlcgtulyl3mzxdky
 - valory/abstract_abci:0.1.0:bafybeie5et43th2nta76cd3kpm3fmurd7oyzk3qxim76octvt56m6r2poi
 - valory/abstract_round_abci:0.1.0:bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4
 - valory/registration_abci:0.1.0:bafybeicwfwrzdu5kjcjh4ntzgo7dghy5rs4o6ddbwgo2vz7bomi67gn5wa
 - valory/reset_pause_abci:0.1.0:bafybeibhpzbwspwbe6xiltrvmdhgks5cn6ybxl4rgs7tvgljurfs742i6u
 - valory/termination_abci:0.1.0:bafybeig5lk6agmjpctxh4smrqvtbylynda7a5kwgtdlss2sjnnabedzuem
 - valory/transaction_settlement_abci:0.1.0:bafybeidmmhjcgp7chozxovensq3zplkufvaityd2w3zladtssu4ijvqbzm
-- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeidcnkvq2i7pfupe7sqebq6e5hfdhmbetx4wmeyzpskpext5p2sbmm
+- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeid7wqmxxmy2bhib3zorvr3zfpywnkqkysfmbmpwucyvpvcr4pqboa
 - valory/market_manager_abci:0.1.0:bafybeicle4v4hbzfitrndz4iezmpzqft7q26eijmzpqpfs7o4ccv7pkfcu
-- valory/decision_maker_abci:0.1.0:bafybeih4xv26eziottxudhjvcllvkhplfbqv242px537ss5o3jxnzzhfwi
-- valory/omenstrat_fast_abci:0.1.0:bafybeicc2bssv6mxkklm6vx4sih2lot6pb5zhywagmvwwb2iyhfcyyxu3e
+- valory/decision_maker_abci:0.1.0:bafybeieycd6cyvzftvvq6x7erekker7drodlg3smrna4swbyqob6zvjofm
+- valory/omenstrat_fast_abci:0.1.0:bafybeiagqv75r73z5pytj74wjaptgar46iq6dtwkhtmsevlbn4qfpsnyem
 - valory/staking_abci:0.1.0:bafybeihjsvg6qmpcvca24hlj34ppdgnhx6wnbi56ddcnnfdj2p7bg66mii
 - valory/check_stop_trading_abci:0.1.0:bafybeidwkfafnhkew4ylhqwg5pv3y2sakgkl6d6d2q7hjmfrag4xe6pfxq
 - valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m

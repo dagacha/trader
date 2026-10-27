@@ -42,7 +42,7 @@ fingerprint:
   behaviours/round_behaviour.py: bafybeiaqtvgzxsxs557cpjbdfio4eeykjlgcfjyvfz3lkzgw3k4bmrcveq
   behaviours/sampling.py: bafybeiduwhifofaq3zzp2drrbxezxarrbeb45zwoszcrzhxtpin5a7syy4
   behaviours/sell_outcome_tokens.py: bafybeih6xtmqtuasnm63b5u3qau6ssj7dvvgvmwmepll6ydwo3aqc7tzv4
-  behaviours/storage_manager.py: bafybeidfxt2wdhtocoiim2pkj6kcwd2m5yfikzlqtrw22lqliyyrxt3vam
+  behaviours/storage_manager.py: bafybeihirdax4p6slz5wa4fcv3hzqsgrzfgqh5g56udhlqlynni26fe2o4
   behaviours/tool_selection.py: bafybeib7azpyqho6ynyfsgql5ublly6wgtxcgkwogz2lwmyymtp536flgm
   behaviours/trade_cap.py: bafybeic7ae3hvgxbo7e3mwjmhslumq5fstf6xduc7356w6zglq72vbavuq
   behaviours/trade_count.py: bafybeidolblo3wvfbusv34hhnfzo4mv3dmcw4uiijqhdgtmd6odnfdxsi4
@@ -125,7 +125,7 @@ fingerprint:
   tests/behaviours/test_sampling.py: bafybeicopnx3osqr6xfy7id743mmhudyk65twcwpzfde6n7jboowzlc7pq
   tests/behaviours/test_sampling_fresh.py: bafybeih7p2eaibiu3vgmfkbcyw32vo453j74kfyfhdkfcjd4aytkqmaq7y
   tests/behaviours/test_sell_outcome_tokens.py: bafybeiej3ci4irissz45kk5ooy4notxcjl2dtbxioljqlzqtwex3elrqqq
-  tests/behaviours/test_storage_manager.py: bafybeifznssuys73c6qqciu7jjw7rnexwhszyazihqu66qpqrpold3j6bi
+  tests/behaviours/test_storage_manager.py: bafybeiajbvk2gafnhpilnmzz4lhn5tvrccvj2qf7f2rfsx62ih6jx7epm4
   tests/behaviours/test_tool_selection.py: bafybeieaspiro5sd4atfv25zbry4o2zsp7abrtzkw2dxe4lvajv2r74zce
   tests/behaviours/test_trade_cap.py: bafybeihhmgreif2aqjljdxrtsavelwesxm2jen2tkit4pjzeyaukuwgaqm
   tests/behaviours/test_trade_count.py: bafybeia4sehdztq4ruhsu7737womcz3sshuca2vl4uk7bsz72gh5tsixi4
