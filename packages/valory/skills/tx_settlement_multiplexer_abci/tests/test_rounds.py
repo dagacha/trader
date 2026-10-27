@@ -20,7 +20,7 @@
 """This module contains the tests for rounds of TxSettlementMultiplexerAbciApp."""
 
 import json
-from typing import Dict, Set
+from typing import Any, Dict, List, Set
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -792,3 +792,74 @@ class TestTxSettlementMultiplexerAbciApp:
         """Test that PostTxSettlementRound self-loops on ROUND_TIMEOUT."""
         post_transitions = abci_app.transition_function[PostTxSettlementRound]
         assert post_transitions[Event.ROUND_TIMEOUT] is PostTxSettlementRound
+
+
+@pytest.mark.parametrize(
+    "submitter,done",
+    [
+        (BetPlacementRound.auto_round_id(), Event.BET_PLACEMENT_DONE),
+        (SellOutcomeTokensRound.auto_round_id(), Event.SELL_OUTCOME_TOKENS_DONE),
+    ],
+)
+@pytest.mark.parametrize("stored", ["missing", None, "", "None"])
+def test_settled_tx_without_tool_map_does_not_crash(
+    submitter: str, done: Event, stored: object
+) -> None:
+    """A settled fast bet reaches PostTxSettlementRound with no stored tool map.
+
+    The fast lane never runs ToolSelectionRound. Before the fix, reading
+    ``utilized_tools`` raised here, and the replayed block crash-looped the
+    agent (trader 1, 2026-10-27). The round now starts from an empty map and
+    still records the tool for the settled tx.
+
+    :param submitter: the round that submitted the settled tx.
+    :param done: the expected event.
+    :param stored: the stored map, or "missing" when the key is not set.
+    """
+    from packages.valory.skills.abstract_round_abci.base import AbciAppDB
+
+    setup_data: Dict[str, List[Any]] = {
+        "tx_submitter": [submitter],
+        "final_tx_hash": ["0x9b71c847"],
+        "mech_tool": ["superforcaster_calibrated_full_search"],
+    }
+    if stored != "missing":
+        setup_data["utilized_tools"] = [stored]
+    round_ = PostTxSettlementRound(
+        synchronized_data=SynchronizedData(AbciAppDB(setup_data=setup_data)),
+        context=MagicMock(),
+    )
+    result = round_.end_block()
+    assert result is not None
+    assert result[1] == done
+    assert result[0].db.get("utilized_tools") == json.dumps(
+        {"0x9b71c847": "superforcaster_calibrated_full_search"}
+    )
+
+
+@pytest.mark.parametrize("stored", ["{not json", "[]", '["x"]', "3"])
+def test_settled_tx_with_corrupted_tool_map_logs_warning(stored: str) -> None:
+    """A corrupted or non-object stored map is reported, not reset silently.
+
+    :param stored: the stored value.
+    """
+    from packages.valory.skills.abstract_round_abci.base import AbciAppDB
+
+    db = AbciAppDB(
+        setup_data={
+            "tx_submitter": [BetPlacementRound.auto_round_id()],
+            "final_tx_hash": ["0x9b71c847"],
+            "mech_tool": ["tool"],
+            "utilized_tools": [stored],
+        }
+    )
+    context = MagicMock()
+    round_ = PostTxSettlementRound(
+        synchronized_data=SynchronizedData(db), context=context
+    )
+    result = round_.end_block()
+    assert result is not None
+    assert result[1] == Event.BET_PLACEMENT_DONE
+    warnings = [str(c) for c in context.logger.warning.call_args_list]
+    assert any("utilized_tools" in w for w in warnings)
+    assert result[0].db.get("utilized_tools") == json.dumps({"0x9b71c847": "tool"})

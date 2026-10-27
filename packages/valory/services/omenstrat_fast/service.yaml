@@ -8,7 +8,7 @@ license: Apache-2.0
 fingerprint:
   README.md: bafybeic7e2ozu3raqi5i4f322z2nxwtvnsksqu6mncsyfafnzg36qcploy
 fingerprint_ignore_patterns: []
-agent: valory/omenstrat_fast:0.1.0:bafybeigzguscwk34w7yfzalfgn23ibdbfdvmklip2b6sj7xle6mrrysqi4
+agent: valory/omenstrat_fast:0.1.0:bafybeibc2tqnwxj2uym4g7p5gbcokwwlq6ffeqax7ejrhks37jhq3vim7e
 number_of_agents: 1
 deployment:
   agent:
@@ -119,7 +119,7 @@ models:
       placement_min_edge: ${MIN_EDGE:float:0.03}
       prioritize_fresh_markets: ${PRIORITIZE_FRESH_MARKETS:bool:true}
       fresh_market_max_age: ${FRESH_MARKET_MAX_AGE:int:1800}
-      slippage: ${SLIPPAGE:float:0.01}
+      slippage: ${SLIPPAGE:float:0.03}
       withdrawal_slippage: ${WITHDRAWAL_SLIPPAGE:float:0.01}
       withdrawal_return_buffer: ${WITHDRAWAL_RETURN_BUFFER:float:0.05}
       dust_epsilon_wxdai: ${DUST_EPSILON_WXDAI:int:10000000000000000}
