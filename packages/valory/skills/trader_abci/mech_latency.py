@@ -29,7 +29,9 @@ from packages.valory.skills.abstract_round_abci.base import BaseTxPayload
 from packages.valory.skills.mech_interact_abci.behaviours.offchain_request import (
     OffchainAttemptOutcome,
     OffchainAttemptResult,
+    OffchainCycleResult,
     OffchainRequestExecutor,
+    PendingRequest,
 )
 from packages.valory.skills.mech_interact_abci.behaviours.request import (
     MechRequestBehaviour,
@@ -37,6 +39,7 @@ from packages.valory.skills.mech_interact_abci.behaviours.request import (
 from packages.valory.skills.mech_interact_abci.behaviours.response import (
     MechResponseBehaviour,
 )
+from packages.valory.skills.mech_interact_abci.states.base import Event
 from packages.valory.skills.tx_settlement_multiplexer_abci.behaviours import (
     PostTxSettlementBehaviour,
 )
@@ -62,6 +65,27 @@ def request_timing(
 
 class TimedOffchainRequestExecutor(OffchainRequestExecutor):
     """Record each POST time, including the retry after a deposit."""
+
+    def run(self) -> Generator[None, None, OffchainCycleResult]:
+        """Release the last fast target when a request cycle fails."""
+        self._cycle_mech: Optional[str] = None
+        result = yield from super().run()
+        if (
+            getattr(self._b.params, "fast_dynamic_mech", False) is True
+            and self._cycle_mech is not None
+            and result.offchain_result
+            not in (Event.OFFCHAIN_DONE.value, Event.OFFCHAIN_DEPOSIT_NEEDED.value)
+        ):
+            state = self._b.context.shared_state.setdefault("fast_mech_rotation", {})
+            state["failed_mech"] = self._cycle_mech
+        return result
+
+    def _retry_pending(
+        self, pending: PendingRequest
+    ) -> Generator[None, None, OffchainCycleResult]:
+        """Track the pending target even if its retry fails before the POST."""
+        self._cycle_mech = pending.mech_address
+        return (yield from super()._retry_pending(pending))
 
     def _post_signed_request(
         self,
@@ -158,11 +182,20 @@ class TimedOffchainRequestExecutor(OffchainRequestExecutor):
         )
         count = state.get("request_count", 0)
         unavailable = bool(current) and selected is None
-        if rotate or unavailable:
+        failed = (
+            bool(current) and current == (state.pop("failed_mech", None) or "").lower()
+        )
+        if rotate or unavailable or (failed and alternatives):
             selected = random.Random(  # nosec B311 - spread requests, not secrets
                 f"{self._synced.safe_contract_address.lower()}:{count}"
             ).choice(sorted(alternatives, key=lambda mech: mech.address.lower()))
-            if unavailable:
+            if failed:
+                self._logger.info(
+                    "[MECH_ROTATE] from=%s to=%s reason=request_failed",
+                    current,
+                    selected.address,
+                )
+            elif unavailable:
                 self._logger.info(
                     "[MECH_ROTATE] from=%s to=%s reason=unavailable",
                     current,
@@ -188,6 +221,7 @@ class TimedOffchainRequestExecutor(OffchainRequestExecutor):
                 "[MECH_ROTATE] keep=%s latency_s=%s", selected.address, elapsed
             )
         state.update(current_mech=selected.address, request_count=count + 1)
+        self._cycle_mech = selected.address
         return selected.address, selected.http_url
 
 

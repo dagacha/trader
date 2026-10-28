@@ -47,6 +47,7 @@ from packages.valory.skills.mech_interact_abci.states.base import (
     MechInteractionResponse,
     MechMetadata,
     OFFCHAIN_503_ALL_MECHS,
+    OFFCHAIN_BAD_RESPONSE,
 )
 from packages.valory.skills.trader_abci import mech_latency as latency
 
@@ -752,3 +753,233 @@ def test_failed_post_after_slow_answer_rotates_on_next_run() -> None:
         f"https://{address}.test/send_signed_requests"
         for address in (addresses[0], addresses[1], addresses[0])
     ]
+
+
+@pytest.fixture
+def cycle_executor(monkeypatch: Any) -> Any:
+    """Use real cycle logic with contract, signature, and HTTP I/O replaced."""
+    executor = rotation_executor()
+    b = executor._b
+    executor._synced.ranked_mechs = [
+        SimpleNamespace(address="0x" + byte * 20, http_url=f"https://{byte}.test")
+        for byte in ("aa", "bb")
+    ]
+    executor._synced.safe_contract_address = "0x" + "cc" * 20
+    executor._synced.offchain_pending_request = None
+    executor._synced.approved_mech_rates = {}
+    executor._synced.mech_requests = [MechMetadata("prompt", "forecast", "first")]
+    b.params.fast_mech_start = "ranked"
+    b.params.mech_chain_id = "gnosis"
+    b.params.delivery_rate_caps = {PaymentType.NATIVE: 1}
+    b.params.mech_marketplace_config = SimpleNamespace(
+        mech_marketplace_address="0x" + "ff" * 20,
+        offchain_failover_max_retries=0,
+        offchain_nonce_retry_max=0,
+        offchain_poll_timeout_seconds=300,
+        auto_deposit_cap_per_cycle=1,
+    )
+    reads = {
+        "get_chain_id": 100,
+        "get_nonce": 0,
+        "get_payment_type": PaymentType.NATIVE.value,
+        "get_max_delivery_rate": 1,
+        "get_balance_tracker_for_mech_type": "0x" + "dd" * 20,
+        "get_requester_balance": 1,
+    }
+    monkeypatch.setattr(
+        executor,
+        "_read_contract_state",
+        lambda **kw: done(reads[kw["contract_callable"]]),
+    )
+    monkeypatch.setattr(executor, "_sign_request_id", lambda *_: done("signature"))
+    b.get_http_response = MagicMock(
+        side_effect=lambda **_: done(SimpleNamespace(status_code=200, body=b""))
+    )
+    return executor, reads
+
+
+def slow_answer_then_rotate(executor: Any) -> None:
+    """Accept on A and record its slow answer before the next cycle."""
+    with patch.object(latency.time, "time", return_value=100):
+        assert run(executor.run()).offchain_result == Event.OFFCHAIN_DONE.value
+    answer = latency.TraderMechResponseBehaviour(
+        name="response", skill_context=executor._b.context
+    )
+    with patch.object(latency.time, "time", return_value=191):
+        answer._log_answer(dict(nonce="first", result="answer"))
+    executor._synced.mech_requests = [MechMetadata("prompt", "forecast", "second")]
+
+
+@pytest.mark.parametrize("failure", ["already_funded", "wrong_pay_to"])
+def test_valid_402_cycle_soft_releases_mech(cycle_executor: Any, failure: str) -> None:
+    """A refused structured 402 rotates once without a penalty."""
+    executor, reads = cycle_executor
+    slow_answer_then_rotate(executor)
+    challenge = dict(
+        payTo=(
+            "0x" + "ee" * 20
+            if failure == "wrong_pay_to"
+            else reads["get_balance_tracker_for_mech_type"]
+        ),
+        asset="0x" + "00" * 20,
+        chainId=100,
+        currentBalance=0,
+        required=1,
+        error="insufficient balance",
+    )
+    executor._b.get_http_response.side_effect = lambda **_: done(
+        SimpleNamespace(status_code=402, body=json.dumps(challenge).encode())
+    )
+    failed = run(executor.run())
+    assert failed.offchain_result == Event.OFFCHAIN_ALL_FAILED.value
+    assert failed.last_failure_reason == OFFCHAIN_BAD_RESPONSE
+    state = executor._b.context.shared_state["fast_mech_rotation"]
+    a, b = executor._synced.ranked_mechs
+    assert state["current_mech"] == b.address
+    executor._b.shared_state.penalize_mech.assert_not_called()
+    assert executor._b.shared_state.penalized_mechs == {}
+    assert state.get("failed_mech") == b.address
+
+    executor._synced.mech_requests = [MechMetadata("prompt", "forecast", "third")]
+    executor._b.get_http_response.side_effect = lambda **_: done(
+        SimpleNamespace(status_code=200, body=b"")
+    )
+    assert run(executor.run()).offchain_result == Event.OFFCHAIN_DONE.value
+    assert executor._b.get_http_response.call_args.kwargs["url"] == (
+        a.http_url + "/send_signed_requests"
+    )
+    assert "failed_mech" not in state
+    executor._logger.info.assert_any_call(
+        "[MECH_ROTATE] from=%s to=%s reason=request_failed", b.address, a.address
+    )
+
+
+def test_cycle_failure_before_post_soft_releases_mech(cycle_executor: Any) -> None:
+    """Release the last pick even when the cycle fails before its POST."""
+    executor, reads = cycle_executor
+    slow_answer_then_rotate(executor)
+    reads["get_max_delivery_rate"] = None
+    result = run(executor.run())
+    assert result.offchain_result == Event.OFFCHAIN_ALL_FAILED.value
+    state = executor._b.context.shared_state["fast_mech_rotation"]
+    a, b = executor._synced.ranked_mechs
+    assert state.get("failed_mech") == b.address
+    assert latency.TimedOffchainRequestExecutor(executor._b)._pick_next_mech([])[0] == (
+        a.address
+    )
+    assert "failed_mech" not in state
+
+
+@pytest.mark.parametrize("dynamic", [False, True])
+def test_success_cycle_does_not_release_mech(
+    cycle_executor: Any, dynamic: bool
+) -> None:
+    """Keep accepted requests and avoid rotation state outside fast mode."""
+    executor, _ = cycle_executor
+    executor._b.params.fast_dynamic_mech = dynamic
+    executor._config.use_dynamic_mech_selection = True
+    assert run(executor.run()).offchain_result == Event.OFFCHAIN_DONE.value
+    assert "failed_mech" not in executor._b.context.shared_state.get(
+        "fast_mech_rotation", {}
+    )
+
+
+def test_non_fast_failure_does_not_release_mech(cycle_executor: Any) -> None:
+    """A failed standard cycle must not create fast rotation state."""
+    executor, reads = cycle_executor
+    executor._b.params.fast_dynamic_mech = False
+    executor._config.use_dynamic_mech_selection = True
+    reads["get_max_delivery_rate"] = None
+    assert run(executor.run()).offchain_result == Event.OFFCHAIN_ALL_FAILED.value
+    assert "fast_mech_rotation" not in executor._b.context.shared_state
+
+
+def test_failure_before_selection_does_not_release_previous_mech(
+    cycle_executor: Any,
+) -> None:
+    """Reset the cycle target before a failure that occurs before selection."""
+    executor, reads = cycle_executor
+    assert run(executor.run()).offchain_result == Event.OFFCHAIN_DONE.value
+    reads["get_chain_id"] = None
+    assert run(executor.run()).offchain_result == Event.OFFCHAIN_ALL_FAILED.value
+    assert "failed_mech" not in executor._b.context.shared_state["fast_mech_rotation"]
+
+
+def test_failed_pending_retry_releases_pending_mech(cycle_executor: Any) -> None:
+    """Release the pending target when its retry fails before the POST."""
+    executor, reads = cycle_executor
+    slow_answer_then_rotate(executor)
+    accepted = run(executor.run())
+    assert accepted.offchain_result == Event.OFFCHAIN_DONE.value
+    executor._synced.offchain_pending_request = json.loads(
+        accepted.pending_request_json
+    )
+    reads["get_chain_id"] = None
+    assert run(executor.run()).offchain_result == Event.OFFCHAIN_ALL_FAILED.value
+    state = executor._b.context.shared_state["fast_mech_rotation"]
+    a, b = executor._synced.ranked_mechs
+    assert state.get("failed_mech") == b.address
+    assert executor._pick_next_mech([])[0] == a.address
+
+
+def test_exhausted_failovers_release_last_actual_pick(cycle_executor: Any) -> None:
+    """Keep the last target when a later selection has no candidates."""
+    executor, reads = cycle_executor
+    slow_answer_then_rotate(executor)
+    executor._config.offchain_failover_max_retries = 2
+    reads["get_payment_type"] = None
+    assert run(executor.run()).offchain_result == Event.OFFCHAIN_ALL_FAILED.value
+    state = executor._b.context.shared_state["fast_mech_rotation"]
+    a, b = executor._synced.ranked_mechs
+    assert state.get("failed_mech") == a.address
+    assert executor._pick_next_mech([])[0] == b.address
+
+
+def test_failed_single_mech_is_kept_and_marker_cleared() -> None:
+    """Consume the failure marker even when no other Mech is eligible."""
+    executor = rotation_executor()
+    executor._synced.ranked_mechs = executor._synced.ranked_mechs[:1]
+    state = dict(current_mech="0x03", failed_mech="0X03")
+    executor._b.context.shared_state["fast_mech_rotation"] = state
+    assert executor._pick_next_mech([])[0] == "0x03"
+    assert "failed_mech" not in state
+
+
+def test_deposit_in_progress_keeps_mech(cycle_executor: Any, monkeypatch: Any) -> None:
+    """Keep the pending target through deposit settlement and retry."""
+    executor, reads = cycle_executor
+    slow_answer_then_rotate(executor)
+    reads["get_requester_balance"] = 0
+    executor._b.get_http_response.side_effect = lambda **_: done(
+        SimpleNamespace(
+            status_code=402,
+            body=json.dumps(
+                dict(
+                    payTo=reads["get_balance_tracker_for_mech_type"],
+                    currentBalance=0,
+                    required=1,
+                )
+            ).encode(),
+        )
+    )
+    monkeypatch.setattr(
+        executor,
+        "_build_deposit_tx",
+        lambda **_: done(SimpleNamespace(tx_hex="deposit")),
+    )
+    result = run(executor.run())
+    assert result.offchain_result == Event.OFFCHAIN_DEPOSIT_NEEDED.value
+    assert result.tx_hash == "deposit"
+    state = executor._b.context.shared_state["fast_mech_rotation"]
+    assert "failed_mech" not in state
+    pending = json.loads(result.pending_request_json)
+    assert pending["mech_address"] == state["current_mech"]
+    executor._synced.offchain_pending_request = pending
+    executor._b.get_http_response.side_effect = lambda **_: done(
+        SimpleNamespace(status_code=200, body=b"")
+    )
+    assert run(executor.run()).offchain_result == Event.OFFCHAIN_DONE.value
+    assert executor._b.get_http_response.call_args.kwargs["url"] == (
+        pending["mech_url"] + "/send_signed_requests"
+    )
+    assert "failed_mech" not in state

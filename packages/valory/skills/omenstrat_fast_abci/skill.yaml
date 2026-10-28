@@ -33,8 +33,8 @@ skills:
 - valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m
 - valory/chatui_abci:0.1.0:bafybeihj5y6cecuw4iz2gshicoygghrgi5b6rzynnofx25ycsv56ehgdvq
 - valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
-- valory/trader_abci:0.1.0:bafybeibqlvlx7lzg6oba7d4saxhthvpncwnbhv75pa6zv32amkonifmcp4
-- valory/fresh_watch_abci:0.1.0:bafybeidamtu6xv3nkv44jitelfxkwbndbq2jdkbuc4iq3wggqjvx6q3ilm
+- valory/trader_abci:0.1.0:bafybeihrm7h256omy2snujki7usydh5427vgycl5etsamepcv5pavrewvi
+- valory/fresh_watch_abci:0.1.0:bafybeicnkesk4r23hlcc6szrgi3eods7omgdh32zdgbx73vcchbontnsai
 behaviours:
   main:
     args: {}
