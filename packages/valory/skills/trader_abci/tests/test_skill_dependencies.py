@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import List
 
 import pytest
+import yaml
 from aea.components.base import _CheckUsedDependencies
 from aea.configurations.base import ComponentType
 from aea.configurations.loader import load_component_configuration
@@ -60,3 +61,37 @@ def test_skill_imports_are_declared_dependencies(skill_dir: Path) -> None:
     )
     configuration.directory = skill_dir
     _CheckUsedDependencies(configuration).run_check()
+
+
+@pytest.mark.parametrize(
+    "key,default,env",
+    [
+        ("fast_mech_start", "hash", "${FAST_MECH_START:str:hash}"),
+        ("fast_mech_rotate_latency_s", 90, "${FAST_MECH_ROTATE_LATENCY_S:int:90}"),
+    ],
+)
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "skills/trader_abci/skill.yaml",
+        "skills/fresh_watch_abci/skill.yaml",
+        "skills/omenstrat_fast_abci/skill.yaml",
+        "agents/omenstrat_fast/aea-config.yaml",
+        "services/omenstrat_fast/service.yaml",
+    ],
+)
+def test_fast_mech_rotation_params_declared(
+    relative: str, key: str, default: object, env: str
+) -> None:
+    """Declare rotation defaults in each skill and deployment override."""
+    docs = list(yaml.safe_load_all((_PACKAGES_DIR / "valory" / relative).read_text()))
+    config = docs[0]
+    deployment = not relative.startswith("skills/")
+    if deployment:
+        config = next(
+            doc
+            for doc in docs[1:]
+            if doc["public_id"].startswith("valory/omenstrat_fast_abci:")
+        )
+    args = config["models"]["params"]["args"]
+    assert args[key] == (env if deployment else default)

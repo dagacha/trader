@@ -317,16 +317,30 @@ def test_other_settlements_do_not_reset_clock(submitter: str) -> None:
     assert ctx.shared_state[latency.TIMINGS]["uuid"]["sent_ts"] == 100
 
 
-def test_polymarket_uses_existing_offchain_cycle() -> None:
-    """Keep the Polymarket request and response behaviour unchanged."""
+@pytest.mark.parametrize("polymarket", [False, True])
+def test_polymarket_uses_existing_offchain_cycle(polymarket: bool) -> None:
+    """Use timed Omen requests and keep the existing Polymarket cycle."""
     ctx = context()
-    ctx.params.is_running_on_polymarket = True
+    ctx.params.is_running_on_polymarket = polymarket
     request = latency.TraderMechRequestBehaviour(name="request", skill_context=ctx)
-    with patch.object(
-        MechRequestBehaviour, "_run_offchain_request_cycle", return_value=done(None)
-    ) as base:
+    with (
+        patch.object(
+            MechRequestBehaviour,
+            "_run_offchain_request_cycle",
+            side_effect=lambda: done(None),
+        ) as base,
+        patch.object(request, "_check_round_timeout_fits_poll_budget"),
+        patch.object(
+            latency.TimedOffchainRequestExecutor,
+            "run",
+            side_effect=lambda: done(None),
+        ) as timed,
+        patch.object(request, "_payload_from_offchain_result"),
+        patch.object(request, "finish_behaviour", side_effect=lambda p: done(None)),
+    ):
         run(request._run_offchain_request_cycle())
-    base.assert_called_once()
+    assert base.call_count == int(polymarket)
+    assert timed.call_count == int(not polymarket)
     response = latency.TraderMechResponseBehaviour(name="response", skill_context=ctx)
     with patch.object(
         MechResponseBehaviour, "finish_behaviour", return_value=done(None)
@@ -338,9 +352,14 @@ def test_polymarket_uses_existing_offchain_cycle() -> None:
 @pytest.mark.parametrize(
     "dynamic,ranked,penalized,expected",
     [
-        (True, [], set(), (None, None)),
-        (True, ["0xselected"], set(), ("0xselected", "https://selected.test")),
-        (True, ["0xselected"], {"0xselected"}, (None, None)),
+        (True, [], {}, (None, None)),
+        (True, ["0xselected"], {}, ("0xselected", "https://selected.test")),
+        (
+            True,
+            ["0xselected"],
+            {"0xselected": 100},
+            ("0xselected", "https://selected.test"),
+        ),
         (False, [], set(), ("0xpriority", "https://priority.test")),
     ],
 )
@@ -385,7 +404,7 @@ def test_fast_dynamic_never_uses_static_url(attempted: Any, url: Any) -> None:
     b = SimpleNamespace(
         context=ctx,
         params=ctx.params,
-        shared_state=SimpleNamespace(penalized_mechs=set()),
+        shared_state=SimpleNamespace(penalized_mechs={}),
         synchronized_data=SimpleNamespace(
             ranked_mechs=[SimpleNamespace(address="0xselected", http_url=url)]
         ),
@@ -394,3 +413,177 @@ def test_fast_dynamic_never_uses_static_url(attempted: Any, url: Any) -> None:
         None,
         None,
     )
+
+
+def rotation_executor(safe: str = "0x01") -> Any:
+    """Build a fast executor with ranked endpoints and local agent state."""
+    ctx = context()
+    ctx.params.fast_dynamic_mech = True
+    ctx.params.fast_mech_start = "hash"
+    ctx.params.fast_mech_rotate_latency_s = 90
+    ctx.state.penalized_mechs = {}
+    mechs = [
+        SimpleNamespace(address=address, http_url=f"https://{address}.test")
+        for address in ("0x03", "0x01", "0x02")
+    ]
+    b = SimpleNamespace(
+        context=ctx,
+        params=ctx.params,
+        shared_state=ctx.state,
+        synchronized_data=SimpleNamespace(
+            ranked_mechs=mechs, safe_contract_address=safe
+        ),
+    )
+    return latency.TimedOffchainRequestExecutor(b)
+
+
+@pytest.mark.parametrize("safe,expected", [("0x01", "0x02"), ("0x03", "0x01")])
+def test_hash_start_is_per_safe_and_sorted(safe: str, expected: str) -> None:
+    """Use the safe address modulo the address-sorted eligible endpoints."""
+    executor = rotation_executor(safe)
+    assert executor._pick_next_mech([])[0] == expected
+    assert rotation_executor(safe)._pick_next_mech([])[0] == expected
+
+
+def test_ranked_start_stays_sticky() -> None:
+    """Use today's ranking for ranked start, then retain the selected Mech."""
+    executor = rotation_executor()
+    executor._b.params.fast_mech_start = "ranked"
+    assert executor._pick_next_mech([])[0] == "0x03"
+    executor._synced.ranked_mechs.reverse()
+    assert executor._pick_next_mech([])[0] == "0x03"
+
+
+@pytest.mark.parametrize("elapsed,threshold", [(89, 90), (90, 90), (100, 0)])
+def test_keep_fast_or_disabled_rotation(elapsed: int, threshold: int) -> None:
+    """Retain the current Mech at the limit and when rotation is disabled."""
+    executor = rotation_executor()
+    executor._b.params.fast_mech_rotate_latency_s = threshold
+    executor._b.context.shared_state["fast_mech_rotation"] = dict(
+        current_mech="0x02",
+        last_latency_s=elapsed,
+        last_answer_mech="0x02",
+        request_count=3,
+    )
+    assert executor._pick_next_mech([])[0] == "0x02"
+    lines = [
+        call.args[0] % call.args[1:]
+        for call in executor._b.context.logger.info.call_args_list
+    ]
+    assert f"[MECH_ROTATE] keep=0x02 latency_s={elapsed}" in lines
+
+
+def test_slow_answer_rotates_reproducibly_to_another_eligible_mech() -> None:
+    """A slow answer skips the current and penalized Mechs on the next request."""
+    choices = []
+    for _ in range(2):
+        executor = rotation_executor()
+        executor._b.shared_state.penalized_mechs = {"0x03": 100}
+        state = dict(
+            current_mech="0x02",
+            last_latency_s=91,
+            last_answer_mech="0x02",
+            request_count=3,
+        )
+        executor._b.context.shared_state["fast_mech_rotation"] = state
+        choices.append(executor._pick_next_mech([])[0])
+        assert choices[-1] == "0x01"
+        assert state["current_mech"] == "0x01"
+        assert state["last_latency_s"] == 91
+        lines = [
+            call.args[0] % call.args[1:]
+            for call in executor._b.context.logger.info.call_args_list
+        ]
+        assert (
+            "[MECH_ROTATE] from=0x02 to=0x01 reason=latency_s=91 threshold=90" in lines
+        )
+        assert executor._pick_next_mech([])[0] == "0x01"
+    assert choices[0] == choices[1]
+
+
+def test_all_penalized_uses_soonest_expiry() -> None:
+    """Keep making requests when all tool endpoints are penalized."""
+    executor = rotation_executor()
+    executor._b.shared_state.penalized_mechs = {
+        "0x03": 300,
+        "0x01": 100,
+        "0x02": 200,
+    }
+    assert executor._pick_next_mech([])[0] == "0x01"
+    assert "penal" in str(executor._b.context.logger.warning.call_args).lower()
+    assert executor._pick_next_mech(["0x01"])[0] == "0x02"
+
+
+def test_answer_state_survives_behaviour_replacement() -> None:
+    """Keep the last answer latency in local state across period behaviours."""
+    executor = rotation_executor()
+    ctx = executor._b.context
+    ctx.shared_state[latency.TIMINGS] = {
+        "uuid": dict(tool="forecast", market="-", sent_ts=100, mech="0x02")
+    }
+    response = latency.TraderMechResponseBehaviour(name="response", skill_context=ctx)
+    with patch.object(latency.time, "time", return_value=191):
+        response._log_answer(dict(nonce="uuid", result="answer"))
+    state = ctx.shared_state["fast_mech_rotation"]
+    assert state["current_mech"] == "0x02"
+    assert state["last_latency_s"] == 91
+    replacement = latency.TimedOffchainRequestExecutor(executor._b)
+    assert replacement._pick_next_mech([])[0] != "0x02"
+
+
+def test_rotation_seed_spreads_multiple_alternatives() -> None:
+    """Repeat each seeded choice and spread successive requests."""
+    choices = []
+    for count in range(8):
+        repeated = []
+        for _ in range(2):
+            executor = rotation_executor()
+            executor._b.context.shared_state["fast_mech_rotation"] = dict(
+                current_mech="0x03",
+                last_answer_mech="0x03",
+                last_latency_s=91,
+                request_count=count,
+            )
+            choice = executor._pick_next_mech([])[0]
+            assert choice in {"0x01", "0x02"}
+            repeated.append(choice)
+        assert repeated[0] == repeated[1]
+        choices.append(repeated[0])
+    assert set(choices) == {"0x01", "0x02"}
+
+
+def test_slow_single_mech_is_kept() -> None:
+    """Keep the sole endpoint when no different Mech is eligible."""
+    executor = rotation_executor()
+    executor._synced.ranked_mechs = executor._synced.ranked_mechs[:1]
+    executor._b.context.shared_state["fast_mech_rotation"] = dict(
+        current_mech="0x03", last_answer_mech="0x03", last_latency_s=91
+    )
+    assert executor._pick_next_mech([])[0] == "0x03"
+    executor._b.context.logger.info.assert_called_once_with(
+        "[MECH_ROTATE] keep=%s latency_s=%s", "0x03", 91
+    )
+
+
+def test_timeout_penalty_selects_another_endpoint() -> None:
+    """A poll penalty removes the current endpoint from the next choice."""
+    executor = rotation_executor()
+    executor._b.shared_state.penalized_mechs = {"0X03": 100}
+    executor._b.context.shared_state["fast_mech_rotation"] = dict(
+        current_mech="0x03", last_answer_mech="0x03", last_latency_s=22
+    )
+    assert executor._pick_next_mech([])[0] == "0x01"
+    executor._b.context.logger.info.assert_called_once_with(
+        "[MECH_ROTATE] from=%s to=%s reason=unavailable", "0x03", "0x01"
+    )
+
+
+def test_current_mech_address_is_case_insensitive() -> None:
+    """Retain an endpoint when an answer uses another address case."""
+    executor = rotation_executor()
+    executor._b.params.fast_mech_start = "ranked"
+    executor._b.context.shared_state["fast_mech_rotation"] = dict(
+        current_mech="0X02", last_answer_mech="0x02", last_latency_s=22
+    )
+    assert executor._pick_next_mech([])[0] == "0x02"
+    assert executor._b.context.shared_state["fast_mech_rotation"]["request_count"] == 1

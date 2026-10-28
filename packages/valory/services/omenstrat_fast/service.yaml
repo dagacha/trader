@@ -8,7 +8,7 @@ license: Apache-2.0
 fingerprint:
   README.md: bafybeic7e2ozu3raqi5i4f322z2nxwtvnsksqu6mncsyfafnzg36qcploy
 fingerprint_ignore_patterns: []
-agent: valory/omenstrat_fast:0.1.0:bafybeibc2tqnwxj2uym4g7p5gbcokwwlq6ffeqax7ejrhks37jhq3vim7e
+agent: valory/omenstrat_fast:0.1.0:bafybeic6bil7e453tjguhdpk7vp3i6jwohm5vxtskioh3a3dbiauxc4omq
 number_of_agents: 1
 deployment:
   agent:
@@ -148,6 +148,8 @@ models:
       use_mech_marketplace: ${USE_MECH_MARKETPLACE:bool:true}
       mech_marketplace_config: ${MECH_MARKETPLACE_CONFIG:dict:{"mech_marketplace_address":"0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB","priority_mech_address":"0x552cEA7Bc33CbBEb9f1D90c1D11D2C6daefFd053","priority_mech_staking_instance_address":"0x0000000000000000000000000000000000000000","priority_mech_service_id":975,"requester_staking_instance_address":"0x0000000000000000000000000000000000000000","use_dynamic_mech_selection":true,"response_timeout":300,"offchain_url":null,"auto_deposit_cap_per_cycle":5000000000000000000,"offchain_poll_interval_seconds":1.5,"offchain_poll_timeout_seconds":300.0,"offchain_failover_max_retries":0}}
       fast_dynamic_mech: ${FAST_DYNAMIC_MECH:bool:true}
+      fast_mech_start: ${FAST_MECH_START:str:hash}
+      fast_mech_rotate_latency_s: ${FAST_MECH_ROTATE_LATENCY_S:int:90}
       use_offchain: ${USE_OFFCHAIN:bool:true}
       offchain_deposit_target_calls: ${OFFCHAIN_DEPOSIT_TARGET_CALLS:int:10}
       service_endpoint: ${SERVICE_ENDPOINT:str:https://trader.autonolas.tech/}

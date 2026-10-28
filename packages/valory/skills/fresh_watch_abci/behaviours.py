@@ -276,11 +276,15 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour, CheckStopTradingBehaviour)
             penalized = {
                 address.lower() for address in self.shared_state.penalized_mechs
             }
-            mechs = [
+            endpoints = [
                 mech
                 for mech in mechs
-                if mech.http_url and mech.address.lower() not in penalized
+                if mech.http_url
+                and any(tool in cfg.tools for tool in mech.relevant_tools)
             ]
+            mechs = [
+                mech for mech in endpoints if mech.address.lower() not in penalized
+            ] or endpoints
         offered = {tool for mech in mechs for tool in mech.relevant_tools}
         tool = next((tool for tool in cfg.tools if tool in offered), None)
         if tool is None:

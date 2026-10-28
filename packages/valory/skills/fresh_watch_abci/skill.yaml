@@ -8,7 +8,7 @@ aea_version: '>=2.0.0, <3.0.0'
 fingerprint:
   README.md: bafybeieurwex74dtimmmndedzrhznyfivsuaf27lteomz4cz23upjtv2pq
   __init__.py: bafybeihyphnywie3dyf7f7mmwm7yvcwekkgsa4mq5273ojuzbjsznvorv4
-  behaviours.py: bafybeibhnmmvd275cyjrty5ztjjgulhn5f42jd2jtl3hu627n47vskjg4e
+  behaviours.py: bafybeiesjrysdgwywvnzfcddvhoygbux32h4xnngnanghalyhoxsdweaie
   dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
   fsm_specification.yaml: bafybeiffp3l4z3irl7ahhffn4ip6may7bsaym5irq52vm5dl7a2a7kbpti
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
@@ -16,7 +16,7 @@ fingerprint:
   rounds.py: bafybeihpvt4reookpnr4pqcjwrag7qlgtrkn4lxtl5oaa6m32ig5455qte
   strategy.py: bafybeigm7rhi4dprkxh55n74fjiibyj5qldp7l3sf4sio5t3bn7ecq5lvm
   tests/__init__.py: bafybeiebuokdlpgmmm6orggvfnnm537acc3eogkkrn6jyjaxzqyb7t7yzy
-  tests/test_behaviours.py: bafybeihcwyhlwnvxtmwosrautlqb5gcu5ytsiztzx5qf34wosnwjbl3lxu
+  tests/test_behaviours.py: bafybeiek4eer6kjgs52pyny5di3xyzqrk5a2x4dngxh6fdr7c3hlnpepyi
   tests/test_rounds.py: bafybeiethtm2rdws2ecocfiznx7mewmmxo4k6aro3nzteg6easjbu6hvqe
   tests/test_strategy.py: bafybeidg5u2gfkudquygzlit6svpqxspnfc2zvquo6j6kaugttohtdbw5q
 fingerprint_ignore_patterns: []
@@ -31,7 +31,7 @@ skills:
 - valory/abstract_round_abci:0.1.0:bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4
 - valory/market_manager_abci:0.1.0:bafybeicle4v4hbzfitrndz4iezmpzqft7q26eijmzpqpfs7o4ccv7pkfcu
 - valory/decision_maker_abci:0.1.0:bafybeibmczauoonpt5oxrbxhs6ybpmknwkmqpwc7vciv7atrrjclhc3tuy
-- valory/trader_abci:0.1.0:bafybeiela6srh63jtcrlgfmv47uzmtcyymz6gpoynlod7o6iqhc3p5udee
+- valory/trader_abci:0.1.0:bafybeibb7rxz3gavo2hz7oyh3szt3uaiabaffonc2yvq632tuxcdzyc4ge
 behaviours:
   main:
     args: {}
@@ -285,6 +285,8 @@ models:
         offchain_poll_timeout_seconds: 300.0
         offchain_failover_max_retries: 0
       fast_dynamic_mech: true
+      fast_mech_start: hash
+      fast_mech_rotate_latency_s: 90
       use_offchain: true
       offchain_deposit_target_calls: 10
       expected_mech_response_time: 300

@@ -20,6 +20,7 @@
 """Measure Mech answers in the shared trader request and response path."""
 
 import json
+import random
 import time
 from dataclasses import asdict
 from typing import Any, Dict, Generator, List, Optional, Tuple
@@ -98,14 +99,83 @@ class TimedOffchainRequestExecutor(OffchainRequestExecutor):
         """Keep the priority fallback out of fast dynamic selection."""
         if getattr(self._b.params, "fast_dynamic_mech", False) is not True:
             return super()._pick_next_mech(attempted)
-        excluded = {
-            address.lower()
-            for address in [*attempted, *self._b.shared_state.penalized_mechs]
+        attempted_lc = {address.lower() for address in attempted}
+        penalties = {
+            address.lower(): timestamp
+            for address, timestamp in self._b.shared_state.penalized_mechs.items()
         }
-        for mech in self._synced.ranked_mechs:
-            if mech.http_url and mech.address.lower() not in excluded:
-                return mech.address, mech.http_url
-        return None, None
+        candidates = [
+            mech
+            for mech in self._synced.ranked_mechs
+            if mech.http_url and mech.address.lower() not in attempted_lc
+        ]
+        eligible = [
+            mech for mech in candidates if mech.address.lower() not in penalties
+        ]
+        if not eligible:
+            if not candidates:
+                return None, None
+            eligible = [
+                min(
+                    candidates,
+                    key=lambda mech: penalties[mech.address.lower()],
+                )
+            ]
+            self._logger.warning(
+                "Fast Mech fallback=%s reason=all_penalized penalized_at=%s",
+                eligible[0].address,
+                penalties[eligible[0].address.lower()],
+            )
+        state = self._b.context.shared_state.setdefault("fast_mech_rotation", {})
+        current = (state.get("current_mech") or "").lower()
+        elapsed = state.get("last_latency_s")
+        threshold = self._b.params.fast_mech_rotate_latency_s
+        selected = next(
+            (mech for mech in eligible if mech.address.lower() == current),
+            None,
+        )
+        alternatives = [mech for mech in eligible if mech.address.lower() != current]
+        rotate = (
+            selected is not None
+            and elapsed is not None
+            and (state.get("last_answer_mech") or "").lower() == current
+            and threshold > 0
+            and elapsed > threshold
+            and alternatives
+        )
+        count = state.get("request_count", 0)
+        unavailable = bool(current) and selected is None
+        if rotate or unavailable:
+            selected = random.Random(  # nosec B311 - spread requests, not secrets
+                f"{self._synced.safe_contract_address.lower()}:{count}"
+            ).choice(sorted(alternatives, key=lambda mech: mech.address.lower()))
+            if unavailable:
+                self._logger.info(
+                    "[MECH_ROTATE] from=%s to=%s reason=unavailable",
+                    current,
+                    selected.address,
+                )
+            else:
+                self._logger.info(
+                    "[MECH_ROTATE] from=%s to=%s reason=latency_s=%s threshold=%s",
+                    current,
+                    selected.address,
+                    elapsed,
+                    threshold,
+                )
+        else:
+            if selected is None:
+                selected = eligible[0]
+                if self._b.params.fast_mech_start == "hash":
+                    ordered = sorted(eligible, key=lambda mech: mech.address.lower())
+                    selected = ordered[
+                        int(self._synced.safe_contract_address, 16) % len(ordered)
+                    ]
+            self._logger.info(
+                "[MECH_ROTATE] keep=%s latency_s=%s", selected.address, elapsed
+            )
+        state.update(current_mech=selected.address, request_count=count + 1)
+        return selected.address, selected.http_url
 
 
 class TraderMechRequestBehaviour(MechRequestBehaviour):
@@ -165,6 +235,13 @@ class TraderMechResponseBehaviour(MechResponseBehaviour):
             latency_s=now - timing["sent_ts"],
             mech=response.get("mech_address") or timing.get("mech") or "-",
         )
+        if getattr(self.params, "fast_dynamic_mech", False) is True:
+            state = self.context.shared_state.setdefault("fast_mech_rotation", {})
+            state.update(
+                current_mech=timing["mech"],
+                last_answer_mech=timing["mech"],
+                last_latency_s=timing["latency_s"],
+            )
         self.context.logger.info(
             "[MECH_LATENCY] tool=%s mech=%s offchain=%s sent_ts=%s answered_ts=%s latency_s=%.3f market=%s",
             timing["tool"],
