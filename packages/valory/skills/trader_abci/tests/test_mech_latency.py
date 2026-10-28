@@ -945,6 +945,66 @@ def test_failed_single_mech_is_kept_and_marker_cleared() -> None:
     assert "failed_mech" not in state
 
 
+@pytest.mark.parametrize("dynamic", [False, True])
+def test_missing_result_releases_fast_dynamic_mech(dynamic: bool) -> None:
+    """Mark the fast dynamic Mech as failed when the terminal poll has no result."""
+    executor = rotation_executor()
+    ctx = executor._b.context
+    ctx.params.fast_dynamic_mech = dynamic
+    ctx.params.use_offchain = True
+    ctx.shared_state[latency.TIMINGS] = {
+        "uuid": dict(tool="forecast", market="-", sent_ts=100, mech="0x02")
+    }
+    ctx.shared_state["fast_mech_rotation"] = dict(
+        current_mech="0x02",
+        last_answer_mech="0x03",
+        last_latency_s=22,
+        request_count=5,
+    )
+    response = latency.TraderMechResponseBehaviour(name="response", skill_context=ctx)
+    response._log_answer(dict(nonce="uuid", result=None, mech_address="0x02"))
+    state = ctx.shared_state["fast_mech_rotation"]
+    if dynamic:
+        assert state["failed_mech"] == "0x02"
+        assert executor._pick_next_mech([])[0] != "0x02"
+    else:
+        assert "failed_mech" not in state
+
+
+def test_missing_result_without_known_mech_keeps_state() -> None:
+    """Skip the release when the answer carries no Mech identity."""
+    executor = rotation_executor()
+    ctx = executor._b.context
+    ctx.shared_state[latency.TIMINGS] = {
+        "uuid": dict(tool="forecast", market="-", sent_ts=100)
+    }
+    ctx.shared_state["fast_mech_rotation"] = dict(
+        current_mech="0x02", last_answer_mech="0x03", last_latency_s=22
+    )
+    response = latency.TraderMechResponseBehaviour(name="response", skill_context=ctx)
+    response._log_answer(dict(nonce="uuid", result=None))
+    assert "failed_mech" not in ctx.shared_state["fast_mech_rotation"]
+
+
+def test_successful_pending_retry_clears_failure_marker(cycle_executor: Any) -> None:
+    """A succeeding pending retry on the previously failed Mech clears the marker."""
+    executor, reads = cycle_executor
+    slow_answer_then_rotate(executor)
+    accepted = run(executor.run())
+    assert accepted.offchain_result == Event.OFFCHAIN_DONE.value
+    pending_json = accepted.pending_request_json
+    executor._synced.offchain_pending_request = json.loads(pending_json)
+    reads["get_chain_id"] = None
+    assert run(executor.run()).offchain_result == Event.OFFCHAIN_ALL_FAILED.value
+    state = executor._b.context.shared_state["fast_mech_rotation"]
+    _, b = executor._synced.ranked_mechs
+    assert state.get("failed_mech") == b.address
+    reads["get_chain_id"] = 100
+    executor._synced.offchain_pending_request = json.loads(pending_json)
+    assert run(executor.run()).offchain_result == Event.OFFCHAIN_DONE.value
+    assert "failed_mech" not in state
+
+
 def test_deposit_in_progress_keeps_mech(cycle_executor: Any, monkeypatch: Any) -> None:
     """Keep the pending target through deposit settlement and retry."""
     executor, reads = cycle_executor

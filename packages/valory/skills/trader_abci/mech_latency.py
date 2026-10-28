@@ -73,11 +73,18 @@ class TimedOffchainRequestExecutor(OffchainRequestExecutor):
         if (
             getattr(self._b.params, "fast_dynamic_mech", False) is True
             and self._cycle_mech is not None
-            and result.offchain_result
-            not in (Event.OFFCHAIN_DONE.value, Event.OFFCHAIN_DEPOSIT_NEEDED.value)
         ):
             state = self._b.context.shared_state.setdefault("fast_mech_rotation", {})
-            state["failed_mech"] = self._cycle_mech
+            if result.offchain_result not in (
+                Event.OFFCHAIN_DONE.value,
+                Event.OFFCHAIN_DEPOSIT_NEEDED.value,
+            ):
+                state["failed_mech"] = self._cycle_mech
+            elif (
+                result.offchain_result == Event.OFFCHAIN_DONE.value
+                and (state.get("failed_mech") or "").lower() == self._cycle_mech.lower()
+            ):
+                state.pop("failed_mech", None)
         return result
 
     def _retry_pending(
@@ -272,9 +279,11 @@ class TraderMechResponseBehaviour(MechResponseBehaviour):
         if (
             not timing
             or timing.get("answered_ts") is not None
-            or response.get("result") is None
             or timing["sent_ts"] is None
         ):
+            return
+        if response.get("result") is None:
+            self._release_on_missing_result(response, timing)
             return
         now = time.time()
         timing.update(
@@ -302,6 +311,18 @@ class TraderMechResponseBehaviour(MechResponseBehaviour):
             timing["latency_s"],
             timing["market"],
         )
+
+    def _release_on_missing_result(
+        self, response: Dict[str, Any], timing: Dict[str, Any]
+    ) -> None:
+        """Release the current fast target when a terminal poll has no result."""
+        if getattr(self.params, "fast_dynamic_mech", False) is not True:
+            return
+        mech = response.get("mech_address") or timing.get("mech") or ""
+        if not mech or mech == "-":
+            return
+        state = self.context.shared_state.setdefault("fast_mech_rotation", {})
+        state["failed_mech"] = mech
 
     def _get_response(self) -> Generator[None, None, bool]:
         """Log on-chain answers as soon as the result is read."""
