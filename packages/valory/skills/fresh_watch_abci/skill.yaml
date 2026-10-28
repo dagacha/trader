@@ -8,7 +8,7 @@ aea_version: '>=2.0.0, <3.0.0'
 fingerprint:
   README.md: bafybeieurwex74dtimmmndedzrhznyfivsuaf27lteomz4cz23upjtv2pq
   __init__.py: bafybeihyphnywie3dyf7f7mmwm7yvcwekkgsa4mq5273ojuzbjsznvorv4
-  behaviours.py: bafybeiesjrysdgwywvnzfcddvhoygbux32h4xnngnanghalyhoxsdweaie
+  behaviours.py: bafybeid6iph6kwqd3rues7d5xdumtmehoqbkkpvowe2pdksspnnwjf4t44
   dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
   fsm_specification.yaml: bafybeiffp3l4z3irl7ahhffn4ip6may7bsaym5irq52vm5dl7a2a7kbpti
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
@@ -16,14 +16,16 @@ fingerprint:
   rounds.py: bafybeihpvt4reookpnr4pqcjwrag7qlgtrkn4lxtl5oaa6m32ig5455qte
   strategy.py: bafybeigm7rhi4dprkxh55n74fjiibyj5qldp7l3sf4sio5t3bn7ecq5lvm
   tests/__init__.py: bafybeiebuokdlpgmmm6orggvfnnm537acc3eogkkrn6jyjaxzqyb7t7yzy
-  tests/test_behaviours.py: bafybeiek4eer6kjgs52pyny5di3xyzqrk5a2x4dngxh6fdr7c3hlnpepyi
+  tests/test_behaviours.py: bafybeie26htwmyigaw4pbgnk2hcllht7wfktw2fz4wzspnfrzisxodv7ku
   tests/test_rounds.py: bafybeiethtm2rdws2ecocfiznx7mewmmxo4k6aro3nzteg6easjbu6hvqe
   tests/test_strategy.py: bafybeidg5u2gfkudquygzlit6svpqxspnfc2zvquo6j6kaugttohtdbw5q
 fingerprint_ignore_patterns: []
 connections: []
-contracts: []
+contracts:
+- valory/gnosis_safe:0.1.0:bafybeiek7zs3r5c4wspwwuvnhunc2ddvccbsuy3xccedbjffju5eywp3ju
 protocols:
 - valory/contract_api:1.0.0:bafybeibld2xb5m7kyluiptkamp4nrt6oeomkohz7a3yppbv2oo7qw2e4la
+- valory/ledger_api:1.0.0:bafybeiecq56phjfws36rgrefw6niyo4ezesloodsfis647mpm5ygqo4ysi
 skills:
 - valory/staking_abci:0.1.0:bafybeihjsvg6qmpcvca24hlj34ppdgnhx6wnbi56ddcnnfdj2p7bg66mii
 - valory/check_stop_trading_abci:0.1.0:bafybeidwkfafnhkew4ylhqwg5pv3y2sakgkl6d6d2q7hjmfrag4xe6pfxq
@@ -698,6 +700,8 @@ models:
     args: {}
     class_name: SrrDialogues
 dependencies:
+  eth-abi:
+    version: ==5.2.0
   eth-account:
     version: <0.14.0,>=0.13.0
   web3:

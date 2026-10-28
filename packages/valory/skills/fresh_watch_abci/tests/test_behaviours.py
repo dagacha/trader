@@ -64,6 +64,7 @@ def make(cls: Any, tmp_path: Any) -> Any:
     context.state.fast_last_poll = 0
     context.benchmarking_mode.enabled = False
     context.params.max_trades = 3
+    context.params.placement_min_edge = 0.03
     context.state.synchronized_data.successful_trade_count = 0
     context.state.synchronized_data.previous_checkpoint = None
     context.state.synchronized_data.mech_only_mode = False
@@ -615,7 +616,10 @@ def test_execution_quote(
     ):
         sd.return_value.bet_amount = 50
         sd.return_value.vote = 0
-        sd.return_value.db.get_strict.return_value = [0.5, 0.5]
+        sd.return_value.db.get_strict.side_effect = lambda key: {
+            "request_prices": [0.5, 0.5],
+            "fast_decision": json.dumps({"p_hat": 0.9}),
+        }[key]
         assert run(b._calc_buy_amount()) is allowed
 
 
@@ -1231,6 +1235,8 @@ def test_placement_quote_retry(tmp_path: Any) -> None:
     result = json.loads(b.context.logger.info.call_args.args[1])
     assert result["reason"] == "quote"
     assert result["executed_price"] is None
+    assert result["price_ceiling"] is None
+    assert result["min_tokens_out"] is None
 
 
 @pytest.mark.parametrize("lane", ["wait", "market", "housekeeping"])
@@ -1367,7 +1373,10 @@ def test_decided_amount_passes_placement(
             return_value=SimpleNamespace(id="market", creationTimestamp=1000),
         ),
     ):
-        assert run(b._calc_buy_amount())
+        allowed = run(b._calc_buy_amount())
+        assert allowed is bool(margin)
+        if not margin:
+            assert b._placement_failure == "edge_recheck"
         assert synced.bet_amount / b.quoted_tokens == decision.price
         assert (
             b.get_contract_api_response.call_args.kwargs["contract_callable"]
@@ -1484,6 +1493,8 @@ def test_placement_reused_before_quote(tmp_path: Any, benchmarking: bool) -> Non
     b = make(FastBetPlacementBehaviour, tmp_path)
     b._placement_failure = "max_slip"
     b._executed_price = 0.8
+    b._price_ceiling = 0.85
+    b._min_tokens_out = 100
     b.context.benchmarking_mode.enabled = benchmarking
     payload = BetPlacementPayload("agent", None, None, benchmarking)
 
@@ -1515,6 +1526,8 @@ def test_placement_reused_before_quote(tmp_path: Any, benchmarking: bool) -> Non
     assert logged["reason"] == ("benchmarking" if benchmarking else "balance")
     assert logged["prepared"] is (None if benchmarking else False)
     assert logged["executed_price"] is None
+    assert logged["price_ceiling"] is None
+    assert logged["min_tokens_out"] is None
     assert logged["price"] is None
     assert logged["edge"] is None
 
@@ -1550,3 +1563,238 @@ def test_all_penalized_tools_do_not_idle(tmp_path: Any) -> None:
         call.args[0] == "Neither fast prediction tool is available."
         for call in b.context.logger.warning.call_args_list
     )
+
+
+@pytest.mark.parametrize(
+    "max_price,max_slip,p_side,min_edge,ceiling,min_out",
+    [
+        (0.6, 0.3, 0.9, 0.03, 0.6, 84),
+        (0.9, 0.1, 0.9, 0.03, 0.6, 84),
+        (0.9, 0.3, 0.7, 0.1, 0.6, 84),
+        (0.9, 0.3, 0.60001, 0.1, 0.50001, 100),
+    ],
+)
+def test_ceiling_min_out(
+    tmp_path: Any,
+    max_price: float,
+    max_slip: float,
+    p_side: float,
+    min_edge: float,
+    ceiling: float,
+    min_out: int,
+) -> None:
+    """Use each price bound, round up in wei, and retain the quoted-token cap."""
+    from dataclasses import replace
+
+    b = make(FastBetPlacementBehaviour, tmp_path)
+    b.context.params.fast = replace(
+        FastConfig(), max_price=max_price, max_slip=max_slip
+    )
+    b.context.params.placement_min_edge = min_edge
+    b.quoted_tokens = 100
+    with patch.object(
+        type(b), "investment_amount", new_callable=PropertyMock, return_value=50
+    ):
+        result = b._ceiling_min_out(p_side, 0.5)
+    assert result == (ceiling, min_out)
+    assert min_out <= b.quoted_tokens
+
+
+@pytest.mark.parametrize("p_side", [0.52, 0.53])
+def test_ceiling_min_out_rejects_quote(tmp_path: Any, p_side: float) -> None:
+    """Refuse a ceiling at or below the current quoted price."""
+    b = make(FastBetPlacementBehaviour, tmp_path)
+    b.context.params.placement_min_edge = 0.03
+    b.quoted_tokens = 100
+    with patch.object(
+        type(b), "investment_amount", new_callable=PropertyMock, return_value=50
+    ):
+        assert b._ceiling_min_out(p_side, 0.5) is None
+
+
+@pytest.mark.parametrize("side", [0, 1])
+def test_ceiling_replaces_quote_slippage(tmp_path: Any, side: int) -> None:
+    """Use calibrated side probability and the enforced placement edge."""
+    from packages.valory.skills.decision_maker_abci.behaviours.bet_placement import (
+        BetPlacementBehaviour,
+    )
+
+    b = make(FastBetPlacementBehaviour, tmp_path)
+    b.context.params.placement_min_edge = 0.03
+    b.quoted_tokens = 100
+    b.buy_amount = 97
+    with (
+        patch.object(
+            BetPlacementBehaviour, "_calc_buy_amount", return_value=done(True)
+        ),
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+    ):
+        sd.return_value.bet_amount = 50
+        sd.return_value.vote = side
+        sd.return_value.db.get_strict.side_effect = lambda key: {
+            "request_prices": [0.5, 0.5],
+            "fast_decision": json.dumps({"p_hat": 0.6 if side == 0 else 0.4}),
+        }[key]
+        assert run(b._calc_buy_amount())
+    assert b.buy_amount == 88
+    assert b._price_ceiling == 0.57
+
+
+@pytest.mark.parametrize(
+    "result,error,allowed",
+    [
+        (123456, None, True),
+        (0, None, False),
+        (None, "execution reverted: GS013", False),
+        (None, "VM execution error: GS013", False),
+        (None, None, True),
+        (None, "RPC connection timed out", True),
+    ],
+)
+def test_preflight_safe_call(
+    tmp_path: Any, result: Any, error: Any, allowed: bool
+) -> None:
+    """Simulate the exact Safe call with this agent's approved owner signature."""
+    from eth_abi import decode
+
+    from packages.valory.protocols.ledger_api import LedgerApiMessage
+
+    b = make(FastBetPlacementBehaviour, tmp_path)
+    owner = "0x" + "11" * 20
+    safe = "0x" + "22" * 20
+    target = "0x" + "33" * 20
+    b.context.agent_address = owner
+    b.context.params.multisend_address = target
+    b.context.params.mech_chain_id = "gnosis"
+    b.multisend_data = b"batch"
+    from aea_ledger_ethereum import EthereumApi
+
+    ledger = object.__new__(EthereumApi)
+    ledger._api = MagicMock()
+    if error:
+        ledger.api.eth.estimate_gas.side_effect = ValueError(error)
+    else:
+        ledger.api.eth.estimate_gas.return_value = result
+
+    def estimate(**kwargs: Any) -> Any:
+        if result is None and error is None:
+            from packages.valory.skills.abstract_round_abci.behaviour_utils import (
+                TimeoutException,
+            )
+
+            raise TimeoutException()
+        try:
+            body = ledger.get_state(
+                kwargs["ledger_callable"],
+                transaction=kwargs["transaction"],
+                raise_on_try=True,
+            )
+        except ValueError as exc:
+            response = LedgerApiMessage(
+                performative=LedgerApiMessage.Performative.ERROR,  # type: ignore[arg-type]
+                code=500,
+                message=str(exc),
+                data=b"",
+            )
+        else:
+            response = LedgerApiMessage(
+                performative=LedgerApiMessage.Performative.STATE,  # type: ignore[arg-type]
+                ledger_id="ethereum",
+                state=LedgerApiMessage.State("ethereum", body),
+            )
+        return done(response)
+
+    b.get_ledger_api_response = MagicMock(side_effect=estimate)
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch.object(type(b), "txs_value", new_callable=PropertyMock, return_value=7),
+    ):
+        sd.return_value.safe_contract_address = safe
+        assert run(b._preflight_ok()) is allowed
+    kwargs = b.get_ledger_api_response.call_args.kwargs
+    assert kwargs["ledger_callable"] == "estimate_gas"
+    assert kwargs["chain_id"] == "gnosis"
+    transaction = kwargs["transaction"]
+    assert transaction["from"] == owner
+    assert transaction["to"] == safe
+    data = bytes.fromhex(transaction["data"][2:])
+    assert data[:4].hex() == "6a761202"
+    values = decode(
+        [
+            "address",
+            "uint256",
+            "bytes",
+            "uint8",
+            "uint256",
+            "uint256",
+            "uint256",
+            "address",
+            "address",
+            "bytes",
+        ],
+        data[4:],
+    )
+    assert values[:5] == (target, 7, b"batch", 1, 0)
+    assert values[5:9] == (0, 0, "0x" + "00" * 20, "0x" + "00" * 20)
+    assert values[9] == bytes.fromhex(owner[2:]).rjust(32, b"\0") + bytes(32) + b"\1"
+    assert b.context.logger.warning.call_count == int(allowed and result is None)
+
+
+@pytest.mark.parametrize(
+    "prepared,allowed", [(False, True), (True, False), (True, True)]
+)
+def test_preflight_gates_prepared_tx(
+    tmp_path: Any, prepared: bool, allowed: bool
+) -> None:
+    """Return no transaction after a failed preflight and record the failure."""
+    from packages.valory.skills.decision_maker_abci.behaviours.bet_placement import (
+        BetPlacementBehaviour,
+    )
+    from packages.valory.skills.decision_maker_abci.payloads import BetPlacementPayload
+
+    b = make(FastBetPlacementBehaviour, tmp_path)
+    b._preflight_ok = MagicMock(side_effect=lambda: done(allowed))
+    with patch.object(
+        BetPlacementBehaviour,
+        "_prepare_safe_tx",
+        side_effect=lambda: done("tx" if prepared else None),
+    ):
+        assert run(b._prepare_safe_tx()) == ("tx" if prepared and allowed else None)
+    assert b._preflight_ok.call_count == int(prepared)
+    if prepared and not allowed:
+        assert b._placement_failure == "preflight_revert"
+        b._price_ceiling = 0.57
+        b._min_tokens_out = 88
+        with (
+            patch.object(
+                BetPlacementBehaviour, "finish_behaviour", return_value=done(None)
+            ),
+            patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+            patch.object(type(b), "sampled_bet", new_callable=PropertyMock) as sampled,
+        ):
+            sampled.return_value.creationTimestamp = 1000
+            sd.return_value.vote = 0
+            sd.return_value.db.get_strict.side_effect = lambda key: {
+                "request_prices": [0.5, 0.5],
+                "fast_decision": json.dumps({"p_hat": 0.6}),
+            }[key]
+            run(b.finish_behaviour(BetPlacementPayload("agent", "placement", None)))
+        b.context.logger.info.assert_called_once()
+        logged = json.loads(b.context.logger.info.call_args.args[1])
+        assert logged["reason"] == "preflight_revert"
+        assert logged["prepared"] is False
+        assert logged["price_ceiling"] == 0.57
+        assert logged["min_tokens_out"] == 88
+
+
+def test_ceiling_min_out_wei_precision(tmp_path: Any) -> None:
+    """Round a fractional wei upward without a float conversion."""
+    from dataclasses import replace
+
+    b = make(FastBetPlacementBehaviour, tmp_path)
+    b.context.params.fast = replace(FastConfig(), max_price=0.6, max_slip=0.3)
+    b.quoted_tokens = 2 * 10**18
+    with patch.object(
+        type(b), "investment_amount", new_callable=PropertyMock, return_value=10**18
+    ):
+        assert b._ceiling_min_out(0.9, 0.5) == (0.6, 1666666666666666667)
