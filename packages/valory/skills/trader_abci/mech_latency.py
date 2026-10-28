@@ -235,7 +235,10 @@ class TraderMechResponseBehaviour(MechResponseBehaviour):
             latency_s=now - timing["sent_ts"],
             mech=response.get("mech_address") or timing.get("mech") or "-",
         )
-        if getattr(self.params, "fast_dynamic_mech", False) is True:
+        if (
+            getattr(self.params, "fast_dynamic_mech", False) is True
+            and timing["mech"] != "-"
+        ):
             state = self.context.shared_state.setdefault("fast_mech_rotation", {})
             state.update(
                 current_mech=timing["mech"],

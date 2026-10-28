@@ -510,7 +510,9 @@ def test_all_penalized_uses_soonest_expiry() -> None:
         "0x02": 200,
     }
     assert executor._pick_next_mech([])[0] == "0x01"
-    assert "penal" in str(executor._b.context.logger.warning.call_args).lower()
+    executor._b.context.logger.warning.assert_called_once_with(
+        "Fast Mech fallback=%s reason=all_penalized penalized_at=%s", "0x01", 100
+    )
     assert executor._pick_next_mech(["0x01"])[0] == "0x02"
 
 
@@ -529,6 +531,44 @@ def test_answer_state_survives_behaviour_replacement() -> None:
     assert state["last_latency_s"] == 91
     replacement = latency.TimedOffchainRequestExecutor(executor._b)
     assert replacement._pick_next_mech([])[0] != "0x02"
+
+
+@pytest.mark.parametrize(
+    "rotation_state",
+    [
+        None,
+        dict(
+            current_mech="0x02",
+            last_answer_mech="0x02",
+            last_latency_s=22,
+            request_count=3,
+        ),
+    ],
+)
+def test_unknown_answer_mech_keeps_rotation_state(rotation_state: Any) -> None:
+    """Log unknown Mechs without changing the rotation state."""
+    executor = rotation_executor()
+    ctx = executor._b.context
+    ctx.params.use_offchain = True
+    ctx.shared_state[latency.TIMINGS] = {
+        "uuid": dict(tool="forecast", market="-", sent_ts=100)
+    }
+    if rotation_state is not None:
+        ctx.shared_state["fast_mech_rotation"] = rotation_state.copy()
+    response = latency.TraderMechResponseBehaviour(name="response", skill_context=ctx)
+    with patch.object(latency.time, "time", return_value=191):
+        response._log_answer(dict(nonce="uuid", result="answer"))
+    assert ctx.shared_state.get("fast_mech_rotation") == rotation_state
+    ctx.logger.info.assert_called_once_with(
+        "[MECH_LATENCY] tool=%s mech=%s offchain=%s sent_ts=%s answered_ts=%s latency_s=%.3f market=%s",
+        "forecast",
+        "-",
+        "true",
+        100,
+        191,
+        91,
+        "-",
+    )
 
 
 def test_rotation_seed_spreads_multiple_alternatives() -> None:
@@ -572,7 +612,11 @@ def test_timeout_penalty_selects_another_endpoint() -> None:
     executor._b.context.shared_state["fast_mech_rotation"] = dict(
         current_mech="0x03", last_answer_mech="0x03", last_latency_s=22
     )
-    assert executor._pick_next_mech([])[0] == "0x01"
+    selected = executor._pick_next_mech([])[0]
+    assert selected == "0x01"
+    assert selected.lower() not in {
+        address.lower() for address in executor._b.shared_state.penalized_mechs
+    }
     executor._b.context.logger.info.assert_called_once_with(
         "[MECH_ROTATE] from=%s to=%s reason=unavailable", "0x03", "0x01"
     )
