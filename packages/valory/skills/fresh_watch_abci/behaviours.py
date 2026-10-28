@@ -23,15 +23,22 @@ import json
 import time
 from dataclasses import asdict
 from fractions import Fraction
-from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Generator, List, Optional, Tuple, cast
 
 from eth_abi import encode
+from eth_utils import to_checksum_address  # type: ignore[import-not-found]
 
 from packages.valory.contracts.gnosis_safe.contract import SafeOperation
 from packages.valory.protocols.contract_api.message import ContractApiMessage
 from packages.valory.protocols.ledger_api import LedgerApiMessage
+from packages.valory.skills.abstract_round_abci.base import LEDGER_API_ADDRESS
 from packages.valory.skills.abstract_round_abci.behaviour_utils import TimeoutException
 from packages.valory.skills.abstract_round_abci.behaviours import AbstractRoundBehaviour
+from packages.valory.skills.abstract_round_abci.dialogues import (
+    LedgerApiDialogue,
+    LedgerApiDialogues,
+)
+from packages.valory.skills.abstract_round_abci.models import Requests
 from packages.valory.skills.agent_performance_summary_abci.activity_goal import (
     read_successful_trade_count_state,
 )
@@ -85,6 +92,11 @@ from packages.valory.skills.staking_abci.rounds import StakingState
 _FIELDS = """id title collateralToken condition { id } creator fee creationTimestamp
 openingTimestamp outcomeSlotCount outcomeTokenAmounts outcomeTokenMarginalPrices
 outcomes scaledLiquidityMeasure"""
+
+# Bounded response deadline for the fast-lane preflight estimate_gas call.
+# Short enough to leave headroom under the placement-round timeout; long
+# enough to cover one healthy RPC round-trip across the configured endpoints.
+_PREFLIGHT_TIMEOUT_S = 5.0
 
 
 def log_decision(behaviour: DecisionMakerBaseBehaviour, result: Dict[str, Any]) -> None:
@@ -646,23 +658,21 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
                 signature,
             ],
         )
+        # Web3 rejects a lowercase address with hex letters before issuing the
+        # estimate; checksum here so a valid Safe address never bypasses the check.
+        safe_address = to_checksum_address(self.synchronized_data.safe_contract_address)
+        transaction = {
+            "from": owner,
+            "to": safe_address,
+            "data": "0x" + data.hex(),
+        }
         # With safeTxGas and gasPrice zero, Safe turns a false execution into GS013.
-        try:
-            response = yield from self.get_ledger_api_response(
-                performative=LedgerApiMessage.Performative.GET_STATE,  # type: ignore[arg-type]
-                ledger_callable="estimate_gas",
-                transaction={
-                    "from": owner,
-                    "to": self.synchronized_data.safe_contract_address,
-                    "data": "0x" + data.hex(),
-                },
-                chain_id=self.params.mech_chain_id,
-            )
-        except TimeoutException:
-            error = "request timed out"
+        response = yield from self._estimate_gas(transaction, self.params.mech_chain_id)
+        if response is None:
+            error = "preflight deadline expired"
+        elif response.performative == LedgerApiMessage.Performative.STATE:
+            return bool(response.state.body.get("estimate_gas_result"))
         else:
-            if response.performative == LedgerApiMessage.Performative.STATE:
-                return bool(response.state.body.get("estimate_gas_result"))
             error = response.message or "unknown ledger error"
         if "revert" in error.lower() or "GS013" in error:
             return False
@@ -670,6 +680,40 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
             "Fast bet preflight RPC error; proceeding: %s", error
         )
         return True
+
+    def _estimate_gas(
+        self, transaction: Dict[str, Any], chain_id: str
+    ) -> Generator[None, None, Optional[LedgerApiMessage]]:
+        """Issue estimate_gas and bound the wait for the ledger reply.
+
+        :param transaction: estimate target with from, to and data fields.
+        :param chain_id: ledger chain id.
+        :yield: ledger API I/O.
+        :return: the ledger response, or None once the preflight deadline expires.
+        """
+        dialogues = cast(LedgerApiDialogues, self.context.ledger_api_dialogues)
+        message, dialogue = dialogues.create(
+            counterparty=LEDGER_API_ADDRESS,
+            performative=LedgerApiMessage.Performative.GET_STATE,  # type: ignore[arg-type]
+            ledger_id=self.context.default_ledger_id,
+            callable="estimate_gas",
+            kwargs=LedgerApiMessage.Kwargs(
+                {"transaction": transaction, "chain_id": chain_id}
+            ),
+            args=tuple(),
+        )
+        dialogue = cast(LedgerApiDialogue, dialogue)
+        dialogue.terms = self._get_default_terms()
+        nonce = self._get_request_nonce_from_dialogue(dialogue)
+        cast(Requests, self.context.requests).request_id_to_callback[
+            nonce
+        ] = self.get_callback_request()
+        self.context.outbox.put_message(message=message)
+        try:
+            response = yield from self.wait_for_message(timeout=_PREFLIGHT_TIMEOUT_S)
+        except TimeoutException:
+            return None
+        return response
 
     def _prepare_safe_tx(self) -> Generator[None, None, Optional[str]]:
         """Skip a prepared fast bet if the Safe execution would revert.

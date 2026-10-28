@@ -1676,17 +1676,15 @@ def test_preflight_safe_call(
     else:
         ledger.api.eth.estimate_gas.return_value = result
 
-    def estimate(**kwargs: Any) -> Any:
+    def estimate(transaction: Any, chain_id: str) -> Any:
         if result is None and error is None:
-            from packages.valory.skills.abstract_round_abci.behaviour_utils import (
-                TimeoutException,
-            )
-
-            raise TimeoutException()
+            # The bounded wait expired without a reply, so the helper
+            # swallows TimeoutException and returns None to the caller.
+            return done(None)
         try:
             body = ledger.get_state(
-                kwargs["ledger_callable"],
-                transaction=kwargs["transaction"],
+                "estimate_gas",
+                transaction=transaction,
                 raise_on_try=True,
             )
         except ValueError as exc:
@@ -1704,17 +1702,17 @@ def test_preflight_safe_call(
             )
         return done(response)
 
-    b.get_ledger_api_response = MagicMock(side_effect=estimate)
+    b._estimate_gas = MagicMock(side_effect=estimate)
     with (
         patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
         patch.object(type(b), "txs_value", new_callable=PropertyMock, return_value=7),
     ):
         sd.return_value.safe_contract_address = safe
         assert run(b._preflight_ok()) is allowed
-    kwargs = b.get_ledger_api_response.call_args.kwargs
-    assert kwargs["ledger_callable"] == "estimate_gas"
-    assert kwargs["chain_id"] == "gnosis"
-    transaction = kwargs["transaction"]
+    call = b._estimate_gas.call_args
+    transaction = call.args[0] if call.args else call.kwargs["transaction"]
+    chain_id = call.args[1] if len(call.args) > 1 else call.kwargs["chain_id"]
+    assert chain_id == "gnosis"
     assert transaction["from"] == owner
     assert transaction["to"] == safe
     data = bytes.fromhex(transaction["data"][2:])
@@ -1738,6 +1736,98 @@ def test_preflight_safe_call(
     assert values[5:9] == (0, 0, "0x" + "00" * 20, "0x" + "00" * 20)
     assert values[9] == bytes.fromhex(owner[2:]).rjust(32, b"\0") + bytes(32) + b"\1"
     assert b.context.logger.warning.call_count == int(allowed and result is None)
+
+
+def test_preflight_checksums_lowercase_safe_address(tmp_path: Any) -> None:
+    """Normalise a lowercase Safe address with hex letters before estimating."""
+    from eth_utils import to_checksum_address  # type: ignore[import-not-found]
+
+    from packages.valory.protocols.ledger_api import LedgerApiMessage
+
+    b = make(FastBetPlacementBehaviour, tmp_path)
+    owner = to_checksum_address("0x" + "ab" * 20)
+    # A valid lowercase Safe address with hex letters: Web3 rejects it before
+    # sending estimate_gas, so the preflight must checksum it first.
+    lowercase_safe = "0x" + "ab" * 20
+    checksum_safe = to_checksum_address(lowercase_safe)
+    assert lowercase_safe != checksum_safe
+    b.context.agent_address = owner
+    b.context.params.multisend_address = "0x" + "33" * 20
+    b.context.params.mech_chain_id = "gnosis"
+    b.multisend_data = b"batch"
+    captured: Any = {}
+
+    def estimate(transaction: Any, chain_id: str) -> Any:
+        captured["tx"] = transaction
+        return done(
+            LedgerApiMessage(
+                performative=LedgerApiMessage.Performative.STATE,  # type: ignore[arg-type]
+                ledger_id="ethereum",
+                state=LedgerApiMessage.State(
+                    "ethereum", {"estimate_gas_result": 42000}
+                ),
+            )
+        )
+
+    b._estimate_gas = MagicMock(side_effect=estimate)
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch.object(type(b), "txs_value", new_callable=PropertyMock, return_value=0),
+    ):
+        sd.return_value.safe_contract_address = lowercase_safe
+        assert run(b._preflight_ok()) is True
+    assert captured["tx"]["to"] == checksum_safe
+    assert captured["tx"]["to"] != lowercase_safe
+
+
+def test_estimate_gas_bounded_wait_returns_none_on_deadline(tmp_path: Any) -> None:
+    """Return None when the bounded response wait expires with no reply."""
+    import time as pytime
+
+    from packages.valory.skills.fresh_watch_abci import behaviours as fw_behaviours
+
+    b = make(FastBetPlacementBehaviour, tmp_path)
+    b.context.agent_address = "0x" + "ab" * 20
+    b.context.default_ledger_id = "ethereum"
+    dialogue = MagicMock()
+    dialogue.dialogue_label.dialogue_reference = ("nonce", "")
+    b.context.ledger_api_dialogues.create.return_value = (MagicMock(), dialogue)
+    b.context.requests.request_id_to_callback = {}
+    with patch.object(fw_behaviours, "_PREFLIGHT_TIMEOUT_S", 0.01):
+        gen = b._estimate_gas({"from": "0x0", "to": "0x0", "data": "0x"}, "gnosis")
+        # Advance to the first yield inside the real wait_for_message helper.
+        next(gen)
+        # Let the real wall clock move past the bounded deadline.
+        pytime.sleep(0.05)
+        # The next resume checks datetime.now() against the deadline, raises
+        # TimeoutException inside wait_for_message, and _estimate_gas returns None.
+        with pytest.raises(StopIteration) as exc_info:
+            gen.send(None)
+    assert exc_info.value.value is None
+    b.context.outbox.put_message.assert_called_once()
+
+
+def test_estimate_gas_returns_ledger_response(tmp_path: Any) -> None:
+    """Return the ledger reply when it arrives before the preflight deadline."""
+    from packages.valory.protocols.ledger_api import LedgerApiMessage
+
+    b = make(FastBetPlacementBehaviour, tmp_path)
+    b.context.agent_address = "0x" + "ab" * 20
+    b.context.default_ledger_id = "ethereum"
+    dialogue = MagicMock()
+    dialogue.dialogue_label.dialogue_reference = ("nonce", "")
+    b.context.ledger_api_dialogues.create.return_value = (MagicMock(), dialogue)
+    b.context.requests.request_id_to_callback = {}
+    reply = LedgerApiMessage(
+        performative=LedgerApiMessage.Performative.STATE,  # type: ignore[arg-type]
+        ledger_id="ethereum",
+        state=LedgerApiMessage.State("ethereum", {"estimate_gas_result": 21000}),
+    )
+    gen = b._estimate_gas({"from": "0x0", "to": "0x0", "data": "0x"}, "gnosis")
+    next(gen)
+    with pytest.raises(StopIteration) as exc_info:
+        gen.send(reply)
+    assert exc_info.value.value is reply
 
 
 @pytest.mark.parametrize(
