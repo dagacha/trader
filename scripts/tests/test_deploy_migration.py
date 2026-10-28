@@ -2073,6 +2073,48 @@ def test_fast_defaults_sync_all_copies(tmp_path, cap):
     )
 
 
+@pytest.mark.parametrize(
+    "key,default,operator",
+    [
+        ("FAST_MECH_START", "hash", "ranked"),
+        ("FAST_MECH_ROTATE_LATENCY_S", "90", "0"),
+    ],
+)
+@pytest.mark.parametrize("existing", [False, True])
+def test_fast_mech_defaults_and_rollback(tmp_path, key, default, operator, existing):
+    """Add missing mech controls, keep operator values, and track rollback."""
+    paths = fixture(tmp_path)
+    if existing:
+        source = json.loads(paths[0].read_text())
+        source["env_variables"][key] = entry(operator)
+        paths[0].write_text(json.dumps(source))
+    saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
+    saved.write_text(json.dumps({"user_provided_args": {}}))
+    agent = paths[1].parent / "agent_0.env"
+    agent.write_text("KEEP=yes\n")
+    marker = tmp_path / "configs/.fast_defaults_added.json"
+
+    run(tmp_path, "--service", "omenstrat_fast")
+
+    expected = operator if existing else default
+    for path in paths:
+        assert json.loads(path.read_text())["env_variables"][key]["value"] == expected
+    assert json.loads(saved.read_text())["user_provided_args"][key] == expected
+    assert f"{key}={expected}\n" in agent.read_text()
+    assert (key in json.loads(marker.read_text())["added"]) is (not existing)
+
+    run(tmp_path, "--service", "trader_pearl")
+
+    for path in paths:
+        actual = json.loads(path.read_text())["env_variables"]
+        assert (key in actual) is existing
+        if existing:
+            assert actual[key]["value"] == operator
+    assert (key in json.loads(saved.read_text())["user_provided_args"]) is existing
+    assert (f"{key}=" in agent.read_text()) is existing
+    assert key not in json.loads(marker.read_text())["added"]
+
+
 @pytest.mark.parametrize("service", ["omenstrat_fast", "trader_pearl"])
 @pytest.mark.parametrize("dry_run", [False, True])
 @pytest.mark.parametrize("released", [False, True])

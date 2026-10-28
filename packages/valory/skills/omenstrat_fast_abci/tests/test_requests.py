@@ -50,6 +50,10 @@ from packages.valory.skills.fresh_watch_abci.tests.test_behaviours import (
 from packages.valory.skills.mech_interact_abci.behaviours.offchain_request import (
     OffchainRequestExecutor,
 )
+from packages.valory.skills.mech_interact_abci.behaviours.response import (
+    MechResponseBehaviour,
+)
+from packages.valory.skills.mech_interact_abci.payloads import JSONPayload
 from packages.valory.skills.mech_interact_abci.payment_types import PaymentType
 from packages.valory.skills.mech_interact_abci.states.base import (
     Event,
@@ -59,6 +63,9 @@ from packages.valory.skills.mech_interact_abci.states.request import MechRequest
 from packages.valory.skills.omenstrat_fast_abci.composition import OmenstratFastAbciApp
 from packages.valory.skills.trader_abci.mech_latency import (
     TraderMechRequestBehaviour as MechRequestBehaviour,
+)
+from packages.valory.skills.trader_abci.mech_latency import (
+    TraderMechResponseBehaviour,
 )
 
 MECH = "0x552cEA7Bc33CbBEb9f1D90c1D11D2C6daefFd053"
@@ -306,3 +313,120 @@ def test_paid_request_retry_and_restart(
         assert len(posts) == (2 if status == 402 else 1)
         assert len(accepted) == (1 if status in (200, 402) else 0)
         assert FreshQueue(tmp_path / "fresh_watch.json").pending == []
+
+
+def test_fast_request_rotates_after_slow_answer_and_failed_post(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    """Rotate after a slow answer, then leave a mech whose POST fails."""
+    with patch(
+        "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+        return_value=1050,
+    ):
+        watch, _ = select_request(tmp_path, list(FastConfig().tools))
+    context = watch.context
+    context.shared_state = {}
+    other = "0xdb78159e9246ec738f51c2c9cb1169b5c0e45fee"
+    infos = json.loads(context.state.synchronized_data.db.get_strict("mechs_info"))
+    infos[0]["http_url"] = "https://first.test"
+    infos[0]["max_delivery_rate"] = 1
+    infos.append(dict(infos[0], id="976", address=other, http_url="https://other.test"))
+    context.state.synchronized_data = context.state.synchronized_data.update(
+        mechs_info=json.dumps(infos),
+        preferred_mechs=[MECH.lower()],
+        versioning_check_performed=True,
+    )
+    context.state.penalized_mechs = {}
+    context.state.penalize_mech.side_effect = lambda address: (
+        context.state.penalized_mechs.update({address: 1081})
+    )
+    context.params.use_offchain = True
+    context.params.fast_dynamic_mech = True
+    context.params.fast_mech_start = "ranked"
+    context.params.fast_mech_rotate_latency_s = 30
+    context.params.mech_chain_id = "gnosis"
+    context.params.delivery_rate_caps = {PaymentType.NATIVE: 1}
+    context.params.mech_marketplace_config = SimpleNamespace(
+        mech_marketplace_address="0x" + "34" * 20,
+        priority_mech_address=MECH,
+        use_dynamic_mech_selection=True,
+        offchain_failover_max_retries=0,
+        offchain_nonce_retry_max=1,
+        offchain_poll_timeout_seconds=300,
+    )
+    context.state.round_sequence.abci_app = SimpleNamespace(
+        event_to_timeout={Event.ROUND_TIMEOUT: 350}
+    )
+    requests = context.state.synchronized_data.mech_requests
+    posts = []
+
+    def http(**kwargs: Any) -> Any:
+        posts.append(kwargs["url"])
+        return done(
+            SimpleNamespace(status_code=503 if len(posts) == 2 else 200, body=b"busy")
+        )
+
+    monkeypatch.setattr(
+        OffchainRequestExecutor,
+        "_read_contract_state",
+        lambda self, **kw: done(
+            {
+                "get_chain_id": 100,
+                "get_nonce": len(posts),
+                "get_payment_type": PaymentType.NATIVE.value,
+                "get_max_delivery_rate": 1,
+            }[kw["contract_callable"]]
+        ),
+    )
+    monkeypatch.setattr(
+        OffchainRequestExecutor, "_sign_request_id", lambda *args: done("signature")
+    )
+
+    def send() -> Any:
+        context.state.synchronized_data = context.state.synchronized_data.update(
+            mech_requests=json.dumps(
+                [dict(vars(requests[0]), nonce=f"request-{len(posts)}")]
+            ),
+            offchain_pending_request=None,
+        )
+        mech: Any = MechRequestBehaviour(name="mech", skill_context=context)
+        mech.get_http_response = http
+        events = []
+
+        def finish(payload: Any) -> Any:
+            events.append(agree(context, MechRequestRound, payload))
+            return done(None)
+
+        mech.finish_behaviour = finish
+        run(mech.async_act())
+        return events[0]
+
+    with patch(
+        "packages.valory.skills.trader_abci.mech_latency.time.time", return_value=1050
+    ):
+        assert send() == Event.OFFCHAIN_DONE
+    nonce = context.state.synchronized_data.mech_requests[0].nonce
+    response = TraderMechResponseBehaviour(name="response", skill_context=context)
+    with (
+        patch.object(
+            MechResponseBehaviour, "finish_behaviour", return_value=done(None)
+        ),
+        patch(
+            "packages.valory.skills.trader_abci.mech_latency.time.time",
+            return_value=1081,
+        ),
+    ):
+        run(
+            response.finish_behaviour(
+                JSONPayload("agent", json.dumps([dict(nonce=nonce, result="answer")]))
+            )
+        )
+    assert context.shared_state["fast_mech_rotation"]["last_latency_s"] == 31
+    assert len(context.state.synchronized_data.ranked_mechs) == 2
+    assert send() == Event.OFFCHAIN_ALL_FAILED
+    assert posts[:2] == [
+        "https://first.test/send_signed_requests",
+        "https://other.test/send_signed_requests",
+    ]
+    assert send() == Event.OFFCHAIN_DONE
+    assert posts[2] == "https://first.test/send_signed_requests"

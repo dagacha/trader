@@ -69,7 +69,20 @@ def test_derived_shared_state_timestamp_default(
 class TestTraderParams:
     """Tests for the TraderParams model."""
 
-    def test_init_sets_attributes(self) -> None:
+    @pytest.mark.parametrize(
+        "controls,start,threshold",
+        [
+            ({}, "hash", 90),
+            (
+                {"fast_mech_start": "ranked", "fast_mech_rotate_latency_s": 0},
+                "ranked",
+                0,
+            ),
+        ],
+    )
+    def test_init_sets_attributes(
+        self, controls: Any, start: str, threshold: int
+    ) -> None:
         """TraderParams.__init__ sets its own attributes from kwargs."""
         kwargs: Dict[str, Any] = {
             "mech_interact_round_timeout_seconds": 300,
@@ -81,11 +94,14 @@ class TestTraderParams:
             "use_x402": True,
             "skill_context": MagicMock(),
         }
+        kwargs.update(controls)
         # Patch the first parent class in the MRO to avoid deep dependency chain
         with patch.object(TraderParams.__mro__[1], "__init__", return_value=None):
             params = TraderParams.__new__(TraderParams)
             TraderParams.__init__(params, **kwargs)
 
+        assert params.fast_mech_start == start
+        assert params.fast_mech_rotate_latency_s == threshold
         assert params.mech_interact_round_timeout_seconds == 300
         assert params.genai_api_key == "test-key"
         assert params.x402_payment_requirements == {"threshold": 100}
@@ -330,3 +346,25 @@ class TestTheMechSkillAndTheGenaiConnectionShareOneSlotCount:
             self._shared_state()[MECH_SLOT_REGISTRY]
             is self._shared_state()[MECH_SLOT_REGISTRY]
         )
+
+
+@pytest.mark.parametrize(
+    "controls",
+    [{"fast_mech_start": "invalid"}, {"fast_mech_rotate_latency_s": -1}],
+)
+def test_invalid_fast_rotation_controls(controls: Any) -> None:
+    """Reject unsupported start rules and negative rotation thresholds."""
+    kwargs = dict(
+        mech_interact_round_timeout_seconds=300,
+        genai_api_key="test-key",
+        x402_payment_requirements={},
+        lifi_quote_to_amount_url="https://example.com",
+        gnosis_ledger_rpc="https://example.com",
+        polygon_ledger_rpc="https://example.com",
+        use_x402=False,
+        skill_context=MagicMock(),
+        **controls,
+    )
+    with patch.object(TraderParams.__mro__[1], "__init__", return_value=None):
+        with pytest.raises(ValueError, match="fast_mech_"):
+            TraderParams.__init__(TraderParams.__new__(TraderParams), **kwargs)

@@ -133,7 +133,7 @@ def test_select_and_restart(tmp_path: Any) -> None:
     [
         (None, {}, False),
         ("", {}, False),
-        ("https://mech.test", {"0xABC": 1000}, False),
+        ("https://mech.test", {"0xABC": 1000}, True),
         ("https://mech.test", {}, True),
     ],
 )
@@ -1517,3 +1517,36 @@ def test_placement_reused_before_quote(tmp_path: Any, benchmarking: bool) -> Non
     assert logged["executed_price"] is None
     assert logged["price"] is None
     assert logged["edge"] is None
+
+
+def test_all_penalized_tools_do_not_idle(tmp_path: Any) -> None:
+    """Keep the queued market when each offered tool endpoint has a penalty."""
+    b = make(FreshWatchBehaviour, tmp_path)
+    b.context.params.fast_dynamic_mech = True
+    b.context.params.use_offchain = True
+    b.context.state.penalized_mechs = {"0xabc": 1000}
+    b.sleep = lambda delay: done(None)
+    b.context.state.fast_background_running = True
+    b._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    queue.pending = [raw_market()]
+    queue.save()
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+            return_value=1050,
+        ),
+    ):
+        sd.return_value.mechs_info = [
+            SimpleNamespace(
+                address="0xabc",
+                http_url="https://mech.test",
+                relevant_tools={"superforcaster"},
+            )
+        ]
+        assert run(b.select())["lane"] == "market"
+    assert not any(
+        call.args[0] == "Neither fast prediction tool is available."
+        for call in b.context.logger.warning.call_args_list
+    )

@@ -188,6 +188,16 @@ class TraderParams(
         """Initialize the parameters object."""
         kwargs.setdefault("fast_dynamic_mech", False)
         self.fast_dynamic_mech: bool = self._ensure("fast_dynamic_mech", kwargs, bool)
+        kwargs.setdefault("fast_mech_start", "hash")
+        self.fast_mech_start: str = self._ensure("fast_mech_start", kwargs, str)
+        kwargs.setdefault("fast_mech_rotate_latency_s", 90)
+        self.fast_mech_rotate_latency_s: int = self._ensure(
+            "fast_mech_rotate_latency_s", kwargs, int
+        )
+        if self.fast_mech_start not in {"hash", "ranked"}:
+            raise ValueError("fast_mech_start must be hash or ranked.")
+        if self.fast_mech_rotate_latency_s < 0:
+            raise ValueError("fast_mech_rotate_latency_s must be non-negative.")
         self.mech_interact_round_timeout_seconds: int = self._ensure(
             "mech_interact_round_timeout_seconds", kwargs, type_=int
         )
