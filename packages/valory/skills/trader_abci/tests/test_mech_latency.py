@@ -27,6 +27,8 @@ from unittest.mock import MagicMock, PropertyMock, patch
 import pytest
 
 from packages.valory.skills.mech_interact_abci.behaviours.offchain_request import (
+    OffchainAttemptOutcome,
+    OffchainAttemptResult,
     OffchainRequestExecutor,
 )
 from packages.valory.skills.mech_interact_abci.behaviours.offchain_response import (
@@ -39,8 +41,12 @@ from packages.valory.skills.mech_interact_abci.behaviours.response import (
     MechResponseBehaviour,
 )
 from packages.valory.skills.mech_interact_abci.payloads import JSONPayload
+from packages.valory.skills.mech_interact_abci.payment_types import PaymentType
 from packages.valory.skills.mech_interact_abci.states.base import (
+    Event,
     MechInteractionResponse,
+    MechMetadata,
+    OFFCHAIN_503_ALL_MECHS,
 )
 from packages.valory.skills.trader_abci import mech_latency as latency
 
@@ -71,7 +77,7 @@ def context() -> Any:
 def test_post_time_replaces_deposit_challenge_time() -> None:
     """Measure from each actual POST, including the retry after deposit."""
     ctx = context()
-    behaviour = SimpleNamespace(context=ctx)
+    behaviour = SimpleNamespace(context=ctx, params=ctx.params)
     executor = latency.TimedOffchainRequestExecutor(behaviour)
     meta = dict(tool="forecast", nonce="uuid", request_context={"market_id": "market"})
     with patch.object(
@@ -172,7 +178,9 @@ def test_serialised_answer_keeps_request_mech(offchain: bool) -> None:
         tool="forecast", nonce="uuid", request_context={"market_id": "market"}
     )
     if offchain:
-        executor = latency.TimedOffchainRequestExecutor(SimpleNamespace(context=ctx))
+        executor = latency.TimedOffchainRequestExecutor(
+            SimpleNamespace(context=ctx, params=ctx.params)
+        )
         with (
             patch.object(
                 OffchainRequestExecutor, "_post_signed_request", return_value=done(None)
@@ -631,3 +639,116 @@ def test_current_mech_address_is_case_insensitive() -> None:
     )
     assert executor._pick_next_mech([])[0] == "0x02"
     assert executor._b.context.shared_state["fast_mech_rotation"]["request_count"] == 1
+
+
+@pytest.mark.parametrize("dynamic", [False, True])
+@pytest.mark.parametrize("outcome", list(OffchainAttemptOutcome))
+def test_post_penalty_only_for_fast_endpoint_failures(
+    dynamic: bool, outcome: OffchainAttemptOutcome
+) -> None:
+    """Penalize failed fast endpoints, but retain payment and nonce behavior."""
+    executor = rotation_executor()
+    executor._b.params.fast_dynamic_mech = dynamic
+    attempt = OffchainAttemptResult(outcome, "0x02", "https://0x02.test")
+    with patch.object(
+        OffchainRequestExecutor, "_post_signed_request", return_value=done(attempt)
+    ):
+        result = run(
+            executor._post_signed_request(
+                "https://0x02.test",
+                "0x02",
+                "hash",
+                json.dumps(dict(tool="forecast", nonce="uuid")),
+                b"id",
+                "signature",
+                0,
+                1,
+                "safe",
+            )
+        )
+    assert result is attempt
+    penalized = dynamic and outcome in {
+        OffchainAttemptOutcome.TIMEOUT,
+        OffchainAttemptOutcome.SERVER_BUSY,
+        OffchainAttemptOutcome.BAD_RESPONSE,
+    }
+    if penalized:
+        executor._b.shared_state.penalize_mech.assert_called_once_with("0x02")
+        executor._logger.info.assert_called_once_with(
+            "[MECH_ROTATE] penalize=%s reason=post_%s", "0x02", outcome.value
+        )
+    else:
+        executor._b.shared_state.penalize_mech.assert_not_called()
+        executor._logger.info.assert_not_called()
+
+
+def test_failed_post_after_slow_answer_rotates_on_next_run() -> None:
+    """A terminal plain 503 must not pin later requests to the failed Mech."""
+    executor = rotation_executor()
+    behaviour = executor._b
+    ctx = behaviour.context
+    safe = "0x" + "cc" * 20
+    addresses = ["0x" + byte * 20 for byte in ("aa", "bb")]
+    executor._synced.ranked_mechs = [
+        SimpleNamespace(address=address, http_url=f"https://{address}.test")
+        for address in addresses
+    ]
+    executor._synced.safe_contract_address = safe
+    executor._synced.offchain_pending_request = None
+    executor._synced.approved_mech_rates = {}
+    behaviour.params.fast_mech_start = "ranked"
+    behaviour.params.mech_chain_id = "gnosis"
+    behaviour.params.delivery_rate_caps = {PaymentType.NATIVE: 1}
+    behaviour.params.mech_marketplace_config = SimpleNamespace(
+        mech_marketplace_address="0x" + "ff" * 20,
+        offchain_failover_max_retries=0,
+        offchain_nonce_retry_max=0,
+        offchain_poll_timeout_seconds=300,
+    )
+    behaviour.shared_state.penalize_mech.side_effect = (
+        lambda address: behaviour.shared_state.penalized_mechs.update({address: 191})
+    )
+    responses = iter(
+        [
+            SimpleNamespace(status_code=200, body=b""),
+            SimpleNamespace(status_code=503, body=b"Service unavailable"),
+            SimpleNamespace(status_code=200, body=b""),
+        ]
+    )
+    behaviour.get_http_response = MagicMock(
+        side_effect=lambda **_: done(next(responses))
+    )
+    with (
+        patch.object(executor, "_resolve_chain_id_int", side_effect=lambda: done(100)),
+        patch.object(executor, "_read_on_chain_nonce", side_effect=lambda: done(0)),
+        patch.object(
+            executor,
+            "_resolve_payment_type",
+            side_effect=lambda _: done(bytes.fromhex(PaymentType.NATIVE.value[2:])),
+        ),
+        patch.object(executor, "_resolve_delivery_rate", side_effect=lambda _: done(1)),
+        patch.object(executor, "_sign_request_id", side_effect=lambda *_: done("sig")),
+    ):
+        executor._synced.mech_requests = [MechMetadata("prompt", "forecast", "first")]
+        with patch.object(latency.time, "time", return_value=100):
+            assert run(executor.run()).offchain_result == Event.OFFCHAIN_DONE.value
+        answer = latency.TraderMechResponseBehaviour(name="response", skill_context=ctx)
+        with patch.object(latency.time, "time", return_value=191):
+            answer._log_answer(dict(nonce="first", result="answer"))
+        assert ctx.shared_state["fast_mech_rotation"]["last_latency_s"] == 91
+
+        executor._synced.mech_requests = [MechMetadata("prompt", "forecast", "second")]
+        failed = run(executor.run())
+        assert failed.offchain_result == Event.OFFCHAIN_ALL_FAILED.value
+        assert failed.last_failure_reason == OFFCHAIN_503_ALL_MECHS
+        assert ctx.shared_state["fast_mech_rotation"]["current_mech"] == addresses[1]
+
+        executor._synced.mech_requests = [MechMetadata("prompt", "forecast", "third")]
+        assert run(executor.run()).offchain_result == Event.OFFCHAIN_DONE.value
+    posted_urls = [
+        call.kwargs["url"] for call in behaviour.get_http_response.call_args_list
+    ]
+    assert posted_urls == [
+        f"https://{address}.test/send_signed_requests"
+        for address in (addresses[0], addresses[1], addresses[0])
+    ]

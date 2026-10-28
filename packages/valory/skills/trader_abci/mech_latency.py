@@ -27,6 +27,7 @@ from typing import Any, Dict, Generator, List, Optional, Tuple
 
 from packages.valory.skills.abstract_round_abci.base import BaseTxPayload
 from packages.valory.skills.mech_interact_abci.behaviours.offchain_request import (
+    OffchainAttemptOutcome,
     OffchainAttemptResult,
     OffchainRequestExecutor,
 )
@@ -79,19 +80,31 @@ class TimedOffchainRequestExecutor(OffchainRequestExecutor):
         timings = self._b.context.shared_state.setdefault(TIMINGS, {})
         timings[metadata["nonce"]] = request_timing(metadata, time.time())
         timings[metadata["nonce"]]["mech"] = mech_address
-        return (
-            yield from super()._post_signed_request(
-                mech_url,
-                mech_address,
-                ipfs_hash,
-                ipfs_data,
-                request_id_bytes,
-                signature_hex,
-                nonce,
-                delivery_rate,
-                sender,
-            )
+        attempt = yield from super()._post_signed_request(
+            mech_url,
+            mech_address,
+            ipfs_hash,
+            ipfs_data,
+            request_id_bytes,
+            signature_hex,
+            nonce,
+            delivery_rate,
+            sender,
         )
+        if getattr(
+            self._b.params, "fast_dynamic_mech", False
+        ) is True and attempt.outcome in (
+            OffchainAttemptOutcome.TIMEOUT,
+            OffchainAttemptOutcome.SERVER_BUSY,
+            OffchainAttemptOutcome.BAD_RESPONSE,
+        ):
+            self._b.shared_state.penalize_mech(mech_address)
+            self._logger.info(
+                "[MECH_ROTATE] penalize=%s reason=post_%s",
+                mech_address,
+                attempt.outcome.value,
+            )
+        return attempt
 
     def _pick_next_mech(
         self, attempted: List[str]
