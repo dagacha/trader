@@ -23,6 +23,7 @@ import json
 from typing import Any, Dict, Generator, List, Optional, Tuple, Union, cast
 
 from eth_abi import decode
+from eth_abi.exceptions import DecodingError
 from eth_utils import keccak, to_checksum_address  # type: ignore[import-not-found]
 
 from packages.valory.contracts.omen_event_reader.contract import PUBLIC_ID
@@ -36,7 +37,7 @@ from packages.valory.skills.abstract_round_abci.dialogues import (
     LedgerApiDialogue,
     LedgerApiDialogues,
 )
-from packages.valory.skills.abstract_round_abci.models import Requests
+from packages.valory.skills.fresh_watch_abci.rpc import request_with_timeout
 from packages.valory.skills.fresh_watch_abci.strategy import FreshQueue
 
 # Verified against Gnosis creation tx 0x1a1d567d7d7c596895327e53568aacc24378cf45234b8a00fbe98d0c31608c00.
@@ -258,14 +259,8 @@ class ChainDiscoveryMixin:
             **inputs,
         )
         dialogue = cast(Union[ContractApiDialogue, LedgerApiDialogue], dialogue)
-        dialogue.terms = self._get_default_terms()
-        nonce = self._get_request_nonce_from_dialogue(dialogue)
-        cast(Requests, self.context.requests).request_id_to_callback[
-            nonce
-        ] = self.get_callback_request()
-        self.context.outbox.put_message(message=message)
         try:
-            response = yield from self.wait_for_message(timeout=5.0)
+            response = yield from request_with_timeout(self, message, dialogue, 5.0)
         except TimeoutException as exc:
             raise ChainRPCError("Ledger response timed out") from exc
         if response.performative != message_class.Performative.STATE:
@@ -392,6 +387,28 @@ class ChainDiscoveryMixin:
                 state["rpc_error_since"] = None
                 save()
                 return []
+            overlap_start = max(
+                0,
+                number - self.params.fast.fresh_max_age_s // 5 - 1,
+                state["last_block"] - 2,
+            )
+            orphan_ids = set()
+            queue = FreshQueue(self.params.store_path / "fresh_watch.json")
+            for pending in queue.pending:
+                if (
+                    "block_hash" not in pending
+                    or not overlap_start
+                    <= pending["block_number"]
+                    <= state["last_block"]
+                ):
+                    continue
+                height = pending["block_number"]
+                if height not in blocks:
+                    blocks[height] = yield from self._chain_rpc(
+                        "get_block", block_identifier=height
+                    )
+                if pending["block_hash"] != _hex(blocks[height]["hash"]):
+                    orphan_ids.add(pending["id"])
             creators = [creator.lower() for creator in cfg.lightning_creators]
             rows = []
             last_block = number
@@ -404,12 +421,14 @@ class ChainDiscoveryMixin:
                 if (
                     log.get("removed")
                     or _hex(log["address"]) != cfg.omen_fpmm_factory.lower()
-                    or not log["topics"]
+                    or len(log["topics"]) != 2
                     or _hex(log["topics"][0]) != CREATION_TOPIC
+                    or "0x" + _hex(log["topics"][1])[-40:] not in creators
                 ):
                     continue
-                market = creation_details(log)
-                if market["creator"] not in creators:
+                try:
+                    creation_details(log)
+                except (ValueError, DecodingError):
                     continue
                 number = _number(log["blockNumber"])
                 if number not in blocks:
@@ -426,9 +445,15 @@ class ChainDiscoveryMixin:
                     retry_block = min(retry_block or number, number)
                     continue
                 if row:
+                    row.update(
+                        block_number=number, block_hash=_hex(blocks[number]["hash"])
+                    )
                     rows.append(row)
                 last_block = max(last_block, number)
             queue = FreshQueue(self.params.store_path / "fresh_watch.json")
+            queue.pending = [
+                row for row in queue.pending if row["id"] not in orphan_ids
+            ]
             queue.ingest(
                 rows,
                 now,

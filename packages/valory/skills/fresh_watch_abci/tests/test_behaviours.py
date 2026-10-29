@@ -1784,8 +1784,6 @@ def test_preflight_checksums_lowercase_safe_address(tmp_path: Any) -> None:
 
 def test_estimate_gas_bounded_wait_returns_none_on_deadline(tmp_path: Any) -> None:
     """Return None when the bounded response wait expires with no reply."""
-    import time as pytime
-
     from packages.valory.skills.fresh_watch_abci import behaviours as fw_behaviours
 
     b = make(FastBetPlacementBehaviour, tmp_path)
@@ -1795,18 +1793,19 @@ def test_estimate_gas_bounded_wait_returns_none_on_deadline(tmp_path: Any) -> No
     dialogue.dialogue_label.dialogue_reference = ("nonce", "")
     b.context.ledger_api_dialogues.create.return_value = (MagicMock(), dialogue)
     b.context.requests.request_id_to_callback = {}
-    with patch.object(fw_behaviours, "_PREFLIGHT_TIMEOUT_S", 0.01):
+    b.sleep = lambda seconds: iter([None])
+    with (
+        patch.object(fw_behaviours, "_PREFLIGHT_TIMEOUT_S", 0.01),
+        patch("time.monotonic", side_effect=[0.0, 0.0, 0.02]),
+    ):
         gen = b._estimate_gas({"from": "0x0", "to": "0x0", "data": "0x"}, "gnosis")
-        # Advance to the first yield inside the real wait_for_message helper.
+        # Advance one scheduler tick, then pass the response deadline.
         next(gen)
-        # Let the real wall clock move past the bounded deadline.
-        pytime.sleep(0.05)
-        # The next resume checks datetime.now() against the deadline, raises
-        # TimeoutException inside wait_for_message, and _estimate_gas returns None.
         with pytest.raises(StopIteration) as exc_info:
             gen.send(None)
     assert exc_info.value.value is None
     b.context.outbox.put_message.assert_called_once()
+    assert b.context.requests.request_id_to_callback == {}
 
 
 def test_estimate_gas_returns_ledger_response(tmp_path: Any) -> None:
@@ -1820,6 +1819,7 @@ def test_estimate_gas_returns_ledger_response(tmp_path: Any) -> None:
     dialogue.dialogue_label.dialogue_reference = ("nonce", "")
     b.context.ledger_api_dialogues.create.return_value = (MagicMock(), dialogue)
     b.context.requests.request_id_to_callback = {}
+    b.sleep = lambda seconds: iter([None])
     reply = LedgerApiMessage(
         performative=LedgerApiMessage.Performative.STATE,  # type: ignore[arg-type]
         ledger_id="ethereum",
@@ -1827,9 +1827,11 @@ def test_estimate_gas_returns_ledger_response(tmp_path: Any) -> None:
     )
     gen = b._estimate_gas({"from": "0x0", "to": "0x0", "data": "0x"}, "gnosis")
     next(gen)
+    b.context.requests.request_id_to_callback.pop("nonce")(reply, b)
     with pytest.raises(StopIteration) as exc_info:
-        gen.send(reply)
+        gen.send(None)
     assert exc_info.value.value is reply
+    assert b.context.requests.request_id_to_callback == {}
 
 
 @pytest.mark.parametrize(

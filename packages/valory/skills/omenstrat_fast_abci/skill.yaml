@@ -8,7 +8,7 @@ aea_version: '>=2.0.0, <3.0.0'
 fingerprint:
   README.md: bafybeihpik4c2q3n7gu236hnc6uzbgdgqst4xmrdloycr352cglbu2gtkq
   __init__.py: bafybeib3ysnyfp5g7wqqopddtqp3vrod5hlfhyjekrdasrbpexa6fc4eoq
-  behaviours.py: bafybeidekktpzp57maqhumitkz5nruylxlz2ico23ogzpt5nm5yikrwcly
+  behaviours.py: bafybeifopgcskqrm35ggm5ybuwwon4ivilpeeeybqxdogpfnna3mdel4qq
   composition.py: bafybeid4mxycmyb6jflihmflreamsakytajqmt6zrq5bcr4p27d34di7vq
   dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
   fsm_specification.yaml: bafybeifbfhecigg6pyjfoti7rcvaoflgxliycif66aaaptdumyhl2zyy4i
@@ -16,7 +16,7 @@ fingerprint:
   models.py: bafybeicihpfeq66ahhuboojdrf7f33xu6tmktmskzodh7oiqvxtggka4om
   tests/__init__.py: bafybeifx5qa3c7rsjbe4ujuif363osh23mvgprcd5jwv67t5kl3kgqrszu
   tests/test_composition.py: bafybeif73yo7ty5as3rvfc6u5yozco5noi2ucotbvu6ufhsxztxtdw7hqy
-  tests/test_config.py: bafybeig3ikbsl7mvce5ls3bwusgl556pn5ge6zvjo7s364ixbrssxutfvi
+  tests/test_config.py: bafybeiarzoasntaniabzvyazi2owk3hskrpyismcootdecdd4get22q2fa
   tests/test_requests.py: bafybeif5da2h47fa2bofe6scqectrzqb46otnrfxjivoo7432idornmap4
 fingerprint_ignore_patterns: []
 connections: []
@@ -34,7 +34,7 @@ skills:
 - valory/chatui_abci:0.1.0:bafybeihj5y6cecuw4iz2gshicoygghrgi5b6rzynnofx25ycsv56ehgdvq
 - valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
 - valory/trader_abci:0.1.0:bafybeicc343vbjzy3tfkvjwufg6y2ik452rv2w5mnx64xtqlghmage3gyu
-- valory/fresh_watch_abci:0.1.0:bafybeigh74trszzihhzognu2mljwzk7r27o24x4t2jgqyalocy73jqgyxi
+- valory/fresh_watch_abci:0.1.0:bafybeihdwcrtksvwbk42wjyjnnq4cezo7hnkpega4xtcgeuwih6udvbiwe
 behaviours:
   main:
     args: {}

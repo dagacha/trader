@@ -24,7 +24,7 @@ import json
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Generator, List, Optional
+from typing import Any, Callable, Collection, Dict, Generator, List, Optional
 
 from eth_abi import decode
 from eth_abi.exceptions import DecodingError
@@ -148,17 +148,20 @@ class PreviewStore:
             self.save()
         return added
 
-    def next_title(self, now: float) -> Optional[str]:
+    def next_title(self, now: float, excluded: Collection[str] = ()) -> Optional[str]:
         """Find the next unrequested title.
 
         :param now: Unix timestamp.
+        :param excluded: titles already seen as markets.
         :return: exact title, or None.
         """
         return next(
             (
                 title
                 for title, entry in self.entries.items()
-                if entry["requested_at"] is None and not self._expired(entry, now)
+                if entry["requested_at"] is None
+                and not self._expired(entry, now)
+                and title not in excluded
             ),
             None,
         )

@@ -23,13 +23,12 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from eth_abi import decode, encode
 
 from packages.valory.protocols.ledger_api import LedgerApiMessage
-from packages.valory.skills.abstract_round_abci.behaviour_utils import TimeoutException
 from packages.valory.skills.fresh_watch_abci.chain_discovery import (
     CREATION_TOPIC,
     ChainDiscoveryMixin,
@@ -96,7 +95,11 @@ class Harness(ChainDiscoveryMixin):
         if self.fail:
             raise ChainRPCError("ledger unavailable")
         results = {
-            "get_block": {"number": self.head, "timestamp": CREATED},
+            "get_block": {
+                "number": self.head,
+                "timestamp": CREATED,
+                "hash": "0x" + "11" * 32,
+            },
             "get_logs": self.logs,
             "get_transaction_receipt": self.receipt,
         }
@@ -211,6 +214,7 @@ def test_chain_filter_cursor_persistence_and_no_replayed_market(tmp_path: Path) 
             "get_logs",
             {"filter_params": dict(filters, fromBlock=BLOCK - 2, toBlock=BLOCK + 1)},
         ),
+        ("get_block", {"block_identifier": BLOCK}),
     ]
 
 
@@ -341,12 +345,13 @@ def test_rpc_helper_uses_own_ledger_and_bounded_wait(
 ) -> None:
     """Use the configured ledger chain and accept wrapped or raw results."""
     harness = ledger_harness
-    harness.wait_for_message = MagicMock(
-        side_effect=lambda timeout: done(
-            SimpleNamespace(
-                performative=LedgerApiMessage.Performative.STATE,
-                state=SimpleNamespace(body=body),
-            )
+    response = SimpleNamespace(
+        performative=LedgerApiMessage.Performative.STATE,
+        state=SimpleNamespace(body=body),
+    )
+    harness.context.outbox.put_message.side_effect = (
+        lambda **kwargs: harness.context.requests.request_id_to_callback.pop("nonce")(
+            response, harness
         )
     )
     rows = run(
@@ -360,24 +365,30 @@ def test_rpc_helper_uses_own_ledger_and_bounded_wait(
         "block_identifier": "latest",
         "chain_id": "gnosis",
     }
-    harness.wait_for_message.assert_called_once_with(timeout=5.0)
-    assert harness.context.requests.request_id_to_callback == {"nonce": "callback"}
+    harness.context.outbox.put_message.assert_called_once()
+    assert harness.context.requests.request_id_to_callback == {}
 
 
 @pytest.mark.parametrize("timeout", [False, True])
 def test_rpc_helper_reports_ledger_errors(ledger_harness: Any, timeout: bool) -> None:
     """Expose ledger errors and bounded wait timeouts to the fallback interval."""
     if timeout:
-        ledger_harness.wait_for_message = MagicMock(side_effect=TimeoutException())
+        ledger_harness.sleep = MagicMock(side_effect=lambda seconds: done(None))
     else:
-        ledger_harness.wait_for_message = lambda timeout: done(
-            SimpleNamespace(
-                performative=LedgerApiMessage.Performative.ERROR,
-                message="RPC rejected the request",
-            )
+        response = SimpleNamespace(
+            performative=LedgerApiMessage.Performative.ERROR,
+            message="RPC rejected the request",
+        )
+        ledger_harness.context.outbox.put_message.side_effect = (
+            lambda **kwargs: ledger_harness.context.requests.request_id_to_callback.pop(
+                "nonce"
+            )(response, ledger_harness)
         )
     message = "Ledger response timed out" if timeout else "RPC rejected the request"
-    with pytest.raises(ChainRPCError, match=message):
+    with (
+        patch("time.monotonic", side_effect=[0.0, 5.0 if timeout else 0.0]),
+        pytest.raises(ChainRPCError, match=message),
+    ):
         run(ChainDiscoveryMixin._chain_rpc(ledger_harness, "get_block"))
 
 
@@ -543,10 +554,13 @@ def test_log_rpc_uses_contract_state_and_bounded_wait(ledger_harness: Any) -> No
         MagicMock(),
         MagicMock(),
     )
-    harness.wait_for_message = lambda timeout: done(
-        SimpleNamespace(
-            performative=ContractApiMessage.Performative.STATE,
-            state=SimpleNamespace(body={"logs": [CREATION]}),
+    response = SimpleNamespace(
+        performative=ContractApiMessage.Performative.STATE,
+        state=SimpleNamespace(body={"logs": [CREATION]}),
+    )
+    harness.context.outbox.put_message.side_effect = (
+        lambda **kwargs: harness.context.requests.request_id_to_callback.pop("nonce")(
+            response, harness
         )
     )
     assert run(
@@ -581,3 +595,94 @@ def test_shared_rpc_failure_is_not_retried_in_same_tick(tmp_path: Path) -> None:
     assert harness.calls == [("get_block", {"block_identifier": "latest"})]
     assert run(harness.chain_markets(CREATED + 61)) is None
     assert len(harness.calls) == 2
+
+
+@pytest.mark.parametrize("creator", [FastConfig().creators[0], "0x" + "ab" * 20])
+@pytest.mark.parametrize("bad_data", ["undecodable", "two_conditions"])
+def test_invalid_creation_does_not_block_allowed_market(
+    tmp_path: Path, creator: str, bad_data: str
+) -> None:
+    """Skip invalid factory data without starting the RPC error interval."""
+    harness = Harness(tmp_path)
+    types = ["address", "address", "address", "bytes32[]", "uint256"]
+    values = list(decode(types, bytes.fromhex(CREATION["data"][2:])))
+    values[3] *= 2
+    invalid = dict(
+        CREATION,
+        topics=[CREATION_TOPIC, "0x" + "00" * 12 + creator[2:]],
+        data="0x12" if bad_data == "undecodable" else encode(types, values),
+        logIndex=CREATION["logIndex"] - 1,
+    )
+    harness.logs = [invalid, CREATION]
+    rows = run(harness.chain_markets(CREATED + 5))
+    assert [row["id"] for row in rows] == [creation_details(CREATION)["id"]]
+    state = json.loads((tmp_path / "lightning_chain.json").read_text())
+    assert state["rpc_error_since"] is None
+    assert state["last_block"] == BLOCK
+    harness.context.logger.warning.assert_not_called()
+
+
+def test_overlap_replaces_orphan_rows_before_selecting_newer_market(
+    tmp_path: Path,
+) -> None:
+    """Drop queued creations from a replaced block and select the funded row."""
+    harness: Any = Harness(tmp_path)
+    original_rpc = harness._chain_rpc
+    old_hash = "0x" + "11" * 32
+    canonical_hash = old_hash
+
+    def rpc(method: str, **kwargs: Any) -> Any:
+        """Return the canonical header for each requested height."""
+        if method == "get_block":
+            harness.calls.append((method, kwargs))
+            height = kwargs["block_identifier"]
+            if height == "latest":
+                height = harness.head
+            return (
+                yield from done(
+                    {
+                        "number": height,
+                        "timestamp": CREATED + height - BLOCK,
+                        "hash": canonical_hash if height == BLOCK else "0x" + "22" * 32,
+                    }
+                )
+            )
+        return (yield from original_rpc(method, **kwargs))
+
+    harness._chain_rpc = rpc
+    second = dict(
+        CREATION,
+        data="0x" + "00" * 12 + "ab" * 20 + CREATION["data"][66:],
+        logIndex=CREATION["logIndex"] + 1,
+    )
+    harness.logs = [CREATION, second]
+    run(harness.chain_markets(CREATED + 5))
+    initial = FreshQueue(tmp_path / "fresh_watch.json").pending
+    harness.head = BLOCK + 1
+    harness.logs = []
+    run(harness.chain_markets(CREATED + 10))
+    assert FreshQueue(tmp_path / "fresh_watch.json").pending == initial
+    harness.calls = []
+    canonical_hash = "0x" + "33" * 32
+    harness.head = BLOCK + 2
+    newer = dict(
+        CREATION,
+        data="0x" + "00" * 12 + "cd" * 20 + CREATION["data"][66:],
+        blockNumber=harness.head,
+    )
+    harness.logs = [newer]
+    run(harness.chain_markets(CREATED + 15))
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    assert [row["id"] for row in queue.pending] == ["0x" + "cd" * 20]
+    selected = queue.pop()
+    assert selected is not None
+    assert selected["id"] == "0x" + "cd" * 20
+    assert [(row["block_number"], row["block_hash"]) for row in initial] == [
+        (BLOCK, old_hash),
+        (BLOCK, old_hash),
+    ]
+    assert [
+        kwargs["block_identifier"]
+        for method, kwargs in harness.calls
+        if method == "get_block"
+    ] == ["latest", BLOCK]

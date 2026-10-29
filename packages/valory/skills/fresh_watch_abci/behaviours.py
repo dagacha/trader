@@ -22,6 +22,7 @@
 import hashlib
 import json
 import time
+from abc import ABC
 from dataclasses import asdict, replace
 from fractions import Fraction
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple, cast
@@ -32,14 +33,16 @@ from eth_utils import to_checksum_address  # type: ignore[import-not-found]
 from packages.valory.contracts.gnosis_safe.contract import SafeOperation
 from packages.valory.protocols.contract_api.message import ContractApiMessage
 from packages.valory.protocols.ledger_api import LedgerApiMessage
-from packages.valory.skills.abstract_round_abci.base import LEDGER_API_ADDRESS
+from packages.valory.skills.abstract_round_abci.base import (
+    BaseTxPayload,
+    LEDGER_API_ADDRESS,
+)
 from packages.valory.skills.abstract_round_abci.behaviour_utils import TimeoutException
 from packages.valory.skills.abstract_round_abci.behaviours import AbstractRoundBehaviour
 from packages.valory.skills.abstract_round_abci.dialogues import (
     LedgerApiDialogue,
     LedgerApiDialogues,
 )
-from packages.valory.skills.abstract_round_abci.models import Requests
 from packages.valory.skills.agent_performance_summary_abci.activity_goal import (
     read_successful_trade_count_state,
 )
@@ -88,6 +91,7 @@ from packages.valory.skills.fresh_watch_abci.rounds import (
     FreshWatchRound,
     SelectionPayload,
 )
+from packages.valory.skills.fresh_watch_abci.rpc import request_with_timeout
 from packages.valory.skills.fresh_watch_abci.strategy import (
     FreshQueue,
     decide,
@@ -99,7 +103,22 @@ from packages.valory.skills.market_manager_abci.bets import (
     PredictionResponse,
     QueueStatus,
 )
+from packages.valory.skills.mech_interact_abci.behaviours.base import (
+    MechInteractBaseBehaviour,
+)
+from packages.valory.skills.mech_interact_abci.behaviours.offchain_request import (
+    OffchainCycleResult,
+)
+from packages.valory.skills.mech_interact_abci.behaviours.offchain_response import (
+    serialise_responses,
+)
+from packages.valory.skills.mech_interact_abci.payloads import JSONPayload
+from packages.valory.skills.mech_interact_abci.states.base import Event as MechEvent
 from packages.valory.skills.staking_abci.rounds import StakingState
+from packages.valory.skills.trader_abci.mech_latency import (
+    TraderMechRequestBehaviour,
+    TraderMechResponseBehaviour,
+)
 
 _FIELDS = """id title collateralToken condition { id } creator fee creationTimestamp
 openingTimestamp outcomeSlotCount outcomeTokenAmounts outcomeTokenMarginalPrices
@@ -393,7 +412,12 @@ class FreshWatchBehaviour(
         if not cfg.lightning_preview or not self.params.fast.in_window(now):
             return None
         store = self.preview_store()
-        title = store.next_title(now)
+        queue = FreshQueue(self.params.store_path / "fresh_watch.json")
+        self.read_bets()
+        known_titles = {row["title"] for row in queue.pending} | {
+            bet.title for bet in self.bets if not bet.id.startswith("preview:")
+        }
+        title = store.next_title(now, known_titles)
         tool = self._fast_tool() if title else None
         if title is None or tool is None:
             return None
@@ -475,6 +499,7 @@ class FreshWatchBehaviour(
                 rows = yield from self._poll_markets(queue, now)
                 self.context.state.fast_last_poll = now
                 if rows is not None:
+                    queue = FreshQueue(queue.path)
                     queue.ingest(
                         rows,
                         now,
@@ -541,6 +566,8 @@ class FreshWatchBehaviour(
         raw = queue.pop()
         assert raw is not None
         bet_data = raw.copy()
+        bet_data.pop("block_number", None)
+        bet_data.pop("block_hash", None)
         condition = bet_data.pop("condition", None)
         if condition is not None:
             bet_data["condition_id"] = condition["id"]
@@ -562,11 +589,13 @@ class FreshWatchBehaviour(
         requested_at = time.time()
         if (
             balances is None
+            or ("block_hash" in raw and min(balances) <= 0)
             or bet.openingTimestamp <= requested_at
             or requested_at - bet.creationTimestamp > cfg.fresh_max_age_s
         ):
             retry = (
                 balances is None
+                and "block_hash" not in raw
                 and bet.openingTimestamp > requested_at
                 and requested_at - bet.creationTimestamp <= cfg.fresh_max_age_s
             )
@@ -620,7 +649,8 @@ class FreshWatchBehaviour(
                 lightning_rule=rule,
             )
         if preview is not None:
-            self.preview_store().consume(bet.title, requested_at)
+            preview = self.preview_store().consume(bet.title, requested_at)
+        if preview is not None:
             return dict(
                 lane="lightning_decision",
                 sampled_bet_index=index,
@@ -629,6 +659,16 @@ class FreshWatchBehaviour(
                 lightning_preview_title=bet.title,
                 lightning_preview_probability=preview["p_yes"],
             )
+        if tool is None:
+            queue = FreshQueue(queue.path)
+            queue.pending.append(raw)
+            queue.pending.sort(
+                key=lambda row: (int(row["creationTimestamp"]), row["id"])
+            )
+            del queue.asked[bet.id]
+            queue.save()
+            yield from self.sleep(cfg.poll_s)
+            return {"lane": "wait"}
         return dict(
             lane="market",
             sampled_bet_index=index,
@@ -695,6 +735,91 @@ class FreshMarketPoller(FreshWatchBehaviour):
             finally:
                 state.fast_polling = False
         yield from self.sleep(max(1.0, self._discovery_period() - (time.time() - now)))
+
+
+class PreviewDeadlineBehaviour(PreviewMixin, MechInteractBaseBehaviour, ABC):
+    """Stop preview foreground work at its original absolute deadline."""
+
+    def get_callback_request(self) -> Callable:
+        """Ignore a reply from work cancelled at the preview deadline.
+
+        :return: callback bound to the current preview request phase.
+        """
+        expired = getattr(self, "_preview_deadline_reached", False)
+        callback = super().get_callback_request()
+
+        def receive(message: Any, current_behaviour: Any) -> None:
+            """Keep cancelled I/O replies out of the failure consensus wait."""
+            if expired == getattr(self, "_preview_deadline_reached", False):
+                callback(message, current_behaviour)
+
+        return receive
+
+    def act(self) -> None:
+        """Check the deadline even when an I/O response never arrives."""
+        db = self.synchronized_data.db
+        if (
+            not getattr(self, "_preview_deadline_reached", False)
+            and not getattr(self, "_preview_work_finished", False)
+            and self.params.lightning.lightning_preview
+            and db.get("lightning_preview_request", False) is True
+            and time.time()
+            >= db.get_strict("requested_at")
+            + min(
+                300.0,
+                self.params.mech_marketplace_config.offchain_poll_timeout_seconds,
+            )
+        ):
+            self.stop()
+            self._preview_deadline_reached = True
+            self.preview_store().answer_failed(
+                db.get_strict("lightning_preview_title"), time.time()
+            )
+        super().act()
+
+    def finish_behaviour(self, payload: BaseTxPayload) -> Generator:
+        """Keep an on-time result while consensus on its payload completes.
+
+        :param payload: completed work's consensus payload.
+        :yield: consensus I/O.
+        """
+        self._preview_work_finished = True
+        yield from super().finish_behaviour(payload)
+
+
+class FastMechRequestBehaviour(PreviewDeadlineBehaviour, TraderMechRequestBehaviour):
+    """Keep the normal request path and bound paid preview requests."""
+
+    def _run_offchain_request_cycle(self) -> Generator:
+        """Publish the usual failed-request event after a preview deadline."""
+        if not getattr(self, "_preview_deadline_reached", False):
+            yield from super()._run_offchain_request_cycle()
+            return
+        result = OffchainCycleResult(
+            offchain_result=MechEvent.OFFCHAIN_ALL_FAILED.value,
+            mech_requests_json="[]",
+            mech_responses_json="[]",
+            last_failure_reason="preview_deadline",
+        )
+        yield from self.finish_behaviour(self._payload_from_offchain_result(result))
+
+
+class FastMechResponseBehaviour(PreviewDeadlineBehaviour, TraderMechResponseBehaviour):
+    """Keep normal response polling and bound paid preview responses."""
+
+    def _run_offchain_response_cycle(self) -> Generator:
+        """Publish a failed response after the absolute preview deadline."""
+        if not getattr(self, "_preview_deadline_reached", False):
+            yield from super()._run_offchain_response_cycle()
+            return
+        responses = [
+            replace(response, result=None, error="preview_deadline")
+            for response in self.synchronized_data.mech_responses
+        ]
+        payload = JSONPayload(
+            self.context.agent_address, serialise_responses(responses)
+        )
+        yield from self.finish_behaviour(payload)
 
 
 class FastDecisionRequestBehaviour(DecisionRequestBehaviour):
@@ -793,7 +918,10 @@ class FastDecisionBehaviour(PreviewMixin, DecisionMakerBaseBehaviour):
                 self.preview_log(orphan, "orphan_fee_loss")
             if title not in store.entries:
                 result["reason"] = "preview_expired"
-            elif prediction is None:
+            elif prediction is None or now >= requested_at + min(
+                300.0,
+                self.params.mech_marketplace_config.offchain_poll_timeout_seconds,
+            ):
                 store.answer_failed(title, now)
                 result["reason"] = "preview_answer_failed"
             else:
@@ -837,11 +965,7 @@ class FastDecisionBehaviour(PreviewMixin, DecisionMakerBaseBehaviour):
         )
         prior = cache.current_rate(now, lightning) if enabled else None
         if prior is None:
-            prior = (
-                0.95
-                if enabled and lightning.still_hold_prior == 0.85
-                else lightning.still_hold_prior
-            )
+            prior = lightning.still_hold_prior
         cfg = lightning_config(
             self.params.fast,
             lightning,
@@ -1068,14 +1192,10 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
             args=tuple(),
         )
         dialogue = cast(LedgerApiDialogue, dialogue)
-        dialogue.terms = self._get_default_terms()
-        nonce = self._get_request_nonce_from_dialogue(dialogue)
-        cast(Requests, self.context.requests).request_id_to_callback[
-            nonce
-        ] = self.get_callback_request()
-        self.context.outbox.put_message(message=message)
         try:
-            response = yield from self.wait_for_message(timeout=_PREFLIGHT_TIMEOUT_S)
+            response = yield from request_with_timeout(
+                self, message, dialogue, _PREFLIGHT_TIMEOUT_S
+            )
         except TimeoutException:
             return None
         return response
