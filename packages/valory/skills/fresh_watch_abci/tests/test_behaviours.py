@@ -2418,3 +2418,280 @@ def test_lightning_creator_ingestion_uses_enabled_controls(
         else:
             selection = run(b._select(False, True))
             assert selection["lane"] == "market"
+
+
+def test_preview_cleanup_preserves_real_markets(tmp_path: Any) -> None:
+    """Remove request records without losing stored market positions."""
+    from packages.valory.skills.fresh_watch_abci.behaviours import remove_preview_bets
+
+    b = make(FreshWatchBehaviour, tmp_path)
+    raw = raw_market()
+    raw.pop("condition")
+    b.bets = [
+        Bet(**raw, market="omen_subgraph"),
+        Bet(**{**raw, "id": "preview:question"}, market="omen_subgraph"),
+    ]
+    b.store_bets()
+    remove_preview_bets(b)
+    assert [bet.id for bet in b.bets] == ["market"]
+    stored = json.loads((tmp_path / "multi_bets.json").read_text())
+    assert [bet["id"] for bet in stored] == ["market"]
+
+
+def test_base_rate_refresh_reads_all_resolved_pages(tmp_path: Any) -> None:
+    """Calculate evidence from the complete paginated resolution sample."""
+    from dataclasses import replace
+
+    from packages.valory.skills.fresh_watch_abci.lightning import (
+        BaseRateCache,
+        LightningConfig,
+    )
+
+    b = make(FreshWatchBehaviour, tmp_path)
+    b.context.params.fast = replace(
+        b.context.params.fast, active_window_utc="00:00-00:01"
+    )
+    b.context.params.lightning = LightningConfig(lightning_still_hold=True)
+    rows = [
+        {**raw_market(), "id": str(index), "payouts": [int(index > 0), int(index == 0)]}
+        for index in range(1001)
+    ]
+    b.context.omen_subgraph.process_response.side_effect = [rows[:1000], rows[1000:]]
+    b.get_http_response = MagicMock(side_effect=lambda **kwargs: done(None))
+    run(b._refresh_base_rate(1050))
+    queries = [
+        json.loads(call.kwargs["content"])["query"]
+        for call in b.get_http_response.call_args_list
+    ]
+    assert "skip: 0," in queries[0]
+    assert "skip: 1000," in queries[1]
+    assert all('creationTimestamp_lte: "1050"' in query for query in queries)
+    cache = BaseRateCache(tmp_path / "lightning_base_rate.json")
+    assert cache.sample == 1001
+    assert cache.data["yes"] == 1000
+    assert cache.usable(1050, b.context.params.lightning) == 1000 / 1001
+
+
+@pytest.mark.parametrize(
+    "chain_rows,fallback,error",
+    [
+        ([], None, None),
+        (None, [], "rpc"),
+        (None, [raw_market()], "timeout"),
+        (None, None, None),
+    ],
+)
+def test_lightning_discovery_idle_and_fallback(
+    tmp_path: Any, chain_rows: Any, fallback: Any, error: Any
+) -> None:
+    """Keep healthy chain polling idle and tolerate preview failures in fallback."""
+    from packages.valory.skills.abstract_round_abci.behaviour_utils import (
+        TimeoutException,
+    )
+    from packages.valory.skills.fresh_watch_abci.chain_discovery import ChainRPCError
+    from packages.valory.skills.fresh_watch_abci.lightning import LightningConfig
+
+    b = make(FreshWatchBehaviour, tmp_path)
+    b.context.params.lightning = LightningConfig(
+        lightning_chain_detect=True, lightning_preview=True
+    )
+    b.chain_markets = lambda now: done(chain_rows)
+
+    def preview(now: float) -> Any:
+        if error == "rpc":
+            raise ChainRPCError("unavailable")
+        if error == "timeout":
+            raise TimeoutException()
+        return (yield from done(None))
+
+    b.preview_poll = preview
+    b._fetch_fresh = MagicMock(side_effect=lambda *args: done(fallback))
+    result = run(b._poll_markets(FreshQueue(tmp_path / "fresh_watch.json"), 1050))
+    assert result == (chain_rows if chain_rows is not None else fallback)
+    assert b._fetch_fresh.call_count == int(chain_rows is None)
+    assert b.context.logger.warning.call_count == int(error is not None)
+    if fallback:
+        b.context.logger.info.assert_called_once_with(
+            "[LIGHTNING_DETECT] market=%s delay_s=%.3f source=subgraph", "market", 50
+        )
+
+
+@pytest.mark.parametrize("case", ["empty", "no_tool", "capped"])
+def test_preview_selection_does_not_reserve_ineligible_requests(
+    tmp_path: Any, case: str
+) -> None:
+    """Do not spend a fee without a title, an eligible tool, and room in the cap."""
+    from packages.valory.skills.fresh_watch_abci.lightning import LightningConfig
+    from packages.valory.skills.fresh_watch_abci.preview import PreviewStore
+
+    b = make(FreshWatchBehaviour, tmp_path)
+    b.context.params.lightning = LightningConfig(
+        lightning_preview=True,
+        lightning_preview_max_per_night=0 if case == "capped" else 15,
+    )
+    store = PreviewStore(tmp_path / "lightning_preview.json")
+    title = "Will event X happen?"
+    if case != "empty":
+        store.ingest({"result": {"questions": [{"question": title}]}}, 1040, 1050)
+    b._fast_tool = lambda: None if case == "no_tool" else "superforcaster"
+    assert b._preview_selection(1050) is None
+    latest = PreviewStore(store.path)
+    assert latest.counts == {}
+    assert all(entry["requested_at"] is None for entry in latest.entries.values())
+    assert not (tmp_path / "multi_bets.json").exists()
+
+
+def test_market_waits_for_its_pending_preview_answer(tmp_path: Any) -> None:
+    """Keep the market queued while its existing paid preview waits for an answer."""
+    from packages.valory.skills.fresh_watch_abci.lightning import LightningConfig
+    from packages.valory.skills.fresh_watch_abci.preview import PreviewStore
+
+    b = make(FreshWatchBehaviour, tmp_path)
+    b.context.params.lightning = LightningConfig(lightning_preview=True)
+    b.context.state.fast_background_running = True
+    b._get_pool_balances = MagicMock(side_effect=AssertionError("answer is pending"))
+    b.sleep = MagicMock(side_effect=lambda delay: done(None))
+    row = {**raw_market(), "title": "Will event X happen?"}
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    queue.pending = [row]
+    queue.save()
+    store = PreviewStore(tmp_path / "lightning_preview.json")
+    store.ingest({"result": {"questions": [{"question": row["title"]}]}}, 1040, 1050)
+    store.reserve(row["title"], 1050, "night", 15)
+    with patch(
+        "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+        return_value=1060,
+    ):
+        assert run(b._select(False, True)) == {"lane": "wait"}
+    assert FreshQueue(queue.path).pending == [row]
+    assert FreshQueue(queue.path).asked == {}
+    assert PreviewStore(store.path).counts == {"night": 1}
+    b._get_pool_balances.assert_not_called()
+    b.sleep.assert_called_once_with(1)
+
+
+@pytest.mark.parametrize("slots,preview", [(2, False), (3, True)])
+def test_normal_and_unsupported_requests_keep_their_context(
+    tmp_path: Any, slots: int, preview: bool
+) -> None:
+    """Only a supported preview request can remove normal market context."""
+    from string import Template
+
+    from packages.valory.skills.fresh_watch_abci.behaviours import (
+        FastDecisionRequestBehaviour,
+    )
+    from packages.valory.skills.fresh_watch_abci.lightning import LightningConfig
+
+    b = make(FastDecisionRequestBehaviour, tmp_path)
+    b.context.params.lightning = LightningConfig(lightning_preview=True)
+    b.context.params.slot_count = slots
+    b.context.params.prompt_template = Template("$question [$yes/$no]")
+    raw = raw_market()
+    raw.pop("condition")
+    bet = Bet(**raw, market="omen_subgraph")
+    with (
+        patch.object(
+            type(b), "sampled_bet", new_callable=PropertyMock, return_value=bet
+        ),
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+    ):
+        sd.return_value.mech_tool = "superforcaster"
+        sd.return_value.db.get.return_value = preview
+        b.setup()
+    if slots == 2:
+        assert b.metadata["request_context"] == bet.to_request_context()
+        assert b.metadata["prompt"] == bet.title + " [Yes/No]"
+    else:
+        assert b._metadata is None
+
+
+def evaluate_preview(b: Any, values: Any, now: float) -> Any:
+    """Evaluate stored preview consensus with the normal sampled market."""
+    raw = {**raw_market(), "title": "Will event X happen?"}
+    raw.pop("condition")
+    bet = Bet(**raw, market="omen_subgraph")
+    with (
+        patch.object(
+            type(b), "sampled_bet", new_callable=PropertyMock, return_value=bet
+        ),
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+            return_value=now,
+        ),
+    ):
+        sd.return_value.db.get_strict.side_effect = values.__getitem__
+        sd.return_value.db.get.side_effect = lambda key, default=None: values.get(
+            key, default
+        )
+        return run(b.evaluate())
+
+
+@pytest.mark.parametrize("now", [1100, 1950])
+def test_cached_preview_decision_uses_the_answer_before_expiry(
+    tmp_path: Any, now: float
+) -> None:
+    """Size a fresh cached answer and reject it at the exact expiry boundary."""
+    from packages.valory.skills.fresh_watch_abci.lightning import LightningConfig
+
+    b = make(FastDecisionBehaviour, tmp_path)
+    b.context.params.lightning = LightningConfig(lightning_preview=True)
+    b._get_decision_prediction = MagicMock(
+        side_effect=AssertionError("answer is cached")
+    )
+    b._get_pool_balances = MagicMock(side_effect=lambda *args: done([100 * 10**18] * 2))
+    values = dict(
+        requested_at=1050, request_prices=[0.5, 0.5], lightning_preview_probability=0.99
+    )
+    result = evaluate_preview(b, values, now)
+    if now < 1950:
+        assert result["p_tool"] == 0.99
+        assert result["p_hat"] == pytest.approx((0.99 + 0.18) / 2)
+        assert result["side"] == 0
+        assert result["stake"] > 0
+        b._get_pool_balances.assert_called_once()
+    else:
+        assert result["reason"] == "preview_expired"
+        assert result["stake"] == 0
+        b._get_pool_balances.assert_not_called()
+    b._get_decision_prediction.assert_not_called()
+
+
+@pytest.mark.parametrize("now", [1100, 2000])
+def test_failed_or_expired_preview_answer_cannot_trade(
+    tmp_path: Any, now: float
+) -> None:
+    """Release failed previews to normal requests and report an expired paid orphan."""
+    from packages.valory.skills.fresh_watch_abci.lightning import LightningConfig
+    from packages.valory.skills.fresh_watch_abci.preview import PreviewStore
+
+    b = make(FastDecisionBehaviour, tmp_path)
+    b.context.params.lightning = LightningConfig(lightning_preview=True)
+    b._get_decision_prediction = lambda: None
+    b._get_pool_balances = MagicMock(side_effect=AssertionError("no market to quote"))
+    title = "Will event X happen?"
+    store = PreviewStore(tmp_path / "lightning_preview.json")
+    store.ingest({"result": {"questions": [{"question": title}]}}, 1040, 1050)
+    store.reserve(title, 1050, "night", 15)
+    values = dict(
+        requested_at=1050,
+        request_prices=[0.5, 0.5],
+        lightning_preview_request=True,
+        lightning_preview_title=title,
+    )
+    result = evaluate_preview(b, values, now)
+    latest = PreviewStore(store.path)
+    assert result["stake"] == 0
+    assert latest.match(title, now) is None
+    if now == 1100:
+        assert result["reason"] == "preview_answer_failed"
+        assert latest.entries[title]["failed_at"] == now
+    else:
+        assert result["reason"] == "preview_expired"
+        assert title not in latest.entries
+        assert any(
+            call.args[-1] == "orphan_fee_loss"
+            for call in b.context.logger.info.call_args_list
+        )
+    assert latest.counts == {"night": 1}
+    b._get_pool_balances.assert_not_called()

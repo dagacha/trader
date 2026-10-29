@@ -795,10 +795,8 @@ class FastDecisionBehaviour(PreviewMixin, DecisionMakerBaseBehaviour):
             p_yes = direct
         elif preview_probability is not None:
             p_yes = preview_probability
-        elif prediction is not None:
-            p_yes = prediction.p_yes
         else:
-            return result
+            p_yes = cast(PredictionResponse, prediction).p_yes
         result["p_tool"] = None if direct is not None else p_yes
         result["lightning_rule"] = (
             db.get("lightning_rule", None) if direct is not None else None

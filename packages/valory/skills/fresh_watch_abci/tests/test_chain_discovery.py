@@ -26,7 +26,10 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from eth_abi import decode, encode
 
+from packages.valory.protocols.ledger_api import LedgerApiMessage
+from packages.valory.skills.abstract_round_abci.behaviour_utils import TimeoutException
 from packages.valory.skills.fresh_watch_abci.chain_discovery import (
     CREATION_TOPIC,
     ChainDiscoveryMixin,
@@ -43,6 +46,8 @@ CREATION = FIXTURE["logs"][-1]
 CREATED = FIXTURE["blockTimestamp"]
 BLOCK = CREATION["blockNumber"]
 FACTORY = CREATION["address"]
+CONDITION = FIXTURE["logs"][1]
+QUESTION = FIXTURE["logs"][0]
 
 
 def done(value: Any) -> Any:
@@ -116,6 +121,66 @@ def test_decode_real_creation_and_exact_condition_question() -> None:
     assert question["openingTimestamp"] == 1793664000
     assert question["outcomes"] == ["Yes", "No"]
     assert receipt_question(FIXTURE["logs"], "0x" + "00" * 32) is None
+
+
+@pytest.mark.parametrize("topics", [[], ["0x" + "00" * 32, CREATION["topics"][1]]])
+def test_creation_rejects_other_event_topics(topics: list[str]) -> None:
+    """Do not decode logs with missing or unrelated event topics."""
+    with pytest.raises(ValueError, match="Unexpected factory event"):
+        creation_details(dict(CREATION, topics=topics))
+
+
+@pytest.mark.parametrize("count", [0, 2])
+def test_creation_requires_one_condition(count: int) -> None:
+    """Reject market creations without exactly one condition."""
+    types = ["address", "address", "address", "bytes32[]", "uint256"]
+    values = list(decode(types, bytes.fromhex(CREATION["data"][2:])))
+    values[3] = values[3] * count
+    with pytest.raises(ValueError, match="Require one market condition"):
+        creation_details(dict(CREATION, data=encode(types, values)))
+
+
+def test_receipt_rejects_nonbinary_condition() -> None:
+    """Do not use a title when its condition has three outcomes."""
+    condition = dict(CONDITION, data=encode(["uint256"], [3]))
+    assert receipt_question([QUESTION, condition], CONDITION["topics"][1]) is None
+
+
+@pytest.mark.parametrize(
+    "template,title,outcomes",
+    [
+        (0, "Will it happen?", ["Yes", "No"]),
+        (2, 'Will it happen?\x1f"Yes","No"', ["Yes", "No"]),
+        (2, 'Will it happen?␟"No","Yes"', None),
+        (2, "Will it happen?", None),
+        (1, "Will it happen?", None),
+    ],
+)
+def test_receipt_accepts_only_binary_question_templates(
+    template: int, title: str, outcomes: Any
+) -> None:
+    """Read supported templates and preserve the order of binary outcomes."""
+    types = ["uint256", "string", "address", "uint32", "uint32", "uint256", "uint256"]
+    values = list(decode(types, bytes.fromhex(QUESTION["data"][2:])))
+    values[:2] = [template, title]
+    question = dict(QUESTION, data=encode(types, values))
+    unrelated = dict(QUESTION, topics=[QUESTION["topics"][0], "0x" + "00" * 32, "", ""])
+    logs = [CREATION, CONDITION, unrelated, question]
+    result = receipt_question(logs, CONDITION["topics"][1])
+    if outcomes is None:
+        assert result is None
+    else:
+        assert result == {
+            "title": "Will it happen?",
+            "openingTimestamp": 1793664000,
+            "outcomes": outcomes,
+            "outcomeSlotCount": 2,
+        }
+
+
+def test_receipt_without_matching_question_waits_for_subgraph() -> None:
+    """Return no title when the condition exists but its question log is absent."""
+    assert receipt_question([CONDITION, CREATION], CONDITION["topics"][1]) is None
 
 
 def test_chain_filter_cursor_persistence_and_no_replayed_market(tmp_path: Path) -> None:
@@ -248,10 +313,9 @@ def test_pool_rpc_failures_eventually_allow_subgraph_fallback(tmp_path: Path) ->
     assert run(harness.chain_markets(CREATED + 61)) is None
 
 
-def test_rpc_helper_uses_own_ledger_and_bounded_wait(tmp_path: Path) -> None:
-    """Use the configured ledger chain and unwrap list results."""
-    from packages.valory.protocols.ledger_api import LedgerApiMessage
-
+@pytest.fixture
+def ledger_harness(tmp_path: Path) -> Any:
+    """Prepare the ledger dialogue and request callback without a live connection."""
     harness: Any = Harness(tmp_path)
     harness.context.ledger_api_dialogues = MagicMock()
     harness.context.ledger_api_dialogues.create.return_value = (
@@ -264,11 +328,26 @@ def test_rpc_helper_uses_own_ledger_and_bounded_wait(tmp_path: Path) -> None:
     harness._get_default_terms = lambda: None
     harness._get_request_nonce_from_dialogue = lambda dialogue: "nonce"
     harness.get_callback_request = lambda: "callback"
+    return harness
+
+
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        ({"get_logs_result": [CREATION]}, [CREATION]),
+        ({"number": BLOCK}, {"number": BLOCK}),
+    ],
+)
+def test_rpc_helper_uses_own_ledger_and_bounded_wait(
+    ledger_harness: Any, body: dict[str, Any], expected: Any
+) -> None:
+    """Use the configured ledger chain and accept wrapped or raw results."""
+    harness = ledger_harness
     harness.wait_for_message = MagicMock(
         side_effect=lambda timeout: done(
             SimpleNamespace(
                 performative=LedgerApiMessage.Performative.STATE,
-                state=SimpleNamespace(body={"get_logs_result": [CREATION]}),
+                state=SimpleNamespace(body=body),
             )
         )
     )
@@ -277,7 +356,7 @@ def test_rpc_helper_uses_own_ledger_and_bounded_wait(tmp_path: Path) -> None:
             harness, "get_logs", filter_params={"fromBlock": BLOCK}
         )
     )
-    assert rows == [CREATION]
+    assert rows == expected
     inputs = harness.context.ledger_api_dialogues.create.call_args.kwargs
     assert inputs["ledger_id"] == "ethereum"
     assert inputs["callable"] == "get_logs"
@@ -287,6 +366,126 @@ def test_rpc_helper_uses_own_ledger_and_bounded_wait(tmp_path: Path) -> None:
     }
     harness.wait_for_message.assert_called_once_with(timeout=5.0)
     assert harness.context.requests.request_id_to_callback == {"nonce": "callback"}
+
+
+@pytest.mark.parametrize("timeout", [False, True])
+def test_rpc_helper_reports_ledger_errors(ledger_harness: Any, timeout: bool) -> None:
+    """Expose ledger errors and bounded wait timeouts to the fallback interval."""
+    if timeout:
+        ledger_harness.wait_for_message = MagicMock(side_effect=TimeoutException())
+    else:
+        ledger_harness.wait_for_message = lambda timeout: done(
+            SimpleNamespace(
+                performative=LedgerApiMessage.Performative.ERROR,
+                message="RPC rejected the request",
+            )
+        )
+    message = "Ledger response timed out" if timeout else "RPC rejected the request"
+    with pytest.raises(ChainRPCError, match=message):
+        run(ChainDiscoveryMixin._chain_rpc(ledger_harness, "get_logs"))
+
+
+@pytest.mark.parametrize("rows", [[{"id": "market", "title": "Exact title"}], [], {}])
+def test_subgraph_lookup_uses_exact_market_id(tmp_path: Path, rows: Any) -> None:
+    """Return the exact market row only when the indexer has a usable list."""
+    harness: Any = Harness(tmp_path)
+    response = object()
+    harness.get_http_response = MagicMock(return_value=done(response))
+    harness.context.omen_subgraph = SimpleNamespace(
+        get_spec=lambda: {"method": "POST", "url": "http://subgraph.invalid"},
+        process_response=lambda reply: rows if reply is response else None,
+    )
+    market_id = creation_details(CREATION)["id"]
+    result = run(ChainDiscoveryMixin._chain_subgraph_market(harness, market_id))
+    assert result == (rows[0] if isinstance(rows, list) and rows else None)
+    request = harness.get_http_response.call_args.kwargs
+    query = json.loads(request["content"])["query"]
+    assert 'where: {id: "' + market_id + '"}' in query
+    assert "outcomeTokenMarginalPrices" in query
+    assert request["method"] == "POST"
+    assert request["url"] == "http://subgraph.invalid"
+
+
+def test_subgraph_title_fallback_reports_source(tmp_path: Path) -> None:
+    """Return the indexed market and identify its delayed title source."""
+    harness: Any = Harness(tmp_path)
+    harness.receipt = {"logs": []}
+    market = {"id": creation_details(CREATION)["id"], "title": "Exact title"}
+    harness.fallback = market
+    assert (
+        run(harness._chain_market(CREATION, {"timestamp": hex(CREATED)}, CREATED + 8))
+        == market
+    )
+    harness.context.logger.info.assert_called_once_with(
+        "[LIGHTNING_DETECT] market=%s delay_s=%.3f source=%s",
+        market["id"],
+        8,
+        "subgraph",
+    )
+
+
+def test_empty_pool_has_zero_prices(tmp_path: Path) -> None:
+    """Represent an empty pool without dividing by zero."""
+    harness: Any = Harness(tmp_path)
+    harness._get_pool_balances = lambda *args: done([0, 0])
+    row = run(harness._chain_market(CREATION, {"timestamp": CREATED}, CREATED))
+    assert row["outcomeTokenAmounts"] == [0, 0]
+    assert row["outcomeTokenMarginalPrices"] == [0, 0]
+    assert row["scaledLiquidityMeasure"] == 0
+
+
+def test_stale_creation_advances_cursor_without_queueing(tmp_path: Path) -> None:
+    """Do not read the receipt or retain a market past the freshness limit."""
+    harness = Harness(tmp_path)
+    assert (
+        run(harness.chain_markets(CREATED + harness.params.fast.fresh_max_age_s + 1))
+        == []
+    )
+    assert not FreshQueue(tmp_path / "fresh_watch.json").pending
+    assert all(method != "get_transaction_receipt" for method, _ in harness.calls)
+    state = json.loads((tmp_path / "lightning_chain.json").read_text())
+    assert state == {"last_block": BLOCK, "rpc_error_since": None}
+
+
+def test_invalid_get_logs_result_starts_fallback_interval(tmp_path: Path) -> None:
+    """Treat a malformed log response as an RPC failure and keep the scan cursor."""
+    harness: Any = Harness(tmp_path)
+    harness.logs = {}
+    assert run(harness.chain_markets(CREATED)) == []
+    assert run(harness.chain_markets(CREATED + 61)) is None
+    assert not (tmp_path / "fresh_watch.json").exists()
+    state = json.loads((tmp_path / "lightning_chain.json").read_text())
+    assert state["last_block"] < BLOCK
+    assert state["rpc_error_since"] == CREATED
+
+
+def test_chain_filters_removed_wrong_factory_and_wrong_creator(tmp_path: Path) -> None:
+    """Queue only the allowed creator event emitted by the configured factory."""
+    harness = Harness(tmp_path)
+    harness.logs = [
+        dict(CREATION, removed=True),
+        dict(CREATION, address="0x" + "ab" * 20),
+        dict(CREATION, topics=[CREATION_TOPIC, "0x" + "00" * 32]),
+        CREATION,
+    ]
+    rows = run(harness.chain_markets(CREATED + 5))
+    assert [row["id"] for row in rows] == [creation_details(CREATION)["id"]]
+    assert len(FreshQueue(tmp_path / "fresh_watch.json").pending) == 1
+    assert (
+        len([name for name, _ in harness.calls if name == "get_transaction_receipt"])
+        == 1
+    )
+
+
+def test_creation_before_head_uses_its_own_block(tmp_path: Path) -> None:
+    """Fetch the creation header when a log is older than the current head."""
+    harness = Harness(tmp_path)
+    harness.head = BLOCK + 1
+    rows = run(harness.chain_markets(CREATED + 5))
+    assert [row["creationTimestamp"] for row in rows] == [CREATED]
+    assert ("get_block", {"block_identifier": BLOCK}) in harness.calls
+    state = json.loads((tmp_path / "lightning_chain.json").read_text())
+    assert state["last_block"] == BLOCK + 1
 
 
 def test_overnight_cursor_gap_scans_only_fresh_blocks(tmp_path: Path) -> None:

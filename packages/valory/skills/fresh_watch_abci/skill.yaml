@@ -8,7 +8,7 @@ aea_version: '>=2.0.0, <3.0.0'
 fingerprint:
   README.md: bafybeieurwex74dtimmmndedzrhznyfivsuaf27lteomz4cz23upjtv2pq
   __init__.py: bafybeihyphnywie3dyf7f7mmwm7yvcwekkgsa4mq5273ojuzbjsznvorv4
-  behaviours.py: bafybeib6gom23tnchozzzerx77avniqs3k6fzqivlhtldvqku4uuw5cpqq
+  behaviours.py: bafybeicgk4t5pdlyxwx2dh7l3nfdn43htqsbxso7rph4pblnzutevt6vea
   chain_discovery.py: bafybeidht4lvoxfhh3bijluqxsbbtasq6z7aqp2txyigqxx4kcefkrcfki
   dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
   fsm_specification.yaml: bafybeifhpatx5365ubtse2g6kqo6cjeuzoruf75dv5r5xg27n4wtyrtrbm
@@ -22,10 +22,11 @@ fingerprint:
   tests/fixtures/chain_creation.json: bafybeibsvrn4ppzzldhqqy4tziri47oxviicqocyoq7hmcs4hgaom7i5ui
   tests/fixtures/question_preview.json: bafybeie2ouuxhajfkeln7cgcjm3c3ngus64jtdg5rjz4pix5rcgrpj3hzq
   tests/fixtures/question_preview_metadata.json: bafybeihhtgcztco4xdf5zgeny6ldafa7pnshaeun74zppc4ygvuutyro3i
-  tests/test_behaviours.py: bafybeieaxcsrjpskhfg4slzzuddiyzz7yyfxp6aoodzs6yjxcpwo7y5go4
-  tests/test_chain_discovery.py: bafybeibosqwx3ssrbappmpjixhfxnpbncyejinowt6cpuoytwerlo6uqzm
-  tests/test_lightning.py: bafybeickfjom7h54fpp3cmvox6t5w4tztwldo5wipcafyigtx42s3opm2u
-  tests/test_preview.py: bafybeiewk4cai7we4jgcip76aaff65o7byawocv4lcllpmipthqnm6dfla
+  tests/test_behaviours.py: bafybeihlalkdgsuycgdt4j45xwo7nu5kvrrznaffqcblmk3xaadv3rrq7a
+  tests/test_chain_discovery.py: bafybeidkiq4qqgahhzwk2cbmivlbhgpr2ovzpugwk7llt3l5nb4lunefsq
+  tests/test_lightning.py: bafybeienwbyfcn6skib77shhvkqezbr3tktblmydjbk26hvfjallrtcvpi
+  tests/test_models.py: bafybeifxvfijkhloejaycjcgvbsqesnyqrojoitnjl3rf5ezgolo57eyrq
+  tests/test_preview.py: bafybeidjtx7hr56ygwprvyhowoktvuojhgdlqatae77c2tfyrwyvkkkazq
   tests/test_rounds.py: bafybeicqdd6ycrhwzt6bwa5zid44egcxcrpd3dqr2tsx5wr3zl2qwomu4q
   tests/test_strategy.py: bafybeidg5u2gfkudquygzlit6svpqxspnfc2zvquo6j6kaugttohtdbw5q
 fingerprint_ignore_patterns: []

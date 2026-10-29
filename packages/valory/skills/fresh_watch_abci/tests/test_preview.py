@@ -409,3 +409,273 @@ def test_preview_overnight_gap_keeps_recent_scan_window(tmp_path: Path) -> None:
     assert len(scans) == 2
     assert all(scan["fromBlock"] == 13820 for scan in scans)
     assert PreviewStore(store.path).last_block == 14000
+
+
+def test_missing_questions_and_stale_delivery_are_ignored(tmp_path: Path) -> None:
+    """Do not queue a delivery without questions or after its time limit."""
+    assert preview_questions({"result": {}}) == []
+    store = PreviewStore(tmp_path / "preview.json")
+    assert (
+        store.ingest({"result": {"questions": [{"question": TITLE}]}}, 1000, 1900) == []
+    )
+    assert store.entries == {}
+    assert not store.path.exists()
+
+
+def test_answers_require_a_live_request_and_valid_probability(tmp_path: Path) -> None:
+    """Reject unknown, unrequested, expired, and invalid preview answers."""
+    store = PreviewStore(tmp_path / "preview.json")
+    store.answer("unknown", 0.9, 1000)
+    store.answer_failed("unknown", 1000)
+    store.ingest({"result": {"questions": [{"question": TITLE}]}}, 1000, 1000)
+    store.answer(TITLE, 0.9, 1001)
+    store.answer_failed(TITLE, 1001)
+    assert store.entries[TITLE]["answered_at"] is None
+    assert "failed_at" not in store.entries[TITLE]
+    store.reserve(TITLE, 1010, "night", 1)
+    store.answer(TITLE, -0.1, 1020)
+    store.answer(TITLE, 1.1, 1020)
+    store.answer(TITLE, 0.9, 1910)
+    assert PreviewStore(store.path).entries[TITLE]["answered_at"] is None
+    assert PreviewStore(store.path).entries[TITLE]["p_yes"] is None
+
+
+@pytest.fixture
+def preview_mixin(tmp_path: Path) -> PreviewMixin:
+    """Build a preview reader with local state and no external I/O."""
+    mixin = PreviewMixin()
+    mixin.params = SimpleNamespace(
+        lightning=SimpleNamespace(
+            lightning_preview=True,
+            lightning_creators=["0x89c5cc945dd550bcffb72fe42bff002429f46fec"],
+        ),
+        fast=SimpleNamespace(in_window=lambda now: True),
+        mech_marketplace_config=SimpleNamespace(
+            mech_marketplace_address="0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB"
+        ),
+        ipfs_address="https://gateway.autonolas.tech/ipfs/",
+        store_path=tmp_path,
+    )
+    mixin.context = SimpleNamespace(logger=MagicMock())
+    return mixin
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        None,
+        SimpleNamespace(status_code=503, body=b"{}"),
+        SimpleNamespace(status_code=200, body=b"invalid"),
+        SimpleNamespace(status_code=200, body=None),
+    ],
+)
+def test_gateway_failure_has_no_preview_data(
+    preview_mixin: PreviewMixin, response: Any
+) -> None:
+    """Treat unavailable and invalid gateway responses as retryable misses."""
+    calls = []
+
+    def http(**kwargs: Any) -> Generator[None, None, Any]:
+        calls.append(kwargs)
+        yield from ()
+        return response
+
+    preview_mixin.get_http_response = http
+    assert run(preview_mixin._preview_json("0x" + "11" * 32)) is None
+    assert calls == [
+        {
+            "method": "GET",
+            "url": "https://gateway.autonolas.tech/ipfs/f01701220"
+            + "11" * 32
+            + "/metadata.json",
+        }
+    ]
+
+
+def test_preview_outside_window_has_no_io(preview_mixin: PreviewMixin) -> None:
+    """Do not read chain events outside the active window."""
+    preview_mixin.params.fast.in_window = lambda now: False
+    preview_mixin._chain_rpc = MagicMock(side_effect=AssertionError("unexpected RPC"))
+    assert run(preview_mixin.preview_poll(1000)) is None
+    preview_mixin._chain_rpc.assert_not_called()
+    assert not preview_mixin.preview_store().path.exists()
+
+
+def test_unrelated_and_removed_events_are_ignored(preview_mixin: PreviewMixin) -> None:
+    """Keep tracked requests unchanged when provider events do not qualify."""
+    from eth_abi import encode
+
+    from packages.valory.skills.fresh_watch_abci.preview import PROPOSER, REQUEST_TOPIC
+
+    request_id = bytes.fromhex("33" * 32)
+    request_key = "0x" + request_id.hex()
+    store = preview_mixin.preview_store()
+    store.requests[request_key] = {
+        "digest": "0x" + "11" * 32,
+        "created_at": 1000,
+        "tool": "other-tool",
+    }
+    store.save()
+    creator_topic = "0x" + preview_mixin.params.lightning.lightning_creators[0][
+        2:
+    ].zfill(64)
+    topics = [REQUEST_TOPIC, "0x" + PROPOSER[2:].zfill(64), creator_topic]
+    request_logs = [
+        {"removed": True},
+        {"topics": []},
+        {"topics": [REQUEST_TOPIC, "0x" + "00" * 32, creator_topic]},
+        {"topics": [*topics[:2], "0x" + "00" * 32]},
+        {
+            "topics": topics,
+            "data": encode(
+                ["uint256", "bytes32[]", "bytes[]"],
+                [1, [bytes.fromhex("44" * 32)], [b"short"]],
+            ),
+        },
+    ]
+    delivery_logs = [
+        {"removed": True},
+        {
+            "data": encode(
+                ["bytes32", "uint256", "bytes"],
+                [bytes.fromhex("55" * 32), 1, bytes.fromhex("22" * 32)],
+            )
+        },
+        {"data": encode(["bytes32", "uint256", "bytes"], [request_id, 1, b"short"])},
+    ]
+    replies = iter([{"number": 200}, request_logs, delivery_logs])
+
+    def rpc(method: str, **kwargs: Any) -> Generator[None, None, Any]:
+        yield from ()
+        return next(replies)
+
+    preview_mixin._chain_rpc = rpc
+    preview_mixin.get_http_response = MagicMock(
+        side_effect=AssertionError("unexpected HTTP")
+    )
+    run(preview_mixin.preview_poll(1010))
+    latest = preview_mixin.preview_store()
+    assert latest.requests == store.requests
+    assert latest.last_block == 200
+    assert latest.entries == {}
+    preview_mixin.get_http_response.assert_not_called()
+
+
+def test_poll_expires_orphans_and_old_requests(preview_mixin: PreviewMixin) -> None:
+    """Report a paid orphan once and drop its old proposal request."""
+    store = preview_mixin.preview_store()
+    store.ingest({"result": {"questions": [{"question": TITLE}]}}, 1000, 1000)
+    store.reserve(TITLE, 1000, "night", 1)
+    store.requests["old"] = {"created_at": 1000, "tool": None}
+    store.save()
+    replies = iter([{"number": 200}, [], [], {"number": 200}])
+
+    def rpc(method: str, **kwargs: Any) -> Generator[None, None, Any]:
+        yield from ()
+        return next(replies)
+
+    preview_mixin._chain_rpc = rpc
+    run(preview_mixin.preview_poll(1900))
+    run(preview_mixin.preview_poll(1901))
+    latest = preview_mixin.preview_store()
+    assert latest.requests == {}
+    assert latest.entries == {}
+    preview_mixin.context.logger.info.assert_called_once()
+    assert preview_mixin.context.logger.info.call_args.args[-1] == "orphan_fee_loss"
+
+
+def test_invalid_metadata_retries_before_delivery(preview_mixin: PreviewMixin) -> None:
+    """Retry invalid metadata and retain a valid request while delivery is pending."""
+    store = preview_mixin.preview_store()
+    store.requests["request"] = {
+        "digest": "0x" + "11" * 32,
+        "created_at": 1000,
+        "tool": None,
+    }
+    store.save()
+    replies = iter([{"number": 200}, [], [], {"number": 201}, [], []])
+    bodies = iter([[], {"tool": "propose-question"}])
+    urls = []
+
+    def rpc(method: str, **kwargs: Any) -> Generator[None, None, Any]:
+        yield from ()
+        return next(replies)
+
+    def http(**kwargs: Any) -> Generator[None, None, Any]:
+        urls.append(kwargs["url"])
+        yield from ()
+        return SimpleNamespace(status_code=200, body=json.dumps(next(bodies)).encode())
+
+    preview_mixin._chain_rpc = rpc
+    preview_mixin.get_http_response = http
+    run(preview_mixin.preview_poll(1010))
+    assert preview_mixin.preview_store().requests["request"]["tool"] is None
+    run(preview_mixin.preview_poll(1015))
+    latest = preview_mixin.preview_store()
+    assert latest.requests["request"]["tool"] == "propose-question"
+    assert latest.entries == {}
+    assert len(urls) == 2
+    assert urls[0] == urls[1]
+
+
+def test_failed_delivery_retries_then_processes_once(
+    preview_mixin: PreviewMixin,
+) -> None:
+    """Keep a failed delivery pending and queue its title once after recovery."""
+    request_id = "0x" + "33" * 32
+    store = preview_mixin.preview_store()
+    store.requests[request_id] = {
+        "digest": "0x" + "11" * 32,
+        "created_at": 1000,
+        "tool": "propose-question",
+        "delivery_digest": "0x" + "22" * 32,
+        "delivery_block": 195,
+    }
+    store.save()
+    replies = iter(
+        [
+            {"number": 200},
+            [],
+            [],
+            {"number": 201},
+            [],
+            [],
+            {"timestamp": "0x3e8"},
+            {"number": 202},
+            [],
+            [],
+        ]
+    )
+    responses = iter(
+        [
+            SimpleNamespace(status_code=503),
+            SimpleNamespace(
+                status_code=200,
+                body=json.dumps({"result": {"questions": [{"question": TITLE}]}}),
+            ),
+        ]
+    )
+    urls = []
+
+    def rpc(method: str, **kwargs: Any) -> Generator[None, None, Any]:
+        yield from ()
+        return next(replies)
+
+    def http(**kwargs: Any) -> Generator[None, None, Any]:
+        urls.append(kwargs["url"])
+        yield from ()
+        return next(responses)
+
+    preview_mixin._chain_rpc = rpc
+    preview_mixin.get_http_response = http
+    run(preview_mixin.preview_poll(1010))
+    assert not preview_mixin.preview_store().requests[request_id].get("processed")
+    assert preview_mixin.preview_store().entries == {}
+    run(preview_mixin.preview_poll(1015))
+    run(preview_mixin.preview_poll(1020))
+    latest = preview_mixin.preview_store()
+    assert latest.requests[request_id]["processed"] is True
+    assert latest.next_title(1020) == TITLE
+    assert len(urls) == 2
+    assert urls[0] == urls[1]
+    preview_mixin.context.logger.info.assert_called_once()

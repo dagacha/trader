@@ -192,3 +192,72 @@ def test_invalid_lightning_addresses(kwargs: Any) -> None:
     """Reject empty creators and malformed EVM contract addresses at setup."""
     with pytest.raises(ValueError, match="address"):
         LightningConfig(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"lightning_still_hold_max_price": 0},
+        {"lightning_still_hold_max_price": 1},
+        {"still_hold_prior": -0.01},
+        {"still_hold_prior": 1.01},
+        {"lightning_base_rate_floor": -0.01},
+        {"lightning_base_rate_floor": 1.01},
+    ],
+)
+def test_invalid_lightning_probabilities(kwargs: Any) -> None:
+    """Reject invalid price, prior, and evidence probability bounds."""
+    with pytest.raises(ValueError, match="probability"):
+        LightningConfig(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"lightning_base_rate_window_days": 0},
+        {"lightning_base_rate_min_n": 0},
+        {"lightning_rpc_fallback_s": -1},
+        {"lightning_preview_max_per_night": -1},
+    ],
+)
+def test_invalid_lightning_limits(kwargs: Any) -> None:
+    """Require a positive evidence sample and nonnegative optional budgets."""
+    with pytest.raises(ValueError, match="windows and budgets"):
+        LightningConfig(**kwargs)
+
+
+def test_base_rate_ignores_duplicate_and_invalid_resolutions(tmp_path: Any) -> None:
+    """Count each market once and accept only a valid binary resolution."""
+    cfg = LightningConfig(lightning_base_rate_min_n=2)
+    cache = BaseRateCache(tmp_path / "rate.json")
+    rows = [
+        resolved(created=1000),
+        resolved(created=1000, payout=[0, 1]),
+        resolved(created=999, payout=[0, 1]),
+        resolved(created=998, payout="1,0"),
+        resolved(created=997, payout=[]),
+        resolved(created=996, payout=[1, 0, 0]),
+        resolved(created=995, payout=["invalid", 0]),
+        resolved(created=994, payout=[None, 0]),
+        resolved(created=993, payout=[-1, 0]),
+        resolved(created=992, payout=[1, 1]),
+        resolved(created=991, payout=[0, 0]),
+        resolved(created=1002),
+    ]
+    cache.update(rows, 1001, cfg)
+    reloaded = BaseRateCache(cache.path)
+    assert reloaded.sample == 2
+    assert reloaded.data["yes"] == 1
+    assert reloaded.rate == 0.5
+    assert reloaded.usable(1001, cfg) is None
+
+
+def test_base_rate_window_and_clock_must_match(tmp_path: Any) -> None:
+    """Use only evidence from the configured window with a valid age."""
+    cfg = LightningConfig(lightning_base_rate_min_n=1)
+    cache = BaseRateCache(tmp_path / "rate.json")
+    cache.update([resolved()], 1001, cfg)
+    assert cache.usable(1000, cfg) is None
+    assert cache.usable(1001 + 86400, cfg) == 1
+    assert cache.usable(1001 + 86401, cfg) is None
+    assert cache.usable(1001, replace(cfg, lightning_base_rate_window_days=20)) is None
