@@ -23,7 +23,7 @@ import json
 import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from packages.valory.skills.fresh_watch_abci.strategy import FastConfig
 
@@ -84,6 +84,22 @@ def preview_enabled(behaviour: Any) -> bool:
         )
         shared["lightning_preview_disabled"] = True
     return False
+
+
+def natural_yes_index(bet: Mapping[str, Any]) -> Optional[int]:
+    """Identify a natural-YES payout without inferring missing metadata.
+
+    :param bet: discovered market with its Realitio question metadata.
+    :return: outcome zero for the supported order and template, else None.
+    """
+    question = bet.get("question")
+    if (
+        bet.get("outcomes") == ["Yes", "No"]
+        and isinstance(question, dict)
+        and str(question.get("templateId")) == "2"
+    ):
+        return 0
+    return None
 
 
 def still_hold_rule(title: str, creator: str, cfg: LightningConfig) -> Optional[str]:
@@ -152,7 +168,8 @@ class BaseRateCache:
         """Return current evidence for the configured window and creators."""
         creators = sorted(value.lower() for value in cfg.lightning_creators)
         if (
-            self.data.get("creators") != creators
+            self.data.get("template_id") != 2
+            or self.data.get("creators") != creators
             or self.data.get("window_days") != cfg.lightning_base_rate_window_days
             or not 0 <= now - self.data.get("refreshed_at", 0) <= 172800
         ):
@@ -189,7 +206,7 @@ class BaseRateCache:
                 continue
             if (
                 not still_hold_rule(row.get("title", ""), row.get("creator", ""), cfg)
-                or row.get("outcomes") != ["Yes", "No"]
+                or natural_yes_index(row) is None
                 or not cutoff <= int(row["creationTimestamp"]) <= now
             ):
                 continue
@@ -212,6 +229,7 @@ class BaseRateCache:
             refreshed_at=now,
             window_days=cfg.lightning_base_rate_window_days,
             creators=sorted(value.lower() for value in cfg.lightning_creators),
+            template_id=2,
         )
         temporary = self.path.with_suffix(".tmp")
         temporary.write_text(json.dumps(self.data))

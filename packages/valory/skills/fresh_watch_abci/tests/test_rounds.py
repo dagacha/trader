@@ -119,3 +119,35 @@ def test_no_majority(cls: Any) -> None:
     round_.process_payload(SelectionPayload("a", "one"))
     round_.process_payload(SelectionPayload("b", "two"))
     assert round_.end_block()[1] == Event.NO_MAJORITY
+
+
+def test_question_template_does_not_leak_between_watch_selections() -> None:
+    """Keep the current question template and clear it on a later idle lane."""
+    data: Any = SynchronizedData(
+        AbciAppDB(
+            setup_data=dict(
+                all_participants=[("agent",)],
+                participants=[("agent",)],
+                consensus_threshold=[1],
+                question_template_id=[2],
+            )
+        )
+    )
+    for selection, expected in [
+        (
+            dict(
+                lane="lightning_decision",
+                lightning_probability=0.95,
+                question_template_id=2,
+            ),
+            2,
+        ),
+        (dict(lane="market", question_template_id=0), 0),
+        (dict(lane="mech_only"), None),
+    ]:
+        round_ = FreshWatchRound(data, MagicMock())
+        round_.process_payload(SelectionPayload("agent", json.dumps(selection)))
+        outcome = round_.end_block()
+        assert outcome is not None
+        data, _ = outcome
+        assert data.db.get("question_template_id") == expected

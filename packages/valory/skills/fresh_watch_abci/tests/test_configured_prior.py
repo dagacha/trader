@@ -54,8 +54,13 @@ def test_configured_prior_is_not_a_lightning_sentinel(
     behaviour._get_pool_balances = lambda *args: done([13 * 10**27, 87 * 10**27])
     raw = raw_market()
     raw.pop("condition")
+    raw.pop("question", None)
     bet = Bet(**raw, market="omen_subgraph")
-    values = {"requested_at": 1050, "request_prices": [0.87, 0.13]}
+    values = {
+        "question_template_id": 2,
+        "requested_at": 1050,
+        "request_prices": [0.87, 0.13],
+    }
     with (
         patch.object(
             type(behaviour), "sampled_bet", new_callable=PropertyMock, return_value=bet

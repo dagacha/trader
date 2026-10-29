@@ -99,6 +99,7 @@ def raw_market() -> Any:
         outcomes=["Yes", "No"],
         scaledLiquidityMeasure=100,
         condition={"id": "condition"},
+        question={"templateId": 2},
     )
 
 
@@ -220,6 +221,7 @@ def test_evaluate(
     raw = raw_market()
     raw["fee"] = fee
     raw.pop("condition")
+    raw.pop("question", None)
     bet = Bet(**raw, market="omen_subgraph")
     with (
         patch.object(
@@ -268,6 +270,7 @@ def test_evaluate_matches_completed_market_timing(
     b = make(FastDecisionBehaviour, tmp_path)
     raw = raw_market()
     raw.pop("condition")
+    raw.pop("question", None)
     bet = Bet(**raw, market="omen_subgraph", condition_id=condition_id)
     metadata = {"tool": "superforcaster", "request_context": bet.to_request_context()}
     timings = {
@@ -399,6 +402,7 @@ def test_watch_paths(tmp_path: Any, case: str) -> None:
             row["openingTimestamp"] = 1001
         if case == "missing_condition":
             row.pop("condition")
+            row.pop("question", None)
         queue.pending = [row]
     queue.save()
     b._fetch_fresh = lambda *args: done(None if case == "unavailable" else [])
@@ -410,6 +414,7 @@ def test_watch_paths(tmp_path: Any, case: str) -> None:
     if case == "existing":
         row = raw_market()
         row.pop("condition")
+        row.pop("question", None)
         b.bets = [Bet(**row, market="omen_subgraph")]
         b.store_bets()
     with patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd:
@@ -677,6 +682,7 @@ def test_closed_at_answer(tmp_path: Any, opening: int, reason: str, stake: int) 
     b = make(FastDecisionBehaviour, tmp_path)
     raw = raw_market()
     raw.pop("condition")
+    raw.pop("question", None)
     raw["openingTimestamp"] = opening
     bet = Bet(**raw, market="omen_subgraph")
     with (
@@ -1940,8 +1946,10 @@ def test_lightning_evaluate_direct_probability(tmp_path: Any) -> None:
     b.context.params.lightning = LightningConfig(lightning_still_hold=True)
     raw = raw_market()
     raw.pop("condition")
+    raw.pop("question", None)
     bet = Bet(**raw, market="omen_subgraph")
     values = dict(
+        question_template_id=2,
         requested_at=1050,
         request_prices=[0.5, 0.5],
         lightning_probability=0.95,
@@ -1991,7 +1999,7 @@ def test_lightning_refresh_complete_pages_and_failure(tmp_path: Any) -> None:
         lightning_still_hold=True, lightning_base_rate_min_n=1
     )
     rows = [{**raw_market(), "payouts": [1, 0]}]
-    b.get_http_response = lambda **kwargs: done(None)
+    b._base_rate_response = lambda **kwargs: done(None)
     b.context.omen_subgraph.process_response.return_value = rows
     run(b._refresh_base_rate(1050))
     cache = BaseRateCache(tmp_path / "lightning_base_rate.json")
@@ -2054,8 +2062,10 @@ def test_preview_answer_stored_without_pool_read(tmp_path: Any) -> None:
     store.reserve(title, 1050, "2026-10-29", 15)
     raw = raw_market()
     raw.pop("condition")
+    raw.pop("question", None)
     bet = Bet(**{**raw, "title": title}, market="omen_subgraph")
     values = dict(
+        question_template_id=2,
         requested_at=1050,
         request_prices=[0.5, 0.5],
         lightning_preview_request=True,
@@ -2119,7 +2129,11 @@ def test_lightning_placement_respects_template_price_cap(tmp_path: Any) -> None:
     b.context.params.lightning = LightningConfig(
         lightning_still_hold=True, lightning_still_hold_max_price=0.8
     )
-    values = dict(lightning_probability=0.95, lightning_rule="still_hold_phrase")
+    values = dict(
+        question_template_id=2,
+        lightning_probability=0.95,
+        lightning_rule="still_hold_phrase",
+    )
     with (
         patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
         patch.object(
@@ -2159,8 +2173,9 @@ def test_lightning_prior_uses_available_base_rate(tmp_path: Any) -> None:
     cache.update(rows, 1050, cfg)
     raw = raw_market()
     raw.pop("condition")
+    raw.pop("question", None)
     bet = Bet(**raw, market="omen_subgraph")
-    values = dict(requested_at=1050, request_prices=[0.5, 0.5])
+    values = dict(question_template_id=2, requested_at=1050, request_prices=[0.5, 0.5])
     b._get_decision_prediction = lambda: SimpleNamespace(p_yes=0.99)
     b._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
     with (
@@ -2192,11 +2207,11 @@ def test_lightning_failed_refresh_attempt_once_per_day(tmp_path: Any) -> None:
         b.context.params.fast, active_window_utc="00:00-00:01"
     )
     b.context.params.lightning = LightningConfig(lightning_still_hold=True)
-    b.get_http_response = MagicMock(side_effect=lambda **kwargs: done(None))
+    b._base_rate_response = MagicMock(side_effect=lambda **kwargs: done(None))
     b.context.omen_subgraph.process_response.return_value = None
     run(b._refresh_base_rate(1050))
     run(b._refresh_base_rate(1051))
-    assert b.get_http_response.call_count == 1
+    assert b._base_rate_response.call_count == 1
 
 
 def test_chain_discovery_does_not_wait_for_preview_ipfs(tmp_path: Any) -> None:
@@ -2256,7 +2271,7 @@ def test_preview_normal_mech_metadata_and_cleanup(tmp_path: Any) -> None:
     assert request.metadata["request_context"] is None
     decision = make(FastDecisionBehaviour, tmp_path)
     decision.context.params.lightning = LightningConfig(lightning_preview=True)
-    values = dict(selection)
+    values = dict(selection, question_template_id=2)
     values.pop("lane")
     decision.read_bets()
     decision._get_decision_prediction = lambda: SimpleNamespace(p_yes=0.99)
@@ -2287,8 +2302,10 @@ def test_preview_response_after_expiry_does_not_trade(tmp_path: Any) -> None:
     b.context.params.lightning = LightningConfig(lightning_preview=True)
     raw = raw_market()
     raw.pop("condition")
+    raw.pop("question", None)
     bet = Bet(**raw, market="omen_subgraph")
     values = dict(
+        question_template_id=2,
         requested_at=1050,
         request_prices=[0.5, 0.5],
         lightning_preview_request=True,
@@ -2341,8 +2358,10 @@ def test_disabled_lightning_ignores_stale_consensus_fields(tmp_path: Any) -> Non
     b.context.params.lightning = LightningConfig()
     raw = raw_market()
     raw.pop("condition")
+    raw.pop("question", None)
     bet = Bet(**raw, market="omen_subgraph")
     values = dict(
+        question_template_id=2,
         requested_at=1050,
         request_prices=[0.5, 0.5],
         lightning_probability=0.99,
@@ -2410,7 +2429,7 @@ def test_lightning_creator_ingestion_uses_enabled_controls(
     b = make(FreshMarketPoller if background else FreshWatchBehaviour, tmp_path)
     controls: dict[str, Any] = {"lightning_creators": [creator], flag: True}
     b.context.params.lightning = LightningConfig(**controls)
-    b.get_http_response = lambda **kwargs: done(None)
+    b._base_rate_response = lambda **kwargs: done(None)
     b.context.omen_subgraph.process_response.return_value = None
     row = {**raw_market(), "creator": creator}
     b._poll_markets = lambda *args: done([row])
@@ -2441,6 +2460,7 @@ def test_preview_cleanup_preserves_real_markets(tmp_path: Any) -> None:
     b = make(FreshWatchBehaviour, tmp_path)
     raw = raw_market()
     raw.pop("condition")
+    raw.pop("question", None)
     b.bets = [
         Bet(**raw, market="omen_subgraph"),
         Bet(**{**raw, "id": "preview:question"}, market="omen_subgraph"),
@@ -2471,11 +2491,11 @@ def test_base_rate_refresh_reads_all_resolved_pages(tmp_path: Any) -> None:
         for index in range(1001)
     ]
     b.context.omen_subgraph.process_response.side_effect = [rows[:1000], rows[1000:]]
-    b.get_http_response = MagicMock(side_effect=lambda **kwargs: done(None))
+    b._base_rate_response = MagicMock(side_effect=lambda **kwargs: done(None))
     run(b._refresh_base_rate(1050))
     queries = [
         json.loads(call.kwargs["content"])["query"]
-        for call in b.get_http_response.call_args_list
+        for call in b._base_rate_response.call_args_list
     ]
     assert "skip: 0," in queries[0]
     assert "skip: 1000," in queries[1]
@@ -2602,6 +2622,7 @@ def test_normal_and_unsupported_requests_keep_their_context(
     b.context.params.prompt_template = Template("$question [$yes/$no]")
     raw = raw_market()
     raw.pop("condition")
+    raw.pop("question", None)
     bet = Bet(**raw, market="omen_subgraph")
     with (
         patch.object(
@@ -2621,8 +2642,10 @@ def test_normal_and_unsupported_requests_keep_their_context(
 
 def evaluate_preview(b: Any, values: Any, now: float) -> Any:
     """Evaluate stored preview consensus with the normal sampled market."""
+    values = {"question_template_id": 2, **values}
     raw = {**raw_market(), "title": "Will event X happen?"}
     raw.pop("condition")
+    raw.pop("question", None)
     bet = Bet(**raw, market="omen_subgraph")
     with (
         patch.object(
@@ -2655,7 +2678,10 @@ def test_cached_preview_decision_uses_the_answer_before_expiry(
     )
     b._get_pool_balances = MagicMock(side_effect=lambda *args: done([100 * 10**18] * 2))
     values = dict(
-        requested_at=1050, request_prices=[0.5, 0.5], lightning_preview_probability=0.99
+        question_template_id=2,
+        requested_at=1050,
+        request_prices=[0.5, 0.5],
+        lightning_preview_probability=0.99,
     )
     result = evaluate_preview(b, values, now)
     if now < 1950:
@@ -2688,6 +2714,7 @@ def test_failed_or_expired_preview_answer_cannot_trade(
     store.ingest({"result": {"questions": [{"question": title}]}}, 1040, 1050)
     store.reserve(title, 1050, "night", 15)
     values = dict(
+        question_template_id=2,
         requested_at=1050,
         request_prices=[0.5, 0.5],
         lightning_preview_request=True,
@@ -2723,6 +2750,7 @@ def test_direct_still_hold_can_buy_above_fast_price_cap(tmp_path: Any) -> None:
     b._get_pool_balances = lambda *args: done([9 * 10**27, 91 * 10**27])
     b._get_decision_prediction = lambda: SimpleNamespace(p_yes=0.95)
     values = dict(
+        question_template_id=2,
         requested_at=1050,
         request_prices=[0.91, 0.09],
         lightning_probability=0.95,
@@ -2730,6 +2758,7 @@ def test_direct_still_hold_can_buy_above_fast_price_cap(tmp_path: Any) -> None:
     )
     raw = raw_market()
     raw.pop("condition")
+    raw.pop("question", None)
     bet = Bet(**raw, market="omen_subgraph")
     with (
         patch.object(
@@ -2765,7 +2794,11 @@ def test_direct_execution_uses_direct_cap_and_retains_edge_and_slip(
 
     b = make(FastBetPlacementBehaviour, tmp_path)
     b.context.params.lightning = LightningConfig(lightning_still_hold=True)
-    values = dict(lightning_probability=0.95, lightning_rule="still_hold_phrase")
+    values = dict(
+        question_template_id=2,
+        lightning_probability=0.95,
+        lightning_rule="still_hold_phrase",
+    )
     b.quoted_tokens = 2 * 10**18
     with (
         patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,

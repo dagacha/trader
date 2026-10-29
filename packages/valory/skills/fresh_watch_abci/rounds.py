@@ -114,6 +114,7 @@ class FreshWatchRound(CollectSameUntilThresholdRound):
             ),
             lightning_preview_title=selection.pop("lightning_preview_title", None),
             lightning_preview_request=selection.pop("lightning_preview_request", False),
+            question_template_id=selection.pop("question_template_id", None),
             **selection,
         )
         if lane == "lightning_decision":

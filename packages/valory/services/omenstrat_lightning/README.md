@@ -7,9 +7,11 @@ The fast, Pearl, and Polymarket services keep their current defaults.
 
 ## Decisions and discovery
 
-1. An allowed creator and the case-insensitive phrase `\bstill hold\b` qualify
-   for a direct YES decision. The agent computes the YES rate from valid resolved
-   Omen markets created in the last 21 days. The normal cache refresh runs once
+1. An allowed creator, the case-insensitive phrase `\bstill hold\b`, and Realitio
+   template 2 with outcomes exactly `["Yes", "No"]` qualify for a direct YES
+   decision. Other markets keep the plain fast strategy. The agent computes the
+   YES rate from valid resolved markets with the same template and outcomes.
+   It uses markets created in the last 21 days. The normal cache refresh runs once
    per day, outside `ACTIVE_WINDOW_UTC`. Missing or unusable evidence can refresh
    during the window, with retries at least 30 minutes apart. Samples remain
    usable for 48 hours. Fewer than 60 observations or a rate below 0.90 sends
@@ -22,7 +24,8 @@ The fast, Pearl, and Polymarket services keep their current defaults.
    receipt links the condition to its Realitio question and title. The subgraph
    supplies a title only if the receipt cannot supply it. Continuous RPC errors
    for more than 60 seconds enable the normal 15-second subgraph poll.
-3. The agent watches the creators' `propose-question` requests and the proposer
+3. Question preview is experimental and off by default. When enabled, the agent
+   watches the creators' `propose-question` requests and the proposer
    Mech's deliveries. It reads the delivery from the configured IPFS gateway.
    Each proposed title outside the still-hold template can start the usual
    prediction request before a market exists. Answers use exact titles. Case,
@@ -43,7 +46,8 @@ against `MAX_TRADES` in the same way as Mech decisions.
 ## Parameters
 
 The Boolean defaults are OFF in the shared skills and the fast agent/service.
-The lightning agent/service and quickstart template enable all three flags.
+The lightning agent/service and quickstart template enable still-hold decisions
+and chain discovery. Experimental question preview remains off by default.
 Other values below are the lightning defaults.
 
 | Environment name | Lightning default | Purpose |
@@ -57,7 +61,7 @@ Other values below are the lightning defaults.
 | `LIGHTNING_CHAIN_DETECT` | `true` | Use factory events during the active window. |
 | `OMEN_FPMM_FACTORY` | `0x9083A2B699c0a4AD06F63580BDE2635d26a3eeF0` | Factory to scan. |
 | `LIGHTNING_RPC_FALLBACK_S` | `60` | Continuous RPC failure before subgraph fallback. |
-| `LIGHTNING_PREVIEW` | `true` | Start predictions from proposed titles. |
+| `LIGHTNING_PREVIEW` | `false` | Enable experimental predictions from proposed titles. |
 | `LIGHTNING_PREVIEW_MAX_PER_NIGHT` | `15` | Maximum paid preview requests per night. |
 | `LIGHTNING_CREATORS` | The two fast-lane creators | Creators allowed for lightning rules. |
 
@@ -120,8 +124,10 @@ omenstrat_lightning`. Roll back one trader with:
 ./release_service.sh --quickstart N --service omenstrat_fast
 ```
 
-Migration adds only missing inputs and records which inputs it owns. Rollback
-removes those added lightning inputs. It preserves explicit operator values.
+Migration sets the feature flags for the selected service and records the
+previous values. It adds other missing inputs and preserves an explicit creator
+list. Rollback removes added inputs and restores recorded values. Operator edits
+to other controls remain in place.
 The release script already permits service public-ID changes. New quickstarts
 can use `configs/config_omenstrat_lightning.json`; do not replace an existing
 trader's identity or staking configuration with that template.

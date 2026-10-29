@@ -82,6 +82,7 @@ from packages.valory.skills.fresh_watch_abci.lightning import (
     BaseRateCache,
     LightningConfig,
     lightning_config,
+    natural_yes_index,
     preview_enabled,
     still_hold_rule,
 )
@@ -125,7 +126,7 @@ from packages.valory.skills.trader_abci.mech_latency import (
 
 _FIELDS = """id title collateralToken condition { id } creator fee creationTimestamp
 openingTimestamp outcomeSlotCount outcomeTokenAmounts outcomeTokenMarginalPrices
-outcomes scaledLiquidityMeasure"""
+outcomes scaledLiquidityMeasure question { templateId }"""
 
 # Bounded response deadline for the fast-lane preflight estimate_gas call.
 # Short enough to leave headroom under the placement-round timeout; long
@@ -246,6 +247,16 @@ class FreshWatchBehaviour(
             if len(page) < 1000:
                 return rows
 
+    def _base_rate_response(self, **kwargs: Any) -> Generator[None, None, Any]:
+        """Read one evidence page within a short scheduler deadline.
+
+        :param kwargs: HTTP request fields.
+        :yield: cooperative request I/O.
+        :return: the HTTP response.
+        """
+        message, dialogue = self._build_http_request_message(**kwargs)
+        return (yield from request_with_timeout(self, message, dialogue, 5.0))
+
     def _refresh_base_rate(self, now: float) -> Generator[None, None, None]:
         """Refresh daily or recover unusable evidence during the night."""
         cfg = lightning_controls(self)
@@ -264,11 +275,18 @@ class FreshWatchBehaviour(
                 + ", orderBy: creationTimestamp, orderDirection: asc, where: {"
                 + f'creator_in: {creators}, creationTimestamp_gte: "{cursor}", '
                 + f'creationTimestamp_lte: "{int(now)}", payouts_not: null, '
-                + "outcomeSlotCount: 2}) {id title creator creationTimestamp outcomes payouts} }"
+                + "outcomeSlotCount: 2}) {id title creator creationTimestamp outcomes payouts "
+                + "question { templateId }} }"
             )
-            response = yield from self.get_http_response(
-                content=json.dumps({"query": query}).encode(), **subgraph.get_spec()
-            )
+            try:
+                response = yield from self._base_rate_response(
+                    content=json.dumps({"query": query}).encode(), **subgraph.get_spec()
+                )
+            except TimeoutException:
+                self.context.logger.warning(
+                    "Lightning base-rate refresh timed out; continuing discovery."
+                )
+                return
             page = subgraph.process_response(response)
             if not isinstance(page, list):
                 return
@@ -504,6 +522,7 @@ class FreshWatchBehaviour(
                     return {"lane": "wait"}
             elif now - last_poll >= poll_s:
                 rows = yield from self._poll_markets(queue, now)
+                now = time.time()
                 self.context.state.fast_last_poll = now
                 if rows is not None:
                     queue = FreshQueue(queue.path)
@@ -531,13 +550,10 @@ class FreshWatchBehaviour(
 
         lightning = lightning_controls(self)
         candidate = queue.pending[0]
+        canonical = natural_yes_index(candidate) is not None
         rule = still_hold_rule(candidate["title"], candidate["creator"], lightning)
         probability = None
-        if (
-            lightning.lightning_still_hold
-            and rule
-            and candidate.get("outcomes") == ["Yes", "No"]
-        ):
+        if lightning.lightning_still_hold and rule and canonical:
             base_rate = BaseRateCache(
                 self.params.store_path / "lightning_base_rate.json"
             )
@@ -549,7 +565,7 @@ class FreshWatchBehaviour(
                 )
         preview = (
             self.preview_store().match(candidate["title"], now)
-            if lightning.lightning_preview
+            if lightning.lightning_preview and canonical
             else None
         )
         if preview is not None:
@@ -579,6 +595,10 @@ class FreshWatchBehaviour(
         bet_data = raw.copy()
         bet_data.pop("block_number", None)
         bet_data.pop("block_hash", None)
+        question = bet_data.pop("question", None)
+        question_template_id = (
+            question.get("templateId") if isinstance(question, dict) else None
+        )
         condition = bet_data.pop("condition", None)
         if condition is not None:
             bet_data["condition_id"] = condition["id"]
@@ -647,6 +667,8 @@ class FreshWatchBehaviour(
             return {"lane": "wait"}
         prices = [balances[1] / sum(balances), balances[0] / sum(balances)]
         if probability is not None:
+            probability = base_rate.usable(time.time(), lightning)
+        if probability is not None:
             self.context.logger.info(
                 "[LIGHTNING_STILL_HOLD] market=%s rule=%s p_yes=%s",
                 bet.id,
@@ -660,6 +682,7 @@ class FreshWatchBehaviour(
                 requested_at=requested_at,
                 lightning_probability=probability,
                 lightning_rule=rule,
+                question_template_id=question_template_id,
             )
         if preview is not None:
             preview = self.preview_store().consume(bet.title, requested_at)
@@ -671,6 +694,7 @@ class FreshWatchBehaviour(
                 requested_at=preview["requested_at"],
                 lightning_preview_title=bet.title,
                 lightning_preview_probability=preview["p_yes"],
+                question_template_id=question_template_id,
             )
         if tool is None:
             queue = FreshQueue(queue.path)
@@ -688,6 +712,7 @@ class FreshWatchBehaviour(
             mech_tool=tool,
             request_prices=prices,
             requested_at=requested_at,
+            question_template_id=question_template_id,
         )
 
     def async_act(self) -> Generator:
@@ -731,12 +756,13 @@ class FreshMarketPoller(FreshWatchBehaviour):
             state.fast_polling = True
             try:
                 rows = yield from self._poll_markets(queue, now)
+                committed_at = time.time()
                 if rows is not None:
                     # The foreground can pop a market while the HTTP request waits.
                     queue = FreshQueue(queue.path)
                     queue.ingest(
                         rows,
-                        now,
+                        committed_at,
                         self._discovery_creators(),
                         cfg.fresh_max_age_s,
                         cfg.overlap_s,
@@ -936,15 +962,25 @@ class FastDecisionBehaviour(PreviewMixin, DecisionMakerBaseBehaviour):
         )
         result.update(mech=timing.get("mech"), latency_s=timing.get("latency_s"))
         lightning = lightning_controls(self)
-        direct = (
-            db.get("lightning_probability", None)
-            if lightning.lightning_still_hold and bet.outcomes == ["Yes", "No"]
-            else None
+        canonical = (
+            natural_yes_index(
+                {
+                    "outcomes": bet.outcomes,
+                    "question": {"templateId": db.get("question_template_id", None)},
+                }
+            )
+            is not None
         )
+        still_hold = bool(
+            lightning.lightning_still_hold
+            and canonical
+            and still_hold_rule(bet.title, bet.creator, lightning)
+        )
+        direct = db.get("lightning_probability", None) if still_hold else None
         direct = direct if isinstance(direct, (int, float)) else None
         preview_probability = (
             db.get("lightning_preview_probability", None)
-            if lightning.lightning_preview
+            if lightning.lightning_preview and canonical
             else None
         )
         preview_probability = (
@@ -1011,20 +1047,15 @@ class FastDecisionBehaviour(PreviewMixin, DecisionMakerBaseBehaviour):
         if bet.openingTimestamp <= time.time():
             result["reason"] = "market_closed"
             return result
-        cache = BaseRateCache(self.params.store_path / "lightning_base_rate.json")
-        enabled = (
-            lightning.lightning_still_hold
-            or lightning.lightning_chain_detect
-            or lightning.lightning_preview
-        )
-        prior = cache.current_rate(now, lightning) if enabled else None
-        if prior is None:
-            prior = lightning.still_hold_prior
-        cfg = lightning_config(
-            self.params.fast,
-            lightning,
-            prior if enabled or lightning.still_hold_prior != 0.85 else None,
-        )
+        cfg = self.params.fast
+        if still_hold:
+            cache = BaseRateCache(self.params.store_path / "lightning_base_rate.json")
+            prior = cache.current_rate(now, lightning)
+            cfg = lightning_config(
+                cfg,
+                lightning,
+                lightning.still_hold_prior if prior is None else prior,
+            )
         if direct is not None:
             cfg = replace(
                 cfg,
@@ -1038,11 +1069,7 @@ class FastDecisionBehaviour(PreviewMixin, DecisionMakerBaseBehaviour):
             db.get_strict("request_prices"),
             cfg,
             bet.fee,
-            yes_only=bool(
-                enabled
-                and bet.outcomes == ["Yes", "No"]
-                and still_hold_rule(bet.title, bet.creator, lightning)
-            ),
+            yes_only=still_hold,
         )
         result.update(asdict(decision))
         result["request_price"] = db.get_strict("request_prices")[decision.side]
@@ -1142,7 +1169,13 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
             cfg.lightning_still_hold
             and db.get("lightning_rule", None) == "still_hold_phrase"
             and isinstance(db.get("lightning_probability", None), (int, float))
-            and self.sampled_bet.outcomes == ["Yes", "No"]
+            and natural_yes_index(
+                {
+                    "outcomes": self.sampled_bet.outcomes,
+                    "question": {"templateId": db.get("question_template_id", None)},
+                }
+            )
+            is not None
         ):
             maximum = cfg.lightning_still_hold_max_price
         return maximum

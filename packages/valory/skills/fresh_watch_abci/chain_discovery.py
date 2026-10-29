@@ -55,7 +55,7 @@ DELIVERY_TOPIC = (
 )
 MARKET_FIELDS = """id title collateralToken condition { id } creator fee creationTimestamp
 openingTimestamp outcomeSlotCount outcomeTokenAmounts outcomeTokenMarginalPrices
-outcomes scaledLiquidityMeasure"""
+outcomes scaledLiquidityMeasure question { templateId }"""
 
 
 class ChainRPCError(Exception):
@@ -117,7 +117,7 @@ def receipt_question(
 
     :param logs: receipt events.
     :param condition_id: the market's condition ID.
-    :return: title, opening time and outcomes, or None when unavailable.
+    :return: metadata, an empty dict for unsupported questions, or None if missing.
     """
     question_id = None
     for log in logs:
@@ -128,7 +128,7 @@ def receipt_question(
             and topics[1] == condition_id
         ):
             if decode(["uint256"], bytes.fromhex(_hex(log["data"])[2:]))[0] != 2:
-                return None
+                return {}
             question_id = topics[3]
             break
     if question_id is None:
@@ -141,20 +141,20 @@ def receipt_question(
             ["uint256", "string", "address", "uint32", "uint32", "uint256", "uint256"],
             bytes.fromhex(_hex(log["data"])[2:]),
         )
+        if template_id != 2:
+            return {}
         parts = question.replace("\x1f", "␟").split("␟")
-        if template_id == 2 and len(parts) >= 2:
-            outcomes = json.loads("[" + parts[1] + "]")
-        elif template_id == 0:
-            outcomes = ["Yes", "No"]
-        else:
+        if len(parts) < 2:
             return None
+        outcomes = json.loads("[" + parts[1] + "]")
         if outcomes != ["Yes", "No"]:
-            return None
+            return {}
         return dict(
             title=parts[0],
             openingTimestamp=opening,
             outcomes=outcomes,
             outcomeSlotCount=2,
+            question={"templateId": template_id},
         )
     return None
 
@@ -353,6 +353,11 @@ class ChainDiscoveryMixin:
                 return None
             if market["outcomeSlotCount"] != 2 or market["outcomes"] != ["Yes", "No"]:
                 return {}
+            template_id = (market.get("question") or {}).get("templateId")
+            if template_id is not None and str(template_id) != "2":
+                return {}
+        elif not question:
+            return {}
         else:
             market.update(question, creationTimestamp=created)
             balances = yield from self._chain_pool_balances(

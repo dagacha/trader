@@ -146,23 +146,23 @@ def test_creation_requires_one_condition(count: int) -> None:
 def test_receipt_rejects_nonbinary_condition() -> None:
     """Do not use a title when its condition has three outcomes."""
     condition = dict(CONDITION, data=encode(["uint256"], [3]))
-    assert receipt_question([QUESTION, condition], CONDITION["topics"][1]) is None
+    assert receipt_question([QUESTION, condition], CONDITION["topics"][1]) == {}
 
 
 @pytest.mark.parametrize(
-    "template,title,outcomes",
+    "template,title,state",
     [
-        (0, "Will it happen?", ["Yes", "No"]),
-        (2, 'Will it happen?\x1f"Yes","No"', ["Yes", "No"]),
-        (2, 'Will it happen?␟"No","Yes"', None),
-        (2, "Will it happen?", None),
-        (1, "Will it happen?", None),
+        (0, "Will it happen?", "unsupported"),
+        (2, 'Will it happen?\x1f"Yes","No"', "supported"),
+        (2, 'Will it happen?␟"No","Yes"', "unsupported"),
+        (2, "Will it happen?", "missing"),
+        (1, "Will it happen?", "unsupported"),
     ],
 )
 def test_receipt_accepts_only_binary_question_templates(
-    template: int, title: str, outcomes: Any
+    template: int, title: str, state: str
 ) -> None:
-    """Read supported templates and preserve the order of binary outcomes."""
+    """Accept explicit Yes/No template 2 and distinguish unsupported metadata."""
     types = ["uint256", "string", "address", "uint32", "uint32", "uint256", "uint256"]
     values = list(decode(types, bytes.fromhex(QUESTION["data"][2:])))
     values[:2] = [template, title]
@@ -170,14 +170,17 @@ def test_receipt_accepts_only_binary_question_templates(
     unrelated = dict(QUESTION, topics=[QUESTION["topics"][0], "0x" + "00" * 32, "", ""])
     logs = [CREATION, CONDITION, unrelated, question]
     result = receipt_question(logs, CONDITION["topics"][1])
-    if outcomes is None:
+    if state == "missing":
         assert result is None
+    elif state == "unsupported":
+        assert result == {}
     else:
         assert result == {
             "title": "Will it happen?",
             "openingTimestamp": 1793664000,
-            "outcomes": outcomes,
+            "outcomes": ["Yes", "No"],
             "outcomeSlotCount": 2,
+            "question": {"templateId": 2},
         }
 
 
@@ -408,11 +411,13 @@ def test_subgraph_lookup_uses_exact_market_id(tmp_path: Path, rows: Any) -> None
     query = json.loads(request["content"])["query"]
     assert 'where: {id: "' + market_id + '"}' in query
     assert "outcomeTokenMarginalPrices" in query
+    assert "question { templateId }" in query
     assert request["method"] == "POST"
     assert request["url"] == "http://subgraph.invalid"
 
 
-def test_subgraph_title_fallback_reports_source(tmp_path: Path) -> None:
+@pytest.mark.parametrize("question", [None, {"templateId": "2"}])
+def test_subgraph_title_fallback_reports_source(tmp_path: Path, question: Any) -> None:
     """Return the indexed market and identify its delayed title source."""
     harness: Any = Harness(tmp_path)
     harness.receipt = {"logs": []}
@@ -422,6 +427,8 @@ def test_subgraph_title_fallback_reports_source(tmp_path: Path) -> None:
         "outcomeSlotCount": 2,
         "outcomes": ["Yes", "No"],
     }
+    if question is not None:
+        market["question"] = question
     harness.fallback = market
     assert (
         run(harness._chain_market(CREATION, {"timestamp": hex(CREATED)}, CREATED + 8))
@@ -859,3 +866,57 @@ def test_future_creation_keeps_retry_cursor_until_local_clock_catches_up(
     rows = run(harness.chain_markets(CREATED + 1))
     assert [row["id"] for row in rows] == [creation_details(CREATION)["id"]]
     assert FreshQueue(tmp_path / "fresh_watch.json").pending == rows
+
+
+@pytest.mark.parametrize(
+    "slot_count,template,title",
+    [
+        (3, 2, 'Will it happen?␟"Yes","No","Maybe"'),
+        (2, 0, "Will it happen?"),
+        (2, 1, 'Will it happen?␟"Yes","No"'),
+        (2, 2, 'Will it happen?␟"No","Yes"'),
+        (2, 2, 'Will it happen?␟"Invalid","Valid"'),
+    ],
+)
+def test_proven_unsupported_receipt_skips_without_indexer_row(
+    tmp_path: Path, slot_count: int, template: int, title: str
+) -> None:
+    """Known unsupported receipts must not hold a retry cursor or use a shortcut."""
+    harness: Any = Harness(tmp_path)
+    types = ["uint256", "string", "address", "uint32", "uint32", "uint256", "uint256"]
+    values = list(decode(types, bytes.fromhex(QUESTION["data"][2:])))
+    values[:2] = [template, title]
+    condition = dict(CONDITION, data=encode(["uint256"], [slot_count]))
+    question = dict(QUESTION, data=encode(types, values))
+    harness.receipt = {"logs": [question, condition]}
+    harness._chain_subgraph_market = MagicMock(side_effect=lambda market: done(None))
+    assert run(harness.chain_markets(CREATED + 5)) == []
+    state = json.loads((tmp_path / "lightning_chain.json").read_text())
+    assert state["last_block"] == BLOCK
+    assert state["rpc_error_since"] is None
+    assert FreshQueue(tmp_path / "fresh_watch.json").pending == []
+    harness._chain_subgraph_market.assert_not_called()
+    assert run(harness.chain_markets(CREATED + 10)) == []
+
+
+@pytest.mark.parametrize("template", [0, 1])
+def test_fallback_with_known_unsupported_template_never_enters_queue(
+    tmp_path: Path, template: int
+) -> None:
+    """An indexed boolean or other template cannot acquire natural-YES labels."""
+    from packages.valory.skills.fresh_watch_abci.tests.test_behaviours import raw_market
+
+    harness: Any = Harness(tmp_path)
+    harness.receipt = {"logs": []}
+    harness.fallback = {
+        **raw_market(),
+        "id": creation_details(CREATION)["id"],
+        "creationTimestamp": CREATED,
+        "openingTimestamp": CREATED + 3600,
+        "question": {"templateId": template},
+    }
+    assert run(harness.chain_markets(CREATED + 5)) == []
+    state = json.loads((tmp_path / "lightning_chain.json").read_text())
+    assert state["last_block"] == BLOCK
+    assert state["rpc_error_since"] is None
+    assert FreshQueue(tmp_path / "fresh_watch.json").pending == []

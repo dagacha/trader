@@ -135,7 +135,7 @@ def test_base_rate_recovers_after_failed_night_http_read(tmp_path: Any) -> None:
     )
     cfg = LightningConfig(lightning_still_hold=True, lightning_base_rate_min_n=1)
     b.context.params.lightning = cfg
-    b.get_http_response = lambda **kwargs: done(None)
+    b._base_rate_response = lambda **kwargs: done(None)
     b.context.omen_subgraph.process_response.side_effect = [None, [resolved()]]
     run(b._refresh_base_rate(3600))
     run(b._refresh_base_rate(5399))

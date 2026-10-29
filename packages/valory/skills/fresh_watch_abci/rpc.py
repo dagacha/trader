@@ -17,7 +17,7 @@
 #
 # ------------------------------------------------------------------------------
 
-"""Bound RPC reads even when the connection sends no response."""
+"""Bound API reads even when the connection sends no response."""
 
 import time
 from typing import Any, Generator, List, cast
@@ -35,7 +35,7 @@ def request_with_timeout(
     """Poll on scheduler ticks and retain a discard callback after expiry.
 
     :param behaviour: calling behaviour.
-    :param message: ledger or contract API request.
+    :param message: API read request.
     :param dialogue: request dialogue.
     :param timeout: maximum response wait in seconds.
     :yield: control during short local sleeps.

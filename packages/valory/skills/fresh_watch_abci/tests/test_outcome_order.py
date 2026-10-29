@@ -81,8 +81,9 @@ def test_reversed_still_hold_uses_normal_decision(
     b.context.params.lightning = LightningConfig(lightning_still_hold=True)
     raw = {**raw_market(), "outcomes": ["No", "Yes"]}
     raw.pop("condition")
+    raw.pop("question", None)
     bet = Bet(**raw, market="omen_subgraph")
-    values = dict(requested_at=1050, request_prices=[0.8, 0.2])
+    values = dict(question_template_id=2, requested_at=1050, request_prices=[0.8, 0.2])
     if stale_direct:
         values.update(lightning_probability=0.95, lightning_rule="still_hold_phrase")
     b._get_decision_prediction = MagicMock(return_value=SimpleNamespace(p_yes=0.1))
@@ -113,9 +114,14 @@ def test_reversed_still_hold_retains_normal_execution_cap(tmp_path: Any) -> None
     """Ignore stale direct metadata when the selected pool reverses outcomes."""
     b = make(FastBetPlacementBehaviour, tmp_path)
     b.context.params.lightning = LightningConfig(lightning_still_hold=True)
-    values = dict(lightning_probability=0.95, lightning_rule="still_hold_phrase")
+    values = dict(
+        question_template_id=2,
+        lightning_probability=0.95,
+        lightning_rule="still_hold_phrase",
+    )
     raw = {**raw_market(), "outcomes": ["No", "Yes"]}
     raw.pop("condition")
+    raw.pop("question", None)
     bet = Bet(**raw, market="omen_subgraph")
     with (
         patch.object(
@@ -155,8 +161,9 @@ def test_base_rate_query_fetches_outcome_names(tmp_path: Any) -> None:
     b = make(FreshWatchBehaviour, tmp_path)
     b.context.params.lightning = LightningConfig(lightning_still_hold=True)
     b.context.omen_subgraph.process_response.return_value = []
-    b.get_http_response = MagicMock(side_effect=lambda **kwargs: done(None))
+    b._base_rate_response = MagicMock(side_effect=lambda **kwargs: done(None))
     run(b._refresh_base_rate(1050))
-    query = json.loads(b.get_http_response.call_args.kwargs["content"])["query"]
+    query = json.loads(b._base_rate_response.call_args.kwargs["content"])["query"]
     fields = query.split("}) {", 1)[1]
     assert "outcomes" in fields.split()
+    assert "question { templateId }" in fields

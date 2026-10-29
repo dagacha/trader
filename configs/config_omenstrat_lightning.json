@@ -1,6 +1,6 @@
 {
     "name": "omenstrat_lightning",
-    "hash": "bafybeidjnt3cevyc2s7pn2oyxakiivbjladkldtp6f7iy7d6ftuzwinx3i",
+    "hash": "bafybeihwtgvjfe7332mm7plyyo7fevoyfeki4j5kssuwvgnkh5vrgmuyfy",
     "description": "Omen agent with still-hold base rates, chain discovery, and question previews.",
     "image": "https://operate.olas.network/_next/image?url=%2Fimages%2Fprediction-agent.png&w=3840&q=75",
     "service_version": "main",
@@ -445,7 +445,7 @@
         "LIGHTNING_PREVIEW": {
             "name": "Lightning preview",
             "description": "Request predictions for proposed questions before markets exist.",
-            "value": "true",
+            "value": "false",
             "provision_type": "user"
         },
         "LIGHTNING_PREVIEW_MAX_PER_NIGHT": {

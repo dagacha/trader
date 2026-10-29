@@ -84,7 +84,6 @@ def test_lightning_controls_are_declared(relative):
             if key in (
                 "lightning_still_hold",
                 "lightning_chain_detect",
-                "lightning_preview",
             ):
                 default = True
             if key == "still_hold_prior":
@@ -109,7 +108,6 @@ def test_lightning_quickstart_enables_controls():
         if key in (
             "lightning_still_hold",
             "lightning_chain_detect",
-            "lightning_preview",
         ):
             default = True
         if key == "still_hold_prior":

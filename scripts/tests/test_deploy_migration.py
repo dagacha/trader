@@ -2360,6 +2360,16 @@ def test_rollback_removes_only_added_fast_defaults(tmp_path, existing, style):
     run(tmp_path, "--service", "trader_pearl")
     expected = dict(original)
     expected.setdefault("MAX_TRADES", entry("3"))
+    expected.update(
+        {
+            key: entry("false")
+            for key in (
+                "LIGHTNING_STILL_HOLD",
+                "LIGHTNING_CHAIN_DETECT",
+                "LIGHTNING_PREVIEW",
+            )
+        }
+    )
     actual = json.loads(paths[0].read_text())["env_variables"]
     assert {k: v["value"] for k, v in actual.items()} == {
         k: v["value"] for k, v in expected.items()
@@ -2406,7 +2416,13 @@ def test_rollback_without_provenance_keeps_all_keys(tmp_path):
             assert key in report
     actual = json.loads(paths[0].read_text())
     assert actual["env_variables"] == template["env_variables"]
-    assert all(p.read_bytes() == before[p] for p in [*paths[1:], saved])
+    assert all(p.read_bytes() == before[p] for p in paths[1:])
+    assert json.loads(saved.read_text())["user_provided_args"] == {
+        "USE_OFFCHAIN": "true",
+        "LIGHTNING_STILL_HOLD": "false",
+        "LIGHTNING_CHAIN_DETECT": "false",
+        "LIGHTNING_PREVIEW": "false",
+    }
     assert not (tmp_path / "configs/.fast_defaults_added.json").exists()
 
 
@@ -2428,7 +2444,16 @@ def test_missing_provenance_warns_for_cached_env(tmp_path, style):
         text = ("environment:\n  - " if style == "list" else "") + key + "=true\n"
     path.write_text(text)
     output = run(tmp_path, "--service", "trader_pearl")
-    assert path.read_text() == text
+    flags = ("LIGHTNING_STILL_HOLD", "LIGHTNING_CHAIN_DETECT", "LIGHTNING_PREVIEW")
+    expected = text
+    for flag in flags:
+        if style == "kubernetes":
+            expected += f'- name: {flag}\n  value: "false"\n'
+        elif style == "mapping":
+            expected += f'  {flag}: "false"\n'
+        else:
+            expected += ("  - " if style == "list" else "") + f"{flag}=false\n"
+    assert path.read_text() == expected
     warning = next(
         line for line in output.splitlines() if "WARNING" in line and str(path) in line
     )
@@ -3086,14 +3111,14 @@ def test_lightning_defaults_have_separate_reversible_provenance(
     run(quickstart, "--service", rollback)
     for path in paths:
         env = json.loads(path.read_text())["env_variables"]
-        assert "LIGHTNING_CHAIN_DETECT" not in env
+        assert env["LIGHTNING_CHAIN_DETECT"]["value"] == "false"
         assert "STILL_HOLD_PRIOR" not in env
         assert ("LIGHTNING_RPC_FALLBACK_S" in env) is explicit
     args = json.loads(saved.read_text())["user_provided_args"]
-    assert "LIGHTNING_CHAIN_DETECT" not in args
+    assert args["LIGHTNING_CHAIN_DETECT"] == "false"
     assert ("LIGHTNING_RPC_FALLBACK_S" in args) is explicit
-    assert "LIGHTNING_CHAIN_DETECT=" not in agent.read_text()
-    assert json.loads(marker.read_text()) == {"added": []}
+    assert "LIGHTNING_CHAIN_DETECT=false" in agent.read_text()
+    assert json.loads(marker.read_text()) == {"added": [], "service": rollback}
     if rollback == "omenstrat_fast":
         assert json.loads(fast_marker.read_text())["added"] == fast_added
 
@@ -3141,7 +3166,7 @@ def test_lightning_provenance_needs_no_special_fast_price_default(tmp_path):
     fixture(quickstart)
     run(quickstart, "--service", "omenstrat_lightning")
     marker = quickstart / "configs/.lightning_defaults_added.json"
-    assert set(json.loads(marker.read_text())) == {"added", "values"}
+    assert set(json.loads(marker.read_text())) == {"added", "values", "service"}
 
 
 @pytest.mark.parametrize("rollback", ["omenstrat_fast", "trader_pearl"])
@@ -3167,7 +3192,7 @@ def test_lightning_rollback_keeps_edited_defaults(tmp_path, rollback):
     for path in paths:
         env = json.loads(path.read_text())["env_variables"]
         assert env["STILL_HOLD_PRIOR"]["value"] == "0.70"
-        assert "LIGHTNING_PREVIEW" not in env
+        assert env["LIGHTNING_PREVIEW"]["value"] == "false"
     assert (
         json.loads(saved.read_text())["user_provided_args"]["STILL_HOLD_PRIOR"]
         == "0.70"
@@ -3179,3 +3204,194 @@ def test_lightning_rollback_keeps_edited_defaults(tmp_path, rollback):
     marker.write_text(json.dumps({"added": ["STILL_HOLD_PRIOR"], "values": []}))
     with pytest.raises(ValueError, match="Invalid lightning migration provenance"):
         run(quickstart, "--service", "omenstrat_lightning")
+
+
+@pytest.mark.parametrize("rollback", ["omenstrat_fast", "trader_pearl"])
+@pytest.mark.parametrize("style", ["env", "compose", "kubernetes"])
+def test_shipped_fast_switches_lightning_flags_and_restores_previous(
+    tmp_path, rollback, style
+):
+    """Apply the service flags and restore the previous settings on rollback."""
+    paths = fixture(tmp_path)
+    source = json.loads(
+        (SCRIPT.parents[1] / "configs/config_omenstrat_fast.json").read_text()
+    )
+    paths[0].write_text(json.dumps(source))
+    prior = {
+        key: source["env_variables"][key]["value"]
+        for key in (
+            "LIGHTNING_STILL_HOLD",
+            "LIGHTNING_CHAIN_DETECT",
+            "LIGHTNING_PREVIEW",
+        )
+    }
+    saved = tmp_path / ".operate/trader-quickstart-config.json"
+    saved.write_text(json.dumps({"user_provided_args": {}}))
+    deployment = paths[1].parent / ("agent_0.env" if style == "env" else "build.yaml")
+    deployment.write_text(
+        "USE_OFFCHAIN=true\n"
+        if style == "env"
+        else (
+            "environment:\n  USE_OFFCHAIN: true\n"
+            if style == "compose"
+            else 'env:\n  - name: USE_OFFCHAIN\n    value: "true"\n'
+        )
+    )
+    for path in paths[1:]:
+        cache = json.loads(path.read_text())
+        cache["params"] = {key.lower(): False for key in prior}
+        path.write_text(json.dumps(cache))
+    run(tmp_path, "--service", "omenstrat_lightning")
+    for path in paths:
+        env = json.loads(path.read_text())["env_variables"]
+        assert env["LIGHTNING_STILL_HOLD"]["value"] == "true"
+        assert env["LIGHTNING_CHAIN_DETECT"]["value"] == "true"
+        assert env["LIGHTNING_PREVIEW"]["value"] == "false"
+    marker = tmp_path / "configs/.lightning_defaults_added.json"
+    record = json.loads(marker.read_text())
+    assert record["previous"] == prior
+    before = {path: path.read_bytes() for path in (*paths, marker, saved, deployment)}
+    run(tmp_path, "--service", "omenstrat_lightning")
+    assert all(path.read_bytes() == value for path, value in before.items())
+    edited = json.loads(paths[0].read_text())
+    edited["env_variables"]["LIGHTNING_CHAIN_DETECT"]["value"] = "false"
+    preview_value = "true" if style == "env" else "false"
+    edited["env_variables"]["LIGHTNING_PREVIEW"]["value"] = preview_value
+    paths[0].write_text(json.dumps(edited))
+    run(tmp_path, "--service", "omenstrat_lightning")
+    assert json.loads(marker.read_text()) == record
+    for path in paths:
+        assert (
+            json.loads(path.read_text())["env_variables"]["LIGHTNING_CHAIN_DETECT"][
+                "value"
+            ]
+            == "false"
+        )
+        assert (
+            json.loads(path.read_text())["env_variables"]["LIGHTNING_PREVIEW"]["value"]
+            == preview_value
+        )
+    output = run(tmp_path, "--service", rollback)
+    assert "keep operator value LIGHTNING_CHAIN_DETECT" in output
+    if style == "env":
+        assert "disable lightning flag LIGHTNING_PREVIEW=false" in output
+    for path in paths:
+        env = json.loads(path.read_text())["env_variables"]
+        assert {key: env[key]["value"] for key in prior} == prior
+    for path in paths[1:]:
+        assert json.loads(path.read_text())["params"] == {
+            key.lower(): False for key in prior
+        }
+    assert all(
+        value == "false"
+        for key, value in json.loads(saved.read_text())["user_provided_args"].items()
+        if key in prior
+    )
+    assert "LIGHTNING_STILL_HOLD" in deployment.read_text()
+    assert "true" not in "\n".join(
+        line for line in deployment.read_text().splitlines() if "LIGHTNING_" in line
+    )
+
+
+@pytest.mark.parametrize("rollback", ["omenstrat_fast", "trader_pearl"])
+def test_shipped_lightning_switch_disables_flags_without_record(tmp_path, rollback):
+    """Disable lightning features on a switch without a migration record."""
+    paths = fixture(tmp_path)
+    source = json.loads(
+        (SCRIPT.parents[1] / "configs/config_omenstrat_lightning.json").read_text()
+    )
+    paths[0].write_text(json.dumps(source))
+    output = run(tmp_path, "--service", rollback)
+    for path in paths:
+        env = json.loads(path.read_text())["env_variables"]
+        assert env["LIGHTNING_STILL_HOLD"]["value"] == "false"
+        assert env["LIGHTNING_CHAIN_DETECT"]["value"] == "false"
+        assert env["LIGHTNING_PREVIEW"]["value"] == "false"
+    assert "lightning" in output.lower()
+
+
+def test_missing_lightning_creators_uses_existing_allowlist(tmp_path):
+    """Keep a custom fast creator as the effective lightning allowlist."""
+    paths = fixture(tmp_path)
+    source = json.loads(paths[0].read_text())
+    custom = json.dumps(["0x1111111111111111111111111111111111111111"])
+    source["env_variables"]["CREATORS"] = entry(custom)
+    paths[0].write_text(json.dumps(source))
+    run(tmp_path, "--service", "omenstrat_lightning")
+    for path in paths:
+        env = json.loads(path.read_text())["env_variables"]
+        assert env["LIGHTNING_CREATORS"]["value"] == custom
+        assert env["CREATORS"]["value"] == custom
+    source = json.loads(paths[0].read_text())
+    explicit = json.dumps(["0x2222222222222222222222222222222222222222"])
+    source["env_variables"]["LIGHTNING_CREATORS"]["value"] = explicit
+    paths[0].write_text(json.dumps(source))
+    run(tmp_path, "--service", "omenstrat_lightning")
+    for path in paths:
+        assert (
+            json.loads(path.read_text())["env_variables"]["LIGHTNING_CREATORS"]["value"]
+            == explicit
+        )
+
+
+@pytest.mark.parametrize("previous", [[], {"UNRELATED": "true"}])
+def test_lightning_rejects_invalid_previous_values(tmp_path, previous):
+    """Reject a malformed rollback snapshot before changing config files."""
+    fixture(tmp_path)
+    marker = tmp_path / "configs/.lightning_defaults_added.json"
+    marker.write_text(
+        json.dumps(
+            {
+                "added": ["LIGHTNING_STILL_HOLD"],
+                "values": {"LIGHTNING_STILL_HOLD": "true"},
+                "previous": previous,
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="Invalid lightning migration provenance"):
+        run(tmp_path, "--service", "omenstrat_lightning")
+
+
+def test_same_service_cid_upgrade_keeps_operator_flags(tmp_path):
+    """Keep operator flags when a new CID still names the recorded service."""
+    paths = fixture(tmp_path)
+    run(tmp_path, "--service", "omenstrat_lightning")
+    source = json.loads(paths[0].read_text())
+    source["hash"] = "previous-lightning-release"
+    source["env_variables"]["LIGHTNING_STILL_HOLD"]["value"] = "false"
+    paths[0].write_text(json.dumps(source))
+    run(tmp_path, "--service", "omenstrat_lightning")
+    for path in paths:
+        assert (
+            json.loads(path.read_text())["env_variables"]["LIGHTNING_STILL_HOLD"][
+                "value"
+            ]
+            == "false"
+        )
+    marker = tmp_path / "configs/.lightning_defaults_added.json"
+    assert json.loads(marker.read_text())["service"] == "omenstrat_lightning"
+    run(tmp_path, "--service", "omenstrat_fast")
+    assert json.loads(marker.read_text())["service"] == "omenstrat_fast"
+    source = json.loads(paths[0].read_text())
+    source["hash"] = "previous-fast-release"
+    source["env_variables"]["LIGHTNING_CHAIN_DETECT"]["value"] = "true"
+    paths[0].write_text(json.dumps(source))
+    run(tmp_path, "--service", "omenstrat_fast")
+    for path in paths:
+        assert (
+            json.loads(path.read_text())["env_variables"]["LIGHTNING_CHAIN_DETECT"][
+                "value"
+            ]
+            == "true"
+        )
+    assert json.loads(marker.read_text())["service"] == "omenstrat_fast"
+
+
+@pytest.mark.parametrize("service", [None, "unknown"])
+def test_lightning_rejects_invalid_recorded_service(tmp_path, service):
+    """Reject an invalid service marker before it can reset operator flags."""
+    fixture(tmp_path)
+    marker = tmp_path / "configs/.lightning_defaults_added.json"
+    marker.write_text(json.dumps({"added": [], "service": service}))
+    with pytest.raises(ValueError, match="Invalid lightning migration provenance"):
+        run(tmp_path, "--service", "omenstrat_lightning")
