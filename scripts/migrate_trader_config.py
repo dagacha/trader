@@ -94,6 +94,26 @@ FAST_ENV = (
     "VALID_MECHS",
     "MAX_TRADES",
 )
+LIGHTNING_ENV = (
+    "LIGHTNING_STILL_HOLD",
+    "LIGHTNING_STILL_HOLD_MAX_PRICE",
+    "LIGHTNING_BASE_RATE_WINDOW_DAYS",
+    "LIGHTNING_BASE_RATE_MIN_N",
+    "LIGHTNING_BASE_RATE_FLOOR",
+    "STILL_HOLD_PRIOR",
+    "LIGHTNING_CHAIN_DETECT",
+    "OMEN_FPMM_FACTORY",
+    "LIGHTNING_RPC_FALLBACK_S",
+    "LIGHTNING_PREVIEW",
+    "LIGHTNING_PREVIEW_MAX_PER_NIGHT",
+    "LIGHTNING_CREATORS",
+)
+LIGHTNING_FLAGS = (
+    "LIGHTNING_STILL_HOLD",
+    "LIGHTNING_CHAIN_DETECT",
+    "LIGHTNING_PREVIEW",
+)
+SERVICE_CHOICES = ("omenstrat_fast", "omenstrat_lightning", "trader_pearl")
 PRIORITY_ENV = {
     "PRIORITY_MECH_ADDRESS": "priority_mech_address",
     "PRIORITY_MECH_SERVICE_ID": "priority_mech_service_id",
@@ -746,7 +766,9 @@ def rename_fast_tools(text, json_file, env_file=False):
     return "".join(lines), changes
 
 
-def rollback_fast_inputs(text, added, json_file):
+def rollback_fast_inputs(
+    text, added, json_file, kind="fast", recorded_values=None, previous_values=None
+):
     """Remove recorded fast inputs from quickstart, saved args, and caches."""
     names = {}
     for key in added:
@@ -760,14 +782,47 @@ def rollback_fast_inputs(text, added, json_file):
         if key == "TM_CHECK_SLEEP_DELAY":
             names["tendermint_check_sleep_delay"] = key
     changes = []
+
+    def parsed(raw):
+        if isinstance(raw, dict):
+            raw = raw.get("value")
+        try:
+            return decode_env(raw) if isinstance(raw, str) else raw
+        except ValueError:
+            return raw.strip("'\"")
+
+    def keep_edited(key, value):
+        if recorded_values is None:
+            return False
+        if key not in recorded_values or parsed(value) != parsed(recorded_values[key]):
+            changes.append(f"keep operator value {key}")
+            return True
+        return False
+
     if json_file:
         data = json.loads(text)
         for obj in list(objects(data)):
             for key in list(obj):
                 if key in names:
+                    if keep_edited(names[key], obj[key]):
+                        continue
+                    if previous_values and names[key] in previous_values:
+                        container, field = (
+                            (obj[key], "value")
+                            if isinstance(obj[key], dict)
+                            else (obj, key)
+                        )
+                        value = previous_values[names[key]]
+                        if not isinstance(container[field], str):
+                            value = parsed(value)
+                        if container[field] != value:
+                            container[field] = value
+                            text = edit_json(text, data, value)
+                            changes.append(f"restore {kind} previous {names[key]}")
+                        continue
                     del obj[key]
                     text = remove_json_key(text, data, key)
-                    changes.append(f"remove fast default {names[key]}")
+                    changes.append(f"remove {kind} default {names[key]}")
     else:
         lines = text.splitlines(keepends=True)
         for index in range(len(lines) - 1, -1, -1):
@@ -779,8 +834,25 @@ def rollback_fast_inputs(text, added, json_file):
                     if end >= len(lines) or not re.match(r"\s*value:", lines[end]):
                         raise ValueError(f"Missing value for {match[1]}")
                     end += 1
+                value = re.split(r"[:=]", lines[end - 1], maxsplit=1)[1].strip()
+                if keep_edited(names[match[1]], value):
+                    continue
+                if previous_values and names[match[1]] in previous_values:
+                    previous = scalar(previous_values[names[match[1]]])
+                    if parsed(value) != parsed(previous):
+                        assignment = re.match(
+                            r"(.*?[:=]\s*)(.*?)(\r?\n)?$", lines[end - 1]
+                        )
+                        replacement = (
+                            previous if "=" in assignment[1] else json.dumps(previous)
+                        )
+                        lines[end - 1] = (
+                            assignment[1] + replacement + (assignment[3] or "")
+                        )
+                        changes.append(f"restore {kind} previous {names[match[1]]}")
+                    continue
                 del lines[index:end]
-                changes.append(f"remove fast default {names[match[1]]}")
+                changes.append(f"remove {kind} default {names[match[1]]}")
         text = "".join(lines)
     return text, changes
 
@@ -876,10 +948,12 @@ def cached_public_id(config):
 def migrate(quickstart, dry_run=False, warn_only=False, service=None):
     """Migrate an Omen quickstart and skip Polymarket cached services."""
     config = quickstart / "configs/config_predict_trader.json"
-    fast = quickstart / "configs/config_omenstrat_fast.json"
-    if not config.is_file() and fast.is_file():
-        print(f">> {fast}: omenstrat_fast: skipping trader migration")
-        return
+    if not config.is_file():
+        for name in ("omenstrat_fast", "omenstrat_lightning"):
+            template = quickstart / f"configs/config_{name}.json"
+            if template.is_file():
+                print(f">> {template}: {name}: skipping trader migration")
+                return
     if not config.is_file() or is_polymarket(config):
         print(
             f"WARNING: {config}: missing or Polymarket quickstart; skipping all files"
@@ -891,19 +965,50 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
     selected_cid = (
         packages["dev"][f"service/valory/{service}/0.1.0"] if service else None
     )
-    fast_mode = service == "omenstrat_fast" or (
+    source_data = json.loads(config.read_text())
+    source_hash = source_data.get("hash")
+    source_env = source_data.get("env_variables", {})
+    source_service = next(
+        (
+            name
+            for name in SERVICE_CHOICES
+            if packages["dev"].get(f"service/valory/{name}/0.1.0", "") == source_hash
+        ),
+        None,
+    )
+    lightning_mode = service == "omenstrat_lightning" or (
         service is None
-        and json.loads(config.read_text()).get("hash")
-        == packages["dev"].get("service/valory/omenstrat_fast/0.1.0", "")
+        and source_hash
+        == packages["dev"].get("service/valory/omenstrat_lightning/0.1.0", "")
+    )
+    fast_mode = (
+        lightning_mode
+        or service == "omenstrat_fast"
+        or (
+            service is None
+            and source_hash
+            == packages["dev"].get("service/valory/omenstrat_fast/0.1.0", "")
+        )
     )
     rollback = service == "trader_pearl"
     defaults = {}
     if fast_mode:
-        template = (
-            Path(__file__).resolve().parents[1] / "configs/config_omenstrat_fast.json"
-        )
+        name = "omenstrat_lightning" if lightning_mode else "omenstrat_fast"
+        template = Path(__file__).resolve().parents[1] / f"configs/config_{name}.json"
         env = json.loads(template.read_text())["env_variables"]
         defaults = {key: env[key] for key in FAST_ENV}
+        if lightning_mode:
+            defaults.update({key: env[key] for key in LIGHTNING_ENV})
+            if "LIGHTNING_CREATORS" not in source_env and "CREATORS" in source_env:
+                defaults["LIGHTNING_CREATORS"] = {
+                    **defaults["LIGHTNING_CREATORS"],
+                    "value": source_env["CREATORS"]["value"],
+                }
+            for key in LIGHTNING_FLAGS:
+                defaults[key] = {
+                    **defaults[key],
+                    "value": "false" if key == "LIGHTNING_PREVIEW" else "true",
+                }
     hashes = {
         name: packages["dev"][f"custom/valory/{name}/0.1.0"]
         for name in ("kelly_criterion", "fixed_bet")
@@ -912,10 +1017,18 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
     legacy = quickstart / ".operate/local_config.json"
     if legacy.is_file():
         saved.append(legacy)
+    creator_inputs = {}
     for path in saved:
-        if path.is_file() and is_polymarket(path):
+        if not path.is_file():
+            continue
+        if is_polymarket(path):
             print(f"WARNING: {path}: Polymarket saved input; skipping all files")
             return
+        for obj in objects(json.loads(path.read_text())):
+            args = obj.get("user_provided_args", {})
+            for key in ("CREATORS", "LIGHTNING_CREATORS"):
+                if key in args:
+                    creator_inputs[key] = args[key]
     paths = [config, *saved]
     services = sorted((quickstart / ".operate/services").glob("sc-*"))
     different_public_ids = set()
@@ -960,12 +1073,109 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                 {"FAST_TOOLS" if key == "TOOLS" else key for key in upgraded}
             )
             provenance_changes.append("rename provenance TOOLS -> FAST_TOOLS")
+    lightning_provenance = quickstart / "configs/.lightning_defaults_added.json"
+    lightning_recorded = []
+    lightning_values = {}
+    lightning_previous = {}
+    recorded_service = None
+    if lightning_provenance.is_file():
+        lightning_record = json.loads(lightning_provenance.read_text())
+        lightning_recorded = lightning_record["added"]
+        lightning_values = lightning_record.get("values", {})
+        lightning_previous = lightning_record.get("previous", {})
+        recorded_service = lightning_record.get("service")
+        if (
+            not isinstance(lightning_recorded, list)
+            or any(key not in LIGHTNING_ENV for key in lightning_recorded)
+            or not isinstance(lightning_values, dict)
+            or any(key not in lightning_recorded for key in lightning_values)
+            or not isinstance(lightning_previous, dict)
+            or any(key not in lightning_recorded for key in lightning_previous)
+            or (
+                "service" in lightning_record
+                and recorded_service not in SERVICE_CHOICES
+            )
+        ):
+            raise ValueError(
+                f"Invalid lightning migration provenance: {lightning_provenance}"
+            )
+    service_switch = service is not None and service != (
+        source_service or recorded_service
+    )
+    creator_overrides = {}
+    if lightning_mode and service_switch:
+        creator_overrides.update(creator_inputs)
+        if "LIGHTNING_CREATORS" not in creator_inputs:
+            fast_env = json.loads(
+                (
+                    Path(__file__).resolve().parents[1]
+                    / "configs/config_omenstrat_fast.json"
+                ).read_text()
+            )["env_variables"]
+            current = source_env.get("LIGHTNING_CREATORS")
+            if current is None or json.loads(current["value"]) == json.loads(
+                fast_env["LIGHTNING_CREATORS"]["value"]
+            ):
+                creator_overrides["LIGHTNING_CREATORS"] = creator_inputs.get(
+                    "CREATORS",
+                    source_env.get("CREATORS", defaults["CREATORS"])["value"],
+                )
+        for key, value in creator_overrides.items():
+            defaults[key] = {**defaults[key], "value": value}
+    if lightning_mode:
+        env = json.loads(config.read_text()).get("env_variables", {})
+        newly_added = set(LIGHTNING_ENV) - set(env)
+        if service_switch:
+            newly_added.update(LIGHTNING_FLAGS)
+            for key in LIGHTNING_FLAGS:
+                if key in env:
+                    lightning_previous.setdefault(key, env[key]["value"])
+                lightning_values[key] = defaults[key]["value"]
+            if "LIGHTNING_CREATORS" in creator_inputs:
+                newly_added.discard("LIGHTNING_CREATORS")
+            elif (
+                "LIGHTNING_CREATORS" in creator_overrides
+                and "LIGHTNING_CREATORS" in env
+                and env["LIGHTNING_CREATORS"]["value"]
+                != creator_overrides["LIGHTNING_CREATORS"]
+            ):
+                newly_added.add("LIGHTNING_CREATORS")
+                lightning_previous.setdefault(
+                    "LIGHTNING_CREATORS", env["LIGHTNING_CREATORS"]["value"]
+                )
+                lightning_values["LIGHTNING_CREATORS"] = creator_overrides[
+                    "LIGHTNING_CREATORS"
+                ]
+        lightning_added = sorted(set(lightning_recorded) | newly_added)
+        for key in sorted(newly_added):
+            lightning_values.setdefault(key, defaults[key]["value"])
+        lightning_data = {
+            "added": lightning_added,
+            "values": lightning_values,
+            "service": "omenstrat_lightning",
+        }
+        if lightning_previous:
+            lightning_data["previous"] = lightning_previous
+        lightning_changes = (
+            ["record added lightning defaults: " + ", ".join(lightning_added)]
+            if not lightning_provenance.is_file()
+            or json.loads(lightning_provenance.read_text()) != lightning_data
+            else []
+        )
+        write_changes(
+            lightning_provenance,
+            json.dumps(lightning_data) + "\n",
+            lightning_changes,
+            dry_run,
+            warn_only,
+        )
+    lightning_rollback = service in ("omenstrat_fast", "trader_pearl")
     upgrade_slip = False
     if fast_mode:
         env = json.loads(config.read_text()).get("env_variables", {})
         if "TOOLS" in env:
             env = {**env, "FAST_TOOLS": env["TOOLS"]}
-        added = sorted(set(recorded or []) | (set(defaults) - set(env)))
+        added = sorted(set(recorded or []) | (set(FAST_ENV) - set(env)))
         upgrade_slip = "MAX_SLIP" in (recorded or []) and "MAX_SLIP" not in upgraded
         provenance_data = {"added": added}
         if upgraded:
@@ -1013,6 +1223,16 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
             updated, path.suffix == ".json", path.name == "agent_0.env"
         )
         changes.extend(renamed)
+        if lightning_rollback and lightning_recorded:
+            updated, removed_changes = rollback_fast_inputs(
+                updated,
+                lightning_recorded,
+                path.suffix == ".json",
+                "lightning",
+                lightning_values,
+                lightning_previous,
+            )
+            changes.extend(removed_changes)
         if rollback:
             if recorded is None:
                 warn_pearl_defaults(text, path)
@@ -1047,16 +1267,31 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                     addition=None if has_hash else ("hash", selected_cid),
                 )
                 changes.append(f"hash -> {selected_cid}")
-            if fast_mode:
+            if fast_mode or service_switch:
                 data = json.loads(updated)
                 if "env_variables" not in data:
                     data["env_variables"] = {}
                     updated = edit_json(updated, data, addition=("env_variables", {}))
+            if fast_mode:
                 for key, source in defaults.items():
                     if key not in data["env_variables"]:
                         data["env_variables"][key] = dict(source)
                         updated = edit_json(updated, data, addition=(key, source))
                         changes.append(f"add fast default {key}={source['value']}")
+                    elif key in LIGHTNING_FLAGS and service_switch:
+                        if data["env_variables"][key]["value"] != source["value"]:
+                            data["env_variables"][key]["value"] = source["value"]
+                            updated = edit_json(updated, data, source["value"])
+                            changes.append(
+                                f"switch lightning flag {key}={source['value']}"
+                            )
+                    elif (
+                        key in creator_overrides
+                        and data["env_variables"][key]["value"] != source["value"]
+                    ):
+                        data["env_variables"][key]["value"] = source["value"]
+                        updated = edit_json(updated, data, source["value"])
+                        changes.append(f"sync creator input {key}={source['value']}")
                     elif (
                         key == "MAX_SLIP"
                         and upgrade_slip
@@ -1067,15 +1302,39 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                         changes.append(
                             f"upgrade fast default {key}=0.1 -> {source['value']}"
                         )
+            if service_switch and not lightning_mode:
+                data = json.loads(updated)
+                flag_defaults = json.loads(
+                    (
+                        Path(__file__).resolve().parents[1]
+                        / "configs/config_omenstrat_fast.json"
+                    ).read_text()
+                )["env_variables"]
+                for key in LIGHTNING_FLAGS:
+                    if key not in data["env_variables"]:
+                        value = {**flag_defaults[key], "value": "false"}
+                        data["env_variables"][key] = value
+                        updated = edit_json(updated, data, addition=(key, value))
+                        changes.append(f"disable lightning flag {key}=false")
+                    elif data["env_variables"][key]["value"] != "false":
+                        data["env_variables"][key]["value"] = "false"
+                        updated = edit_json(updated, data, "false")
+                        changes.append(f"disable lightning flag {key}=false")
             env = json.loads(updated).get("env_variables", {})
             desired = {
                 key: entry
                 for key, entry in env.items()
-                if key in (*CONTROL_ENV, *defaults)
+                if key in (*CONTROL_ENV, *LIGHTNING_ENV, *defaults)
                 and isinstance(entry, dict)
                 and entry.get("value") not in (None, "")
             }
-        if desired and (not rollback or recorded is not None):
+        if rollback and recorded is None:
+            desired = {
+                key: entry
+                for key, entry in desired.items()
+                if service_switch and key in LIGHTNING_FLAGS
+            }
+        if desired:
             updated, synced = (
                 sync_cached_json(updated, desired, upgrade_slip)
                 if path.suffix == ".json"
@@ -1126,6 +1385,21 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
             dry_run,
             warn_only,
         )
+    if lightning_rollback:
+        lightning_data = {"added": [], "service": service}
+        lightning_changes = (
+            ["clear rolled-back lightning defaults; record selected service"]
+            if not lightning_provenance.is_file()
+            or json.loads(lightning_provenance.read_text()) != lightning_data
+            else []
+        )
+        write_changes(
+            lightning_provenance,
+            json.dumps(lightning_data) + "\n",
+            lightning_changes,
+            dry_run,
+            warn_only,
+        )
     if stored:
         reference_path, reference = stored[0]
         for path, priority in stored[1:]:
@@ -1146,6 +1420,6 @@ if __name__ == "__main__":
     parser.add_argument("quickstart", type=Path)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--warn-only", action="store_true")
-    parser.add_argument("--service", choices=("omenstrat_fast", "trader_pearl"))
+    parser.add_argument("--service", choices=SERVICE_CHOICES)
     args = parser.parse_args()
     migrate(args.quickstart, args.dry_run, args.warn_only, args.service)

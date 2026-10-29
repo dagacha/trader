@@ -263,11 +263,17 @@ def test_fast_uses_shared_timing_behaviours() -> None:
         TraderPostTxSettlementBehaviour,
     )
 
-    assert {
+    for expected in (
         TraderMechRequestBehaviour,
         TraderMechResponseBehaviour,
         TraderPostTxSettlementBehaviour,
-    } <= OmenstratFastConsensusBehaviour.behaviours
+    ):
+        selected = next(
+            behaviour
+            for behaviour in OmenstratFastConsensusBehaviour.behaviours
+            if behaviour.matching_round == expected.matching_round
+        )
+        assert issubclass(selected, expected)
 
 
 def test_dynamic_param_declared_in_overriding_skills() -> None:

@@ -1,0 +1,976 @@
+# -*- coding: utf-8 -*-
+# ------------------------------------------------------------------------------
+#
+#   Copyright 2026 Valory AG
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+#
+# ------------------------------------------------------------------------------
+
+"""Check chain discovery against a real Omen creation receipt."""
+
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import MagicMock, patch
+
+import pytest
+from eth_abi import decode, encode
+
+from packages.valory.protocols.ledger_api import LedgerApiMessage
+from packages.valory.skills.fresh_watch_abci.chain_discovery import (
+    CREATION_TOPIC,
+    ChainDiscoveryMixin,
+    ChainRPCError,
+    creation_details,
+    receipt_question,
+)
+from packages.valory.skills.fresh_watch_abci.strategy import FastConfig, FreshQueue
+
+FIXTURE = json.loads(
+    (Path(__file__).parent / "fixtures" / "chain_creation.json").read_text()
+)
+CREATION = FIXTURE["logs"][-1]
+CREATED = FIXTURE["blockTimestamp"]
+BLOCK = CREATION["blockNumber"]
+FACTORY = CREATION["address"]
+CONDITION = FIXTURE["logs"][1]
+QUESTION = FIXTURE["logs"][0]
+
+
+def done(value: Any) -> Any:
+    """Return a cooperative result."""
+    yield from ()
+    return value
+
+
+def run(generator: Any) -> Any:
+    """Run a cooperative method to completion."""
+    while True:
+        try:
+            next(generator)
+        except StopIteration as result:
+            return result.value
+
+
+class Harness(ChainDiscoveryMixin):
+    """Use saved chain results without a ledger connection."""
+
+    def __init__(self, path: Path) -> None:
+        """Set the normal params and record RPC requests."""
+        self.params = SimpleNamespace(
+            store_path=path,
+            mech_chain_id="gnosis",
+            use_offchain=True,
+            conditional_tokens_address="0x" + "12" * 20,
+            fast=FastConfig(active_window_utc="00:00-23:59"),
+            lightning=SimpleNamespace(
+                lightning_chain_detect=True,
+                lightning_preview=False,
+                lightning_creators=FastConfig().creators,
+                omen_fpmm_factory=FACTORY,
+                lightning_rpc_fallback_s=60,
+            ),
+        )
+        self.context = SimpleNamespace(logger=MagicMock())
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.logs = [CREATION]
+        self.head = BLOCK
+        self.fail = False
+        self.receipt = {"logs": FIXTURE["logs"]}
+        self.fallback = None
+
+    def _chain_rpc(self, method: str, **kwargs: Any) -> Any:
+        """Return saved data or simulate an RPC failure."""
+        self.calls.append((method, kwargs))
+        if self.fail:
+            raise ChainRPCError("ledger unavailable")
+        results = {
+            "get_block": {
+                "number": self.head,
+                "timestamp": CREATED,
+                "hash": "0x" + "11" * 32,
+            },
+            "get_logs": self.logs,
+            "get_transaction_receipt": self.receipt,
+            "get_pool_balances": {"balances": [7 * 10**18, 7 * 10**18]},
+        }
+        return (yield from done(results[method]))
+
+    def _chain_subgraph_market(self, market_id: str) -> Any:
+        """Return a configured last-resort title lookup."""
+        return (yield from done(self.fallback))
+
+
+def test_decode_real_creation_and_exact_condition_question() -> None:
+    """Match the condition to its question, not the first question in the tx."""
+    market = creation_details(CREATION)
+    assert market["id"] == "0xf46f0b6e9e96b466a3563d025577e65648c7daa7"
+    assert market["creator"] == FastConfig().creators[0]
+    question = receipt_question(FIXTURE["logs"], market["condition"]["id"])
+    assert question is not None
+    assert question["title"].startswith("Will Bruno Fernandes's status")
+    assert question["openingTimestamp"] == 1793664000
+    assert question["outcomes"] == ["Yes", "No"]
+    assert receipt_question(FIXTURE["logs"], "0x" + "00" * 32) is None
+
+
+@pytest.mark.parametrize("topics", [[], ["0x" + "00" * 32, CREATION["topics"][1]]])
+def test_creation_rejects_other_event_topics(topics: list[str]) -> None:
+    """Do not decode logs with missing or unrelated event topics."""
+    with pytest.raises(ValueError, match="Unexpected factory event"):
+        creation_details(dict(CREATION, topics=topics))
+
+
+@pytest.mark.parametrize("count", [0, 2])
+def test_creation_requires_one_condition(count: int) -> None:
+    """Reject market creations without exactly one condition."""
+    types = ["address", "address", "address", "bytes32[]", "uint256"]
+    values = list(decode(types, bytes.fromhex(CREATION["data"][2:])))
+    values[3] = values[3] * count
+    with pytest.raises(ValueError, match="Require one market condition"):
+        creation_details(dict(CREATION, data=encode(types, values)))
+
+
+def test_receipt_rejects_nonbinary_condition() -> None:
+    """Do not use a title when its condition has three outcomes."""
+    condition = dict(CONDITION, data=encode(["uint256"], [3]))
+    assert receipt_question([QUESTION, condition], CONDITION["topics"][1]) == {}
+
+
+@pytest.mark.parametrize(
+    "template,title,state",
+    [
+        (0, "Will it happen?", "unsupported"),
+        (2, 'Will it happen?\x1f"Yes","No"', "supported"),
+        (2, 'Will it happen?␟"No","Yes"', "unsupported"),
+        (2, "Will it happen?", "missing"),
+        (1, "Will it happen?", "unsupported"),
+    ],
+)
+def test_receipt_accepts_only_binary_question_templates(
+    template: int, title: str, state: str
+) -> None:
+    """Accept explicit Yes/No template 2 and distinguish unsupported metadata."""
+    types = ["uint256", "string", "address", "uint32", "uint32", "uint256", "uint256"]
+    values = list(decode(types, bytes.fromhex(QUESTION["data"][2:])))
+    values[:2] = [template, title]
+    question = dict(QUESTION, data=encode(types, values))
+    unrelated = dict(QUESTION, topics=[QUESTION["topics"][0], "0x" + "00" * 32, "", ""])
+    logs = [CREATION, CONDITION, unrelated, question]
+    result = receipt_question(logs, CONDITION["topics"][1])
+    if state == "missing":
+        assert result is None
+    elif state == "unsupported":
+        assert result == {}
+    else:
+        assert result == {
+            "title": "Will it happen?",
+            "openingTimestamp": 1793664000,
+            "outcomes": ["Yes", "No"],
+            "outcomeSlotCount": 2,
+            "question": {"templateId": 2},
+        }
+
+
+def test_receipt_without_matching_question_waits_for_subgraph() -> None:
+    """Return no title when the condition exists but its question log is absent."""
+    assert receipt_question([CONDITION, CREATION], CONDITION["topics"][1]) is None
+
+
+def test_chain_filter_cursor_persistence_and_no_replayed_market(tmp_path: Path) -> None:
+    """Request both indexed creators and resume after the saved creation block."""
+    harness: Any = Harness(tmp_path)
+    rows = run(harness.chain_markets(CREATED + 8))
+    assert len(rows) == 1
+    assert rows[0]["creationTimestamp"] == CREATED
+    assert rows[0]["outcomeTokenMarginalPrices"] == [0.5, 0.5]
+    filters = next(
+        kwargs["filter_params"] for name, kwargs in harness.calls if name == "get_logs"
+    )
+    assert [address.lower() for address in filters["address"]] == [FACTORY.lower()]
+    assert filters["topics"] == [[CREATION_TOPIC]]
+    assert filters["fromBlock"] <= BLOCK
+    assert len(FreshQueue(tmp_path / "fresh_watch.json").pending) == 1
+    harness.context.logger.info.assert_any_call(
+        "[LIGHTNING_DETECT] market=%s delay_s=%.3f source=%s", rows[0]["id"], 8, "chain"
+    )
+    restart = Harness(tmp_path)
+    restart.logs = []
+    restart.head = BLOCK + 1
+    assert run(restart.chain_markets(CREATED + 13)) == []
+    assert restart.calls == [
+        ("get_block", {"block_identifier": "latest"}),
+        (
+            "get_logs",
+            {"filter_params": dict(filters, fromBlock=BLOCK - 2, toBlock=BLOCK + 1)},
+        ),
+        ("get_block", {"block_identifier": BLOCK}),
+    ]
+
+
+def test_empty_scan_advances_cursor_and_duplicate_head_skips_logs(
+    tmp_path: Path,
+) -> None:
+    """Persist the scanned head even when a block has no matching creation."""
+    harness: Any = Harness(tmp_path)
+    harness.logs = []
+    assert run(harness.chain_markets(CREATED + 2)) == []
+    assert (
+        json.loads((tmp_path / "lightning_chain.json").read_text())["last_block"]
+        == BLOCK
+    )
+    harness.calls = []
+    assert run(harness.chain_markets(CREATED + 3)) == []
+    assert harness.calls == [("get_block", {"block_identifier": "latest"})]
+
+
+def test_rpc_fallback_requires_continuous_error_interval(tmp_path: Path) -> None:
+    """Use subgraph only after the full RPC failure interval and reset on success."""
+    harness: Any = Harness(tmp_path)
+    harness.fail = True
+    assert run(harness.chain_markets(CREATED)) == []
+    assert run(harness.chain_markets(CREATED + 60)) == []
+    assert run(harness.chain_markets(CREATED + 61)) is None
+    harness.fail = False
+    assert len(run(harness.chain_markets(CREATED + 62))) == 1
+    harness.fail = True
+    assert run(harness.chain_markets(CREATED + 63)) == []
+
+
+def test_transient_materialization_does_not_drop_log(tmp_path: Path) -> None:
+    """Retry an indexed market when its receipt or title is temporarily missing."""
+    harness: Any = Harness(tmp_path)
+    harness.receipt = {"logs": []}
+    assert run(harness.chain_markets(CREATED + 5)) == []
+    harness.receipt = {"logs": FIXTURE["logs"]}
+    rows = run(harness.chain_markets(CREATED + 10))
+    assert len(rows) == 1
+    filters = [
+        kwargs["filter_params"] for name, kwargs in harness.calls if name == "get_logs"
+    ]
+    assert filters[0]["fromBlock"] == filters[1]["fromBlock"]
+
+
+@pytest.mark.parametrize(
+    "enabled,window", [(False, "00:00-23:59"), (True, "12:00-13:00")]
+)
+def test_disabled_and_outside_window_do_not_call_rpc(
+    tmp_path: Path, enabled: bool, window: str
+) -> None:
+    """Keep the standard lane unchanged and stop chain reads outside the window."""
+    harness: Any = Harness(tmp_path)
+    harness.params.lightning.lightning_chain_detect = enabled
+    harness.params.fast = FastConfig(active_window_utc=window)
+    assert run(harness.chain_markets(CREATED)) == ([] if enabled else None)
+    assert harness.calls == []
+
+
+def test_one_missing_title_does_not_block_other_markets(tmp_path: Path) -> None:
+    """Persist a ready market while retaining a failed market's block for retry."""
+    harness: Any = Harness(tmp_path)
+    second = dict(
+        CREATION,
+        data="0x" + "00" * 12 + "ab" * 20 + CREATION["data"][66:],
+        logIndex=CREATION["logIndex"] + 1,
+        transactionHash="0x" + "12" * 32,
+    )
+    harness.logs = [CREATION, second]
+    original_rpc = harness._chain_rpc
+
+    def rpc(method: str, **kwargs: Any) -> Any:
+        """Keep only the first market's title temporarily unavailable."""
+        if (
+            method == "get_transaction_receipt"
+            and kwargs["transaction_hash"] == CREATION["transactionHash"]
+        ):
+            return (yield from done({"logs": []}))
+        return (yield from original_rpc(method, **kwargs))
+
+    harness._chain_rpc = rpc
+    rows = run(harness.chain_markets(CREATED + 5))
+    assert [row["id"] for row in rows] == ["0x" + "ab" * 20]
+    assert len(FreshQueue(tmp_path / "fresh_watch.json").pending) == 1
+    state = json.loads((tmp_path / "lightning_chain.json").read_text())
+    assert state["last_block"] < BLOCK
+    harness._chain_rpc = original_rpc
+    assert len(run(harness.chain_markets(CREATED + 10))) == 2
+    assert len(FreshQueue(tmp_path / "fresh_watch.json").pending) == 2
+
+
+def test_pool_rpc_failures_eventually_allow_subgraph_fallback(tmp_path: Path) -> None:
+    """Count failed pool reads toward the continuous RPC failure interval."""
+    harness: Any = Harness(tmp_path)
+    harness._chain_pool_balances = lambda *args: done(None)
+    assert run(harness.chain_markets(CREATED)) == []
+    assert run(harness.chain_markets(CREATED + 61)) is None
+
+
+@pytest.fixture
+def ledger_harness(tmp_path: Path) -> Any:
+    """Prepare the ledger dialogue and request callback without a live connection."""
+    harness: Any = Harness(tmp_path)
+    harness.context.ledger_api_dialogues = MagicMock()
+    harness.context.ledger_api_dialogues.create.return_value = (
+        MagicMock(),
+        MagicMock(),
+    )
+    harness.context.default_ledger_id = "ethereum"
+    harness.context.requests = SimpleNamespace(request_id_to_callback={})
+    harness.context.outbox = MagicMock()
+    harness._get_default_terms = lambda: None
+    harness._get_request_nonce_from_dialogue = lambda dialogue: "nonce"
+    harness.get_callback_request = lambda: "callback"
+    return harness
+
+
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        ({"get_block_result": {"number": BLOCK}}, {"number": BLOCK}),
+        ({"number": BLOCK}, {"number": BLOCK}),
+    ],
+)
+def test_rpc_helper_uses_own_ledger_and_bounded_wait(
+    ledger_harness: Any, body: dict[str, Any], expected: Any
+) -> None:
+    """Use the configured ledger chain and accept wrapped or raw results."""
+    harness = ledger_harness
+    response = SimpleNamespace(
+        performative=LedgerApiMessage.Performative.STATE,
+        state=SimpleNamespace(body=body),
+    )
+    harness.context.outbox.put_message.side_effect = (
+        lambda **kwargs: harness.context.requests.request_id_to_callback.pop("nonce")(
+            response, harness
+        )
+    )
+    rows = run(
+        ChainDiscoveryMixin._chain_rpc(harness, "get_block", block_identifier="latest")
+    )
+    assert rows == expected
+    inputs = harness.context.ledger_api_dialogues.create.call_args.kwargs
+    assert inputs["ledger_id"] == "ethereum"
+    assert inputs["callable"] == "get_block"
+    assert inputs["kwargs"].body == {
+        "block_identifier": "latest",
+        "chain_id": "gnosis",
+    }
+    harness.context.outbox.put_message.assert_called_once()
+    assert harness.context.requests.request_id_to_callback == {}
+
+
+@pytest.mark.parametrize("timeout", [False, True])
+def test_rpc_helper_reports_ledger_errors(ledger_harness: Any, timeout: bool) -> None:
+    """Expose ledger errors and bounded wait timeouts to the fallback interval."""
+    if timeout:
+        ledger_harness.sleep = MagicMock(side_effect=lambda seconds: done(None))
+    else:
+        response = SimpleNamespace(
+            performative=LedgerApiMessage.Performative.ERROR,
+            message="RPC rejected the request",
+        )
+        ledger_harness.context.outbox.put_message.side_effect = (
+            lambda **kwargs: ledger_harness.context.requests.request_id_to_callback.pop(
+                "nonce"
+            )(response, ledger_harness)
+        )
+    message = "Ledger response timed out" if timeout else "RPC rejected the request"
+    with (
+        patch("time.monotonic", side_effect=[0.0, 5.0 if timeout else 0.0]),
+        pytest.raises(ChainRPCError, match=message),
+    ):
+        run(ChainDiscoveryMixin._chain_rpc(ledger_harness, "get_block"))
+
+
+@pytest.mark.parametrize("rows", [[{"id": "market", "title": "Exact title"}], [], {}])
+def test_subgraph_lookup_uses_exact_market_id(ledger_harness: Any, rows: Any) -> None:
+    """Return the exact market row only when the indexer has a usable list."""
+    harness = ledger_harness
+    response = object()
+    harness._build_http_request_message = MagicMock(
+        return_value=(MagicMock(), MagicMock())
+    )
+    harness.context.outbox.put_message.side_effect = (
+        lambda **kwargs: harness.context.requests.request_id_to_callback.pop("nonce")(
+            response, harness
+        )
+    )
+    harness.context.omen_subgraph = SimpleNamespace(
+        get_spec=lambda: {"method": "POST", "url": "http://subgraph.invalid"},
+        process_response=lambda reply: rows if reply is response else None,
+    )
+    market_id = creation_details(CREATION)["id"]
+    result = run(ChainDiscoveryMixin._chain_subgraph_market(harness, market_id))
+    assert result == (rows[0] if isinstance(rows, list) and rows else None)
+    request = harness._build_http_request_message.call_args.kwargs
+    query = json.loads(request["content"])["query"]
+    assert 'where: {id: "' + market_id + '"}' in query
+    assert "outcomeTokenMarginalPrices" in query
+    assert "question { templateId }" in query
+    assert request["method"] == "POST"
+    assert request["url"] == "http://subgraph.invalid"
+
+
+@pytest.mark.parametrize("question", [None, {"templateId": "2"}])
+def test_subgraph_title_fallback_reports_source(tmp_path: Path, question: Any) -> None:
+    """Return the indexed market and identify its delayed title source."""
+    harness: Any = Harness(tmp_path)
+    harness.receipt = {"logs": []}
+    market = {
+        "id": creation_details(CREATION)["id"],
+        "title": "Exact title",
+        "outcomeSlotCount": 2,
+        "outcomes": ["Yes", "No"],
+    }
+    if question is not None:
+        market["question"] = question
+    harness.fallback = market
+    assert (
+        run(harness._chain_market(CREATION, {"timestamp": hex(CREATED)}, CREATED + 8))
+        == market
+    )
+    harness.context.logger.info.assert_called_once_with(
+        "[LIGHTNING_DETECT] market=%s delay_s=%.3f source=%s",
+        market["id"],
+        8,
+        "subgraph",
+    )
+
+
+def test_empty_pool_is_not_materialised(tmp_path: Path) -> None:
+    """Do not construct a market with unfunded outcome balances."""
+    harness: Any = Harness(tmp_path)
+    harness._chain_pool_balances = lambda *args: done([0, 0])
+    row = run(harness._chain_market(CREATION, {"timestamp": CREATED}, CREATED))
+    assert row == {}
+
+
+def test_stale_creation_advances_cursor_without_queueing(tmp_path: Path) -> None:
+    """Do not read the receipt or retain a market past the freshness limit."""
+    harness = Harness(tmp_path)
+    assert (
+        run(harness.chain_markets(CREATED + harness.params.fast.fresh_max_age_s + 1))
+        == []
+    )
+    assert not FreshQueue(tmp_path / "fresh_watch.json").pending
+    assert all(method != "get_transaction_receipt" for method, _ in harness.calls)
+    state = json.loads((tmp_path / "lightning_chain.json").read_text())
+    assert state == {
+        "last_block": BLOCK,
+        "rpc_error_since": None,
+        "scanned_head": BLOCK,
+    }
+
+
+def test_invalid_get_logs_result_starts_fallback_interval(tmp_path: Path) -> None:
+    """Treat a malformed log response as an RPC failure and keep the scan cursor."""
+    harness: Any = Harness(tmp_path)
+    harness.logs = {}
+    assert run(harness.chain_markets(CREATED)) == []
+    assert run(harness.chain_markets(CREATED + 61)) is None
+    assert not (tmp_path / "fresh_watch.json").exists()
+    state = json.loads((tmp_path / "lightning_chain.json").read_text())
+    assert state["last_block"] is None
+    assert state["rpc_error_since"] == CREATED
+
+
+def test_chain_filters_removed_wrong_factory_and_wrong_creator(tmp_path: Path) -> None:
+    """Queue only the allowed creator event emitted by the configured factory."""
+    harness = Harness(tmp_path)
+    harness.logs = [
+        dict(CREATION, removed=True),
+        dict(CREATION, address="0x" + "ab" * 20),
+        dict(CREATION, topics=[CREATION_TOPIC, "0x" + "00" * 32]),
+        CREATION,
+    ]
+    rows = run(harness.chain_markets(CREATED + 5))
+    assert [row["id"] for row in rows] == [creation_details(CREATION)["id"]]
+    assert len(FreshQueue(tmp_path / "fresh_watch.json").pending) == 1
+    assert (
+        len([name for name, _ in harness.calls if name == "get_transaction_receipt"])
+        == 1
+    )
+
+
+def test_creation_before_head_uses_its_own_block(tmp_path: Path) -> None:
+    """Fetch the creation header when a log is older than the current head."""
+    harness = Harness(tmp_path)
+    harness.head = BLOCK + 1
+    rows = run(harness.chain_markets(CREATED + 5))
+    assert [row["creationTimestamp"] for row in rows] == [CREATED]
+    assert ("get_block", {"block_identifier": BLOCK}) in harness.calls
+    state = json.loads((tmp_path / "lightning_chain.json").read_text())
+    assert state["last_block"] == BLOCK + 1
+
+
+def test_overnight_cursor_gap_scans_only_fresh_blocks(tmp_path: Path) -> None:
+    """Bound an old durable cursor without dropping a fresh creation log."""
+    harness = Harness(tmp_path)
+    (tmp_path / "lightning_chain.json").write_text(
+        json.dumps({"last_block": BLOCK - 15000, "rpc_error_since": None})
+    )
+    rows = run(harness.chain_markets(CREATED + 8))
+    assert [row["id"] for row in rows] == [creation_details(CREATION)["id"]]
+    filters = next(
+        kwargs["filter_params"] for name, kwargs in harness.calls if name == "get_logs"
+    )
+    assert filters["fromBlock"] == BLOCK - harness.params.fast.fresh_max_age_s // 5 - 1
+    assert filters["toBlock"] == BLOCK
+    state = json.loads((tmp_path / "lightning_chain.json").read_text())
+    assert state["last_block"] == BLOCK
+
+
+def test_chain_and_preview_share_two_idle_rpc_calls(tmp_path: Path) -> None:
+    """Use one head and one merged event scan for an idle discovery tick."""
+    from packages.valory.skills.fresh_watch_abci.preview import (
+        DELIVERY_TOPIC,
+        PROPOSER,
+        PreviewMixin,
+        REQUEST_TOPIC,
+    )
+
+    class CombinedHarness(Harness, PreviewMixin):
+        """Run both pollers with one saved chain."""
+
+    harness: Any = CombinedHarness(tmp_path)
+    harness.logs = []
+    harness.params.lightning.lightning_preview = True
+    marketplace = "0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB"
+    harness.params.mech_marketplace_config = SimpleNamespace(
+        mech_marketplace_address=marketplace
+    )
+    assert run(harness.chain_markets(CREATED + 8)) == []
+    run(harness.preview_poll(CREATED + 8))
+    assert [method for method, _ in harness.calls] == ["get_block", "get_logs"]
+    filters = harness.calls[1][1]["filter_params"]
+    assert {address.lower() for address in filters["address"]} == {
+        FACTORY.lower(),
+        marketplace.lower(),
+        PROPOSER.lower(),
+    }
+    assert filters["topics"] == [[CREATION_TOPIC, REQUEST_TOPIC, DELIVERY_TOPIC]]
+    assert PreviewMixin.preview_store(harness).last_block == BLOCK
+
+
+def test_log_rpc_uses_contract_state_and_bounded_wait(ledger_harness: Any) -> None:
+    """Dispatch nonempty getLogs through the JSON-safe event reader contract."""
+    from packages.valory.protocols.contract_api import ContractApiMessage
+
+    harness = ledger_harness
+    harness.context.contract_api_dialogues = MagicMock()
+    harness.context.contract_api_dialogues.create.return_value = (
+        MagicMock(),
+        MagicMock(),
+    )
+    response = SimpleNamespace(
+        performative=ContractApiMessage.Performative.STATE,
+        state=SimpleNamespace(body={"logs": [CREATION]}),
+    )
+    harness.context.outbox.put_message.side_effect = (
+        lambda **kwargs: harness.context.requests.request_id_to_callback.pop("nonce")(
+            response, harness
+        )
+    )
+    assert run(
+        ChainDiscoveryMixin._chain_rpc(
+            harness, "get_logs", filter_params={"fromBlock": BLOCK}
+        )
+    ) == [CREATION]
+    harness.context.ledger_api_dialogues.create.assert_not_called()
+    inputs = harness.context.contract_api_dialogues.create.call_args.kwargs
+    assert inputs["performative"] == ContractApiMessage.Performative.GET_STATE
+    assert inputs["contract_id"] == "valory/omen_event_reader:0.1.0"
+    assert inputs["callable"] == "get_logs"
+    assert inputs["kwargs"].body == {
+        "filter_params": {"fromBlock": BLOCK},
+        "chain_id": "gnosis",
+    }
+
+
+def test_shared_rpc_failure_is_not_retried_in_same_tick(tmp_path: Path) -> None:
+    """Keep a failed head read within the per-tick RPC budget."""
+    from packages.valory.skills.fresh_watch_abci.preview import PreviewMixin
+
+    class CombinedHarness(Harness, PreviewMixin):
+        """Share the real scan helper across both callers."""
+
+    harness: Any = CombinedHarness(tmp_path)
+    harness.params.lightning.lightning_preview = True
+    harness.fail = True
+    assert run(harness.chain_markets(CREATED)) == []
+    with pytest.raises(ChainRPCError, match="ledger unavailable"):
+        run(harness.preview_poll(CREATED))
+    assert harness.calls == [("get_block", {"block_identifier": "latest"})]
+    assert run(harness.chain_markets(CREATED + 61)) is None
+    assert len(harness.calls) == 2
+
+
+@pytest.mark.parametrize("creator", [FastConfig().creators[0], "0x" + "ab" * 20])
+@pytest.mark.parametrize("bad_data", ["undecodable", "two_conditions"])
+def test_invalid_creation_does_not_block_allowed_market(
+    tmp_path: Path, creator: str, bad_data: str
+) -> None:
+    """Skip invalid factory data without starting the RPC error interval."""
+    harness = Harness(tmp_path)
+    types = ["address", "address", "address", "bytes32[]", "uint256"]
+    values = list(decode(types, bytes.fromhex(CREATION["data"][2:])))
+    values[3] *= 2
+    invalid = dict(
+        CREATION,
+        topics=[CREATION_TOPIC, "0x" + "00" * 12 + creator[2:]],
+        data="0x12" if bad_data == "undecodable" else encode(types, values),
+        logIndex=CREATION["logIndex"] - 1,
+    )
+    harness.logs = [invalid, CREATION]
+    rows = run(harness.chain_markets(CREATED + 5))
+    assert [row["id"] for row in rows] == [creation_details(CREATION)["id"]]
+    state = json.loads((tmp_path / "lightning_chain.json").read_text())
+    assert state["rpc_error_since"] is None
+    assert state["last_block"] == BLOCK
+    harness.context.logger.warning.assert_not_called()
+
+
+def test_overlap_replaces_orphan_rows_before_selecting_newer_market(
+    tmp_path: Path,
+) -> None:
+    """Drop queued creations from a replaced block and select the funded row."""
+    harness: Any = Harness(tmp_path)
+    original_rpc = harness._chain_rpc
+    old_hash = "0x" + "11" * 32
+    canonical_hash = old_hash
+
+    def rpc(method: str, **kwargs: Any) -> Any:
+        """Return the canonical header for each requested height."""
+        if method == "get_block":
+            harness.calls.append((method, kwargs))
+            height = kwargs["block_identifier"]
+            if height == "latest":
+                height = harness.head
+            return (
+                yield from done(
+                    {
+                        "number": height,
+                        "timestamp": CREATED + height - BLOCK,
+                        "hash": canonical_hash if height == BLOCK else "0x" + "22" * 32,
+                    }
+                )
+            )
+        return (yield from original_rpc(method, **kwargs))
+
+    harness._chain_rpc = rpc
+    second = dict(
+        CREATION,
+        data="0x" + "00" * 12 + "ab" * 20 + CREATION["data"][66:],
+        logIndex=CREATION["logIndex"] + 1,
+    )
+    harness.logs = [CREATION, second]
+    run(harness.chain_markets(CREATED + 5))
+    initial = FreshQueue(tmp_path / "fresh_watch.json").pending
+    harness.head = BLOCK + 1
+    harness.logs = []
+    run(harness.chain_markets(CREATED + 10))
+    assert FreshQueue(tmp_path / "fresh_watch.json").pending == initial
+    harness.calls = []
+    canonical_hash = "0x" + "33" * 32
+    harness.head = BLOCK + 2
+    newer = dict(
+        CREATION,
+        data="0x" + "00" * 12 + "cd" * 20 + CREATION["data"][66:],
+        blockNumber=harness.head,
+    )
+    harness.logs = [newer]
+    run(harness.chain_markets(CREATED + 15))
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    assert [row["id"] for row in queue.pending] == ["0x" + "cd" * 20]
+    selected = queue.pop()
+    assert selected is not None
+    assert selected["id"] == "0x" + "cd" * 20
+    assert [(row["block_number"], row["block_hash"]) for row in initial] == [
+        (BLOCK, old_hash),
+        (BLOCK, old_hash),
+    ]
+    assert [
+        kwargs["block_identifier"]
+        for method, kwargs in harness.calls
+        if method == "get_block"
+    ] == ["latest", BLOCK]
+
+
+@pytest.mark.parametrize(
+    "slot_count,outcomes,retry",
+    [
+        (3, ["Yes", "No", "Maybe"], False),
+        (2, ["No", "Yes"], False),
+        (None, ["Yes", "No"], True),
+        (2, None, True),
+    ],
+)
+def test_fallback_requires_complete_binary_metadata_before_queueing(
+    tmp_path: Path, slot_count: Any, outcomes: Any, retry: bool
+) -> None:
+    """Reject unsupported outcomes and retry incomplete indexer rows."""
+    from packages.valory.skills.fresh_watch_abci.behaviours import FreshWatchBehaviour
+    from packages.valory.skills.fresh_watch_abci.tests.test_behaviours import (
+        make,
+        raw_market,
+    )
+
+    harness: Any = Harness(tmp_path)
+    harness.receipt = {"logs": []}
+    harness.fallback = {
+        **raw_market(),
+        "id": creation_details(CREATION)["id"],
+        "creationTimestamp": CREATED,
+        "openingTimestamp": CREATED + 3600,
+        "outcomeSlotCount": slot_count,
+        "outcomes": outcomes,
+    }
+    assert run(harness.chain_markets(CREATED + 5)) == []
+    state = json.loads((tmp_path / "lightning_chain.json").read_text())
+    assert (state["last_block"] < BLOCK) is retry
+    assert state["rpc_error_since"] is None
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    assert queue.pending == []
+    queue.last_housekeeping = CREATED + 5
+    queue.save()
+    watch = make(FreshWatchBehaviour, tmp_path)
+    watch.context.state.fast_background_running = True
+    watch.context.state.fast_last_poll = CREATED + 5
+    watch._get_pool_balances = MagicMock(
+        side_effect=AssertionError("Unsupported market must not set up a request")
+    )
+    watch.sleep = lambda delay: done(None)
+    with patch(
+        "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+        return_value=CREATED + 5,
+    ):
+        assert run(watch._select(False, True)) == {"lane": "wait"}
+    watch._get_pool_balances.assert_not_called()
+    assert FreshQueue(queue.path).asked == {}
+
+
+def test_retry_cursor_does_not_hide_a_queued_orphan_from_overlap_check(
+    tmp_path: Path,
+) -> None:
+    """Reconcile ready rows even when another receipt keeps the retry cursor back."""
+    from packages.valory.skills.fresh_watch_abci.behaviours import FreshWatchBehaviour
+    from packages.valory.skills.fresh_watch_abci.lightning import LightningConfig
+    from packages.valory.skills.fresh_watch_abci.tests.test_behaviours import make
+
+    harness: Any = Harness(tmp_path)
+    state_path = tmp_path / "lightning_chain.json"
+    state_path.write_text(
+        json.dumps({"last_block": BLOCK - 1, "rpc_error_since": None})
+    )
+    original_rpc = harness._chain_rpc
+    canonical_hash = "0x" + "11" * 32
+
+    def rpc(method: str, **kwargs: Any) -> Any:
+        """Keep one title unavailable while the ready creation's block changes."""
+        if method == "get_block":
+            harness.calls.append((method, kwargs))
+            height = kwargs["block_identifier"]
+            height = harness.head if height == "latest" else height
+            return (
+                yield from done(
+                    {
+                        "number": height,
+                        "timestamp": CREATED + height - BLOCK,
+                        "hash": canonical_hash if height == BLOCK else "0x" + "22" * 32,
+                    }
+                )
+            )
+        if (
+            method == "get_transaction_receipt"
+            and kwargs["transaction_hash"] == CREATION["transactionHash"]
+        ):
+            return (yield from done({"logs": []}))
+        return (yield from original_rpc(method, **kwargs))
+
+    harness._chain_rpc = rpc
+    ready = dict(
+        CREATION,
+        data="0x" + "00" * 12 + "ab" * 20 + CREATION["data"][66:],
+        logIndex=CREATION["logIndex"] + 1,
+        transactionHash="0x" + "12" * 32,
+    )
+    harness.logs = [CREATION, ready]
+    assert len(run(harness.chain_markets(CREATED + 5))) == 1
+    assert json.loads(state_path.read_text())["last_block"] == BLOCK - 1
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    assert [row["id"] for row in queue.pending] == ["0x" + "ab" * 20]
+    subgraph_row = {
+        **queue.pending[0],
+        "id": "subgraph-market",
+        "creationTimestamp": CREATED + 2,
+    }
+    subgraph_row.pop("block_number")
+    subgraph_row.pop("block_hash")
+    queue.pending.append(subgraph_row)
+    queue.save()
+    canonical_hash = "0x" + "33" * 32
+    harness.head = BLOCK + 1
+    harness.logs = [
+        dict(
+            ready,
+            data="0x" + "00" * 12 + "cd" * 20 + CREATION["data"][66:],
+            blockNumber=BLOCK + 1,
+        )
+    ]
+    harness.calls = []
+    run(harness.chain_markets(CREATED + 10))
+    assert [row["id"] for row in FreshQueue(queue.path).pending] == [
+        "0x" + "cd" * 20,
+        "subgraph-market",
+    ]
+    assert [
+        kwargs["block_identifier"]
+        for method, kwargs in harness.calls
+        if method == "get_block"
+    ] == ["latest", BLOCK]
+    watch = make(FreshWatchBehaviour, tmp_path)
+    watch.context.params.lightning = LightningConfig(lightning_chain_detect=True)
+    watch.context.state.fast_background_running = True
+    watch._fast_tool = lambda: "superforcaster"
+    watch._chain_pool_balances = lambda *args: done([7 * 10**18] * 2)
+    with patch(
+        "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+        return_value=CREATED + 10,
+    ):
+        selected = run(watch._select(False, True))
+    assert selected["lane"] == "market"
+    assert watch.bets[selected["sampled_bet_index"]].id == "0x" + "cd" * 20
+
+
+def test_future_creation_keeps_retry_cursor_until_local_clock_catches_up(
+    tmp_path: Path,
+) -> None:
+    """A head timestamp ahead of the local tick must not lose its market."""
+    harness = Harness(tmp_path)
+    state_path = tmp_path / "lightning_chain.json"
+    state_path.write_text(
+        json.dumps({"last_block": BLOCK - 1, "rpc_error_since": None})
+    )
+    assert run(harness.chain_markets(CREATED - 1)) == []
+    state = json.loads(state_path.read_text())
+    assert state["last_block"] == BLOCK - 1
+    assert state["rpc_error_since"] is None
+    assert FreshQueue(tmp_path / "fresh_watch.json").pending == []
+    rows = run(harness.chain_markets(CREATED + 1))
+    assert [row["id"] for row in rows] == [creation_details(CREATION)["id"]]
+    assert FreshQueue(tmp_path / "fresh_watch.json").pending == rows
+
+
+@pytest.mark.parametrize(
+    "slot_count,template,title",
+    [
+        (3, 2, 'Will it happen?␟"Yes","No","Maybe"'),
+        (2, 0, "Will it happen?"),
+        (2, 1, 'Will it happen?␟"Yes","No"'),
+        (2, 2, 'Will it happen?␟"No","Yes"'),
+        (2, 2, 'Will it happen?␟"Invalid","Valid"'),
+    ],
+)
+def test_proven_unsupported_receipt_skips_without_indexer_row(
+    tmp_path: Path, slot_count: int, template: int, title: str
+) -> None:
+    """Known unsupported receipts must not hold a retry cursor or use a shortcut."""
+    harness: Any = Harness(tmp_path)
+    types = ["uint256", "string", "address", "uint32", "uint32", "uint256", "uint256"]
+    values = list(decode(types, bytes.fromhex(QUESTION["data"][2:])))
+    values[:2] = [template, title]
+    condition = dict(CONDITION, data=encode(["uint256"], [slot_count]))
+    question = dict(QUESTION, data=encode(types, values))
+    harness.receipt = {"logs": [question, condition]}
+    harness._chain_subgraph_market = MagicMock(side_effect=lambda market: done(None))
+    assert run(harness.chain_markets(CREATED + 5)) == []
+    state = json.loads((tmp_path / "lightning_chain.json").read_text())
+    assert state["last_block"] == BLOCK
+    assert state["rpc_error_since"] is None
+    assert FreshQueue(tmp_path / "fresh_watch.json").pending == []
+    harness._chain_subgraph_market.assert_not_called()
+    assert run(harness.chain_markets(CREATED + 10)) == []
+
+
+@pytest.mark.parametrize("template", [0, 1])
+def test_fallback_with_known_unsupported_template_never_enters_queue(
+    tmp_path: Path, template: int
+) -> None:
+    """An indexed boolean or other template cannot acquire natural-YES labels."""
+    from packages.valory.skills.fresh_watch_abci.tests.test_behaviours import raw_market
+
+    harness: Any = Harness(tmp_path)
+    harness.receipt = {"logs": []}
+    harness.fallback = {
+        **raw_market(),
+        "id": creation_details(CREATION)["id"],
+        "creationTimestamp": CREATED,
+        "openingTimestamp": CREATED + 3600,
+        "question": {"templateId": template},
+    }
+    assert run(harness.chain_markets(CREATED + 5)) == []
+    state = json.loads((tmp_path / "lightning_chain.json").read_text())
+    assert state["last_block"] == BLOCK
+    assert state["rpc_error_since"] is None
+    assert FreshQueue(tmp_path / "fresh_watch.json").pending == []
+
+
+@pytest.mark.parametrize("balances", [[0, 0], [0, 7 * 10**18], [7 * 10**18, 0]])
+def test_unfunded_chain_pool_is_never_queued_or_marked_asked(
+    tmp_path: Path, balances: list[int]
+) -> None:
+    """Skip unsupported zero-liquidity rows before Bet can blacklist their outcomes."""
+    harness: Any = Harness(tmp_path)
+    harness._chain_pool_balances = lambda *args: done(balances)
+    assert run(harness.chain_markets(CREATED + 5)) == []
+    state = json.loads((tmp_path / "lightning_chain.json").read_text())
+    assert state["last_block"] == BLOCK
+    assert state["rpc_error_since"] is None
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    assert queue.pending == []
+    assert queue.asked == {}
+
+
+@pytest.mark.parametrize(
+    "encoded_title,expected_title,rule",
+    [
+        (r"Will \"X\" win?", 'Will "X" win?', None),
+        (r"Will it st\u0069ll hold?", "Will it still hold?", "still_hold_phrase"),
+    ],
+)
+def test_chain_title_is_unescaped_before_queueing_and_classification(
+    tmp_path: Path, encoded_title: str, expected_title: str, rule: Any
+) -> None:
+    """Decode Realitio JSON escapes before title matching and direct-rule selection."""
+    from packages.valory.skills.fresh_watch_abci.lightning import (
+        LightningConfig,
+        still_hold_rule,
+    )
+
+    harness = Harness(tmp_path)
+    types = ["uint256", "string", "address", "uint32", "uint32", "uint256", "uint256"]
+    values = list(decode(types, bytes.fromhex(QUESTION["data"][2:])))
+    values[:2] = [2, encoded_title + '␟"Yes","No"']
+    question = dict(QUESTION, data=encode(types, values))
+    harness.receipt = {"logs": [question, CONDITION]}
+    rows = run(harness.chain_markets(CREATED + 5))
+    assert len(rows) == 1
+    assert rows[0]["title"] == expected_title
+    assert (
+        FreshQueue(tmp_path / "fresh_watch.json").pending[0]["title"] == expected_title
+    )
+    assert (
+        still_hold_rule(expected_title, rows[0]["creator"], LightningConfig()) == rule
+    )

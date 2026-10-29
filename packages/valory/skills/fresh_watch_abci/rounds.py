@@ -33,9 +33,7 @@ from packages.valory.skills.abstract_round_abci.base import (
     DegenerateRound,
 )
 from packages.valory.skills.decision_maker_abci.states.base import Event as D
-from packages.valory.skills.decision_maker_abci.states.base import (
-    SynchronizedData,
-)
+from packages.valory.skills.decision_maker_abci.states.base import SynchronizedData
 from packages.valory.skills.decision_maker_abci.states.bet_placement import (
     BetPlacementRound,
 )
@@ -59,6 +57,7 @@ class Event(Enum):
 
     DONE = "done"
     MARKET = "market"
+    LIGHTNING = "lightning"
     MECH_ONLY = "mech_only"
     HOUSEKEEPING = "housekeeping"
     WAIT = "wait"
@@ -96,6 +95,8 @@ class FreshWatchRound(CollectSameUntilThresholdRound):
             return data, event
         selection = json.loads(data.db.get_strict(self.selection_key))
         lane = selection.pop("lane")
+        if selection.get("lightning_probability") is not None:
+            selection.update(mech_tool=None, selected_tool_key=None)
         data = data.update(
             synchronized_data_class=SynchronizedData,
             tx_submitter=None,
@@ -106,9 +107,19 @@ class FreshWatchRound(CollectSameUntilThresholdRound):
             is_marketplace_v2=True,
             review_bets_for_selling=False,
             policy=None,
+            lightning_probability=selection.pop("lightning_probability", None),
+            lightning_rule=selection.pop("lightning_rule", None),
+            lightning_preview_probability=selection.pop(
+                "lightning_preview_probability", None
+            ),
+            lightning_preview_title=selection.pop("lightning_preview_title", None),
+            lightning_preview_request=selection.pop("lightning_preview_request", False),
+            question_template_id=selection.pop("question_template_id", None),
             **selection,
         )
-        if lane == "market":
+        if lane == "lightning_decision":
+            return data, Event.LIGHTNING
+        if lane in ("market", "preview_request"):
             return data, Event.MARKET
         if lane == "mech_only":
             return data, Event.MECH_ONLY
@@ -171,6 +182,7 @@ class FreshWatchAbciApp(AbciApp[Event]):
     Transition states:
         0. FreshWatchRound
             - market: 2.
+            - lightning: 3.
             - mech only: 1.
             - housekeeping: 7.
             - wait: 0.
@@ -237,6 +249,7 @@ class FreshWatchAbciApp(AbciApp[Event]):
     transition_function = {
         FreshWatchRound: {
             Event.MARKET: DecisionRequestRound,
+            Event.LIGHTNING: FastDecisionRound,
             Event.MECH_ONLY: MechOnlySelectionRound,
             Event.HOUSEKEEPING: RedeemRound,
             Event.WAIT: FreshWatchRound,

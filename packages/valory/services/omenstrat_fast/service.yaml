@@ -8,7 +8,7 @@ license: Apache-2.0
 fingerprint:
   README.md: bafybeic7e2ozu3raqi5i4f322z2nxwtvnsksqu6mncsyfafnzg36qcploy
 fingerprint_ignore_patterns: []
-agent: valory/omenstrat_fast:0.1.0:bafybeibpziheap7opm6wqxhfn4euq7gw5dgz52uifbemp4yeneejvdhije
+agent: valory/omenstrat_fast:0.1.0:bafybeignyeuosizqdfuee6gq2cz5fxt6hb4gxoiquzrcic7xbwaisllxrm
 number_of_agents: 1
 deployment:
   agent:
@@ -210,6 +210,18 @@ models:
       price_margin: ${PRICE_MARGIN:float:0.01}
       max_slip: ${MAX_SLIP:float:0.2}
       min_stake: ${MIN_STAKE:float:0.1}
+      lightning_still_hold: ${LIGHTNING_STILL_HOLD:bool:false}
+      lightning_still_hold_max_price: ${LIGHTNING_STILL_HOLD_MAX_PRICE:float:0.93}
+      lightning_base_rate_window_days: ${LIGHTNING_BASE_RATE_WINDOW_DAYS:int:21}
+      lightning_base_rate_min_n: ${LIGHTNING_BASE_RATE_MIN_N:int:60}
+      lightning_base_rate_floor: ${LIGHTNING_BASE_RATE_FLOOR:float:0.9}
+      still_hold_prior: ${STILL_HOLD_PRIOR:float:0.85}
+      lightning_chain_detect: ${LIGHTNING_CHAIN_DETECT:bool:false}
+      omen_fpmm_factory: ${OMEN_FPMM_FACTORY:str:0x9083A2B699c0a4AD06F63580BDE2635d26a3eeF0}
+      lightning_rpc_fallback_s: ${LIGHTNING_RPC_FALLBACK_S:int:60}
+      lightning_preview: ${LIGHTNING_PREVIEW:bool:false}
+      lightning_preview_max_per_night: ${LIGHTNING_PREVIEW_MAX_PER_NIGHT:int:15}
+      lightning_creators: ${LIGHTNING_CREATORS:list:["0x89c5cc945dd550bcffb72fe42bff002429f46fec","0xffc8029154ecd55abed15bd428ba596e7d23f557"]}
   benchmark_tool:
     args:
       log_dir: ${LOG_DIR:str:/benchmarks}

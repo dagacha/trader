@@ -8,15 +8,16 @@ aea_version: '>=2.0.0, <3.0.0'
 fingerprint:
   README.md: bafybeihpik4c2q3n7gu236hnc6uzbgdgqst4xmrdloycr352cglbu2gtkq
   __init__.py: bafybeib3ysnyfp5g7wqqopddtqp3vrod5hlfhyjekrdasrbpexa6fc4eoq
-  behaviours.py: bafybeidekktpzp57maqhumitkz5nruylxlz2ico23ogzpt5nm5yikrwcly
+  behaviours.py: bafybeifopgcskqrm35ggm5ybuwwon4ivilpeeeybqxdogpfnna3mdel4qq
   composition.py: bafybeid4mxycmyb6jflihmflreamsakytajqmt6zrq5bcr4p27d34di7vq
   dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
-  fsm_specification.yaml: bafybeiahw5ctub5lidjldddvx3qndaeifo7frhsqogizu6pyuwpl72aja4
+  fsm_specification.yaml: bafybeifbfhecigg6pyjfoti7rcvaoflgxliycif66aaaptdumyhl2zyy4i
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
   models.py: bafybeicihpfeq66ahhuboojdrf7f33xu6tmktmskzodh7oiqvxtggka4om
   tests/__init__.py: bafybeifx5qa3c7rsjbe4ujuif363osh23mvgprcd5jwv67t5kl3kgqrszu
   tests/test_composition.py: bafybeif73yo7ty5as3rvfc6u5yozco5noi2ucotbvu6ufhsxztxtdw7hqy
-  tests/test_config.py: bafybeig3ikbsl7mvce5ls3bwusgl556pn5ge6zvjo7s364ixbrssxutfvi
+  tests/test_config.py: bafybeiarzoasntaniabzvyazi2owk3hskrpyismcootdecdd4get22q2fa
+  tests/test_direct_settlement.py: bafybeiazmd5sh7cdjuoidreg7mjxjdtwuck36joeaievxwi7hkelhmczkq
   tests/test_requests.py: bafybeif5da2h47fa2bofe6scqectrzqb46otnrfxjivoo7432idornmap4
 fingerprint_ignore_patterns: []
 connections: []
@@ -27,14 +28,14 @@ skills:
 - valory/registration_abci:0.1.0:bafybeicwfwrzdu5kjcjh4ntzgo7dghy5rs4o6ddbwgo2vz7bomi67gn5wa
 - valory/transaction_settlement_abci:0.1.0:bafybeidmmhjcgp7chozxovensq3zplkufvaityd2w3zladtssu4ijvqbzm
 - valory/termination_abci:0.1.0:bafybeig5lk6agmjpctxh4smrqvtbylynda7a5kwgtdlss2sjnnabedzuem
-- valory/decision_maker_abci:0.1.0:bafybeibmczauoonpt5oxrbxhs6ybpmknwkmqpwc7vciv7atrrjclhc3tuy
-- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeifcjkilw5l6ruempgcc2xbjxv3cgwqteomdoqdedlfnqppkh55yme
+- valory/decision_maker_abci:0.1.0:bafybeidwkhevmcyjihkgw4cchui2rd4g2pajkk6kypqdkdjhmgso7jan2u
+- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeiho2wsf6ifuojcusnkl3cav55xyvuyyt32btpcclqjxoyfkyjelue
 - valory/staking_abci:0.1.0:bafybeihjsvg6qmpcvca24hlj34ppdgnhx6wnbi56ddcnnfdj2p7bg66mii
 - valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m
 - valory/chatui_abci:0.1.0:bafybeihj5y6cecuw4iz2gshicoygghrgi5b6rzynnofx25ycsv56ehgdvq
 - valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
-- valory/trader_abci:0.1.0:bafybeicc343vbjzy3tfkvjwufg6y2ik452rv2w5mnx64xtqlghmage3gyu
-- valory/fresh_watch_abci:0.1.0:bafybeigk5rp2yc7wti6o637lcvkpbuldzdfdzvg5ryo42tt3pvv6eyz5em
+- valory/trader_abci:0.1.0:bafybeiacumnkennohhjat6owyw44dm4awjjxk3sr22jnbcenp3fsdyebu4
+- valory/fresh_watch_abci:0.1.0:bafybeiab634htyi6dp7egn4iy53zm6vpska6fxh7iqaliy4ywq3cjspfvq
 behaviours:
   main:
     args: {}
@@ -381,6 +382,20 @@ models:
       price_margin: 0.01
       max_slip: 0.2
       min_stake: 0.1
+      lightning_still_hold: false
+      lightning_still_hold_max_price: 0.93
+      lightning_base_rate_window_days: 21
+      lightning_base_rate_min_n: 60
+      lightning_base_rate_floor: 0.9
+      still_hold_prior: 0.85
+      lightning_chain_detect: false
+      omen_fpmm_factory: '0x9083A2B699c0a4AD06F63580BDE2635d26a3eeF0'
+      lightning_rpc_fallback_s: 60
+      lightning_preview: false
+      lightning_preview_max_per_night: 15
+      lightning_creators:
+      - '0x89c5cc945dd550bcffb72fe42bff002429f46fec'
+      - '0xffc8029154ecd55abed15bd428ba596e7d23f557'
     class_name: FastParams
   benchmarking_mode:
     args:

@@ -19,10 +19,12 @@
 
 """Parameters and state for the fast Omen strategy."""
 
+import time
 from dataclasses import fields
 from typing import Any, Optional, Tuple, Type
 
 from packages.valory.skills.abstract_round_abci.base import AbciApp
+from packages.valory.skills.fresh_watch_abci.lightning import LightningConfig
 from packages.valory.skills.fresh_watch_abci.rounds import FreshWatchAbciApp
 from packages.valory.skills.fresh_watch_abci.strategy import FastConfig
 from packages.valory.skills.trader_abci.models import (
@@ -124,6 +126,17 @@ class FastParams(TraderParams):
             for item in fields(FastConfig)
         }
         self.fast = FastConfig(**controls)
+        defaults = LightningConfig()
+        self.lightning = LightningConfig(
+            **{
+                item.name: (
+                    self._ensure(item.name, kwargs, item.type)
+                    if item.name in kwargs
+                    else getattr(defaults, item.name)
+                )
+                for item in fields(LightningConfig)
+            }
+        )
         if (
             not 0
             <= self.fast.price_margin
@@ -157,3 +170,5 @@ class SharedState(TraderSharedState):
         self.fast_last_poll = 0.0
         self.fast_background_running = False
         self.fast_polling = False
+        self.fast_started_at = time.time()
+        self.fast_chain_fallback = False

@@ -39,6 +39,7 @@ from packages.valory.skills.fresh_watch_abci.rounds import (
     "lane,event",
     [
         ("market", Event.MARKET),
+        ("lightning_decision", Event.LIGHTNING),
         ("mech_only", Event.MECH_ONLY),
         ("housekeeping", Event.HOUSEKEEPING),
         ("wait", Event.WAIT),
@@ -53,6 +54,9 @@ def test_watch(lane: Any, event: Any) -> None:
                 participants=[("agent",)],
                 consensus_threshold=[1],
                 tx_submitter=["bet_placement_round"],
+                lightning_probability=[0.99],
+                lightning_preview_probability=[0.99],
+                lightning_preview_request=[True],
             )
         )
     )
@@ -67,6 +71,9 @@ def test_watch(lane: Any, event: Any) -> None:
     assert actual == event
     assert result.db.get("sampled_bet_index") == 0
     assert result.db.get("tx_submitter") is None
+    assert result.db.get("lightning_probability") is None
+    assert result.db.get("lightning_preview_probability") is None
+    assert result.db.get("lightning_preview_request") is False
     assert result.db.get("mech_responses") == "[]"
     assert result.db.get("is_marketplace_v2") is True
 
@@ -112,3 +119,35 @@ def test_no_majority(cls: Any) -> None:
     round_.process_payload(SelectionPayload("a", "one"))
     round_.process_payload(SelectionPayload("b", "two"))
     assert round_.end_block()[1] == Event.NO_MAJORITY
+
+
+def test_question_template_does_not_leak_between_watch_selections() -> None:
+    """Keep the current question template and clear it on a later idle lane."""
+    data: Any = SynchronizedData(
+        AbciAppDB(
+            setup_data=dict(
+                all_participants=[("agent",)],
+                participants=[("agent",)],
+                consensus_threshold=[1],
+                question_template_id=[2],
+            )
+        )
+    )
+    for selection, expected in [
+        (
+            dict(
+                lane="lightning_decision",
+                lightning_probability=0.95,
+                question_template_id=2,
+            ),
+            2,
+        ),
+        (dict(lane="market", question_template_id=0), 0),
+        (dict(lane="mech_only"), None),
+    ]:
+        round_ = FreshWatchRound(data, MagicMock())
+        round_.process_payload(SelectionPayload("agent", json.dumps(selection)))
+        outcome = round_.end_block()
+        assert outcome is not None
+        data, _ = outcome
+        assert data.db.get("question_template_id") == expected

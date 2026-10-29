@@ -25,7 +25,7 @@
 # It also repairs a quickstart whose hash already selects the new service.
 # A fresh quickstart or a cache with the same public ID needs no new flag.
 # Migration keeps an existing flag. This applies to both --service directions:
-# omenstrat_fast (deploy) and trader_pearl (rollback).
+# omenstrat_lightning and omenstrat_fast (deploy), and trader_pearl (rollback).
 # To preview a config repair from this repo, run:
 #   python3 scripts/migrate_trader_config.py /path/to/quickstart --service omenstrat_fast --dry-run
 # For rollback, select --service trader_pearl. Remove --dry-run to apply.
@@ -50,7 +50,7 @@
 #                      ID N (expands to ~/N-trader/quickstart) or a path.
 #                      Repeatable. Each clone's runtime cron script has a
 #                      preflight image gate that relies on this alignment.
-#   --service NAME     omenstrat_fast (default) or trader_pearl (rollback)
+#   --service NAME     omenstrat_lightning, omenstrat_fast (default), or trader_pearl
 #   --force-build      rebuild the image even if it exists locally
 #   --skip-publish     skip `autonomy push-all --remote` (service assumed published)
 #   --dry-run          report current state and what would be done; no changes
@@ -110,8 +110,8 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || { echo "ERROR: --quickstart requires a value (trader ID, path, or comma list)" >&2; exit 1; }
       add_quickstart "$2"; shift 2;;
     --service)
-      [ $# -ge 2 ] || { echo "ERROR: --service requires omenstrat_fast or trader_pearl" >&2; exit 1; }
-      case "$2" in omenstrat_fast|trader_pearl) SERVICE="$2";;
+      [ $# -ge 2 ] || { echo "ERROR: --service requires omenstrat_lightning, omenstrat_fast or trader_pearl" >&2; exit 1; }
+      case "$2" in omenstrat_lightning|omenstrat_fast|trader_pearl) SERVICE="$2";;
         *) echo "ERROR: unsupported service: $2" >&2; exit 1;; esac
       shift 2;;
     --force-build)   FORCE_BUILD=1; shift;;

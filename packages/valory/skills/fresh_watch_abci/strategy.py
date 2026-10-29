@@ -132,6 +132,7 @@ def decide(
     requested: List[float],
     cfg: FastConfig,
     fee: int,
+    yes_only: bool = False,
 ) -> Decision:
     """Find the largest stake within Kelly sizing and all execution bounds.
 
@@ -141,9 +142,10 @@ def decide(
     :param requested: YES and NO prices at request time.
     :param cfg: strategy controls.
     :param fee: market fee scaled by 10**18.
+    :param yes_only: restrict the strategy to YES.
     :return: a bet or an explicit skip reason.
     """
-    kind = template(title)
+    kind = "still_hold" if yes_only else template(title)
     p_hat = cfg.prior_weight * p_tool + (1 - cfg.prior_weight) * cfg.priors[kind]
     probabilities = [p_hat, 1 - p_hat]
     if min(balances) <= 0 or not all(0 < value < 1 for value in requested):
@@ -151,7 +153,11 @@ def decide(
     if not 0 <= fee < 10**18:
         return Decision(kind, p_hat, 0, 0.0, 0.0, 0.0, "invalid_fee")
     prices = [balances[1] / sum(balances), balances[0] / sum(balances)]
-    side = max(range(2), key=lambda index: probabilities[index] - prices[index])
+    side = (
+        0
+        if yes_only
+        else max(range(2), key=lambda index: probabilities[index] - prices[index])
+    )
     probability = probabilities[side]
 
     def skip_reason(price: float) -> str:

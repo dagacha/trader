@@ -8,32 +8,62 @@ aea_version: '>=2.0.0, <3.0.0'
 fingerprint:
   README.md: bafybeieurwex74dtimmmndedzrhznyfivsuaf27lteomz4cz23upjtv2pq
   __init__.py: bafybeihyphnywie3dyf7f7mmwm7yvcwekkgsa4mq5273ojuzbjsznvorv4
-  behaviours.py: bafybeiaovz2f3l26oh74ojygspetv7hlxdkglehzsfuv7icfjqe3gr4xiq
+  behaviours.py: bafybeic6l3ichcbukn6hm5nmuc3torh76ivcklrvpiyptvbnyrtyblmcdq
+  chain_discovery.py: bafybeie52tbc3p6homy6bfbws7kw5uxmqxywilxthfozcyffoqchvdeqpq
   dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
-  fsm_specification.yaml: bafybeiffp3l4z3irl7ahhffn4ip6may7bsaym5irq52vm5dl7a2a7kbpti
+  fsm_specification.yaml: bafybeifhpatx5365ubtse2g6kqo6cjeuzoruf75dv5r5xg27n4wtyrtrbm
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
-  models.py: bafybeia4nzzmxrtqorynrwiq5px3mpuq5ecbdtg7ygmbx6u75nw54s7gdu
-  rounds.py: bafybeihpvt4reookpnr4pqcjwrag7qlgtrkn4lxtl5oaa6m32ig5455qte
-  strategy.py: bafybeigm7rhi4dprkxh55n74fjiibyj5qldp7l3sf4sio5t3bn7ecq5lvm
+  lightning.py: bafybeiaqce7pkojmpavzq4ngzqnzp73s35ipbpynxeoyp6x7f6xgj2bxru
+  models.py: bafybeiapbotwro4vulr6qixqmzcbydj3mzdlh7cvsiztjsdsphunbupda4
+  preview.py: bafybeic6uo6lpsva2dqly5omyzhhw5a7hzyvltz23z47q7lyhmvsjj3l4u
+  rounds.py: bafybeigicry3yubpgnirrzyqahfdzllmus3aifpz4qfrvpak7ttkegf4ly
+  rpc.py: bafybeianjn6xucpqyxh42nb2tv7g6ndki7zjeq3q5eilwpfy3mz7vgr6b4
+  strategy.py: bafybeie6oxcejzwc4j4utc24bfochyinclyzc3vzldrpw6hvnukd6l6aam
   tests/__init__.py: bafybeiebuokdlpgmmm6orggvfnnm537acc3eogkkrn6jyjaxzqyb7t7yzy
-  tests/test_behaviours.py: bafybeigprzuhsqfoneiw56xvewt4avjcvajlwxewxdz6uhjxcyenkqdxue
-  tests/test_rounds.py: bafybeiethtm2rdws2ecocfiznx7mewmmxo4k6aro3nzteg6easjbu6hvqe
+  tests/fixtures/chain_creation.json: bafybeibsvrn4ppzzldhqqy4tziri47oxviicqocyoq7hmcs4hgaom7i5ui
+  tests/fixtures/question_preview.json: bafybeie2ouuxhajfkeln7cgcjm3c3ngus64jtdg5rjz4pix5rcgrpj3hzq
+  tests/fixtures/question_preview_metadata.json: bafybeihhtgcztco4xdf5zgeny6ldafa7pnshaeun74zppc4ygvuutyro3i
+  tests/test_base_rate_deadlines.py: bafybeicsuzvhmbzhbeliuolk3mr7txrvvowayjr7g2ztj4r37pyel2i2ey
+  tests/test_behaviours.py: bafybeiein6fqhd2tamjkorj7v2gvw3mk6i73j5jbiwiaqwvlmtfb4uwugi
+  tests/test_chain_discovery.py: bafybeiewzhy5iwuztq32kdqcwjhe2cp4d4kc3uykeiimgjlugfladftt2u
+  tests/test_chain_pool_reads.py: bafybeiav26vusjg3nz7ve3ta43oxwnmvvnnfffaa6rayhuveaqj4suocdm
+  tests/test_chain_title_reads.py: bafybeic42v2ivrufxfz364kxc745pzbx3c6sysdcdk766uv2k6vpv75glm
+  tests/test_configured_prior.py: bafybeibmk7ilhbdlpprmzgg5muvqu7zdfhszcw25ks4asr7bevssusjpli
+  tests/test_event_reader.py: bafybeib6wxe56sudyw4tz3gi5zvv2r3ofqjycwviscadkz2dawk3zieptq
+  tests/test_lightning.py: bafybeigd4kzvglolqtxono5arcmiqgksilzexpnqkun7v23jpeggcv5ph4
+  tests/test_models.py: bafybeifxvfijkhloejaycjcgvbsqesnyqrojoitnjl3rf5ezgolo57eyrq
+  tests/test_natural_yes.py: bafybeiexgxhvcuk2ebojr6bbh4odpmnpg7xqwcs7bls2hct37nh3lwmhaa
+  tests/test_outcome_order.py: bafybeia3oraxwv6qlj5cdhlyzkab5btq2tb6ahanam2bo2ftsepwlpzis4
+  tests/test_preview.py: bafybeiefldvrtx5fxp4wjyvw6rhd7yxblpnhimwt67ohpelrdvoxpcrzgm
+  tests/test_preview_deadline.py: bafybeiag2ti4yfzf57ap5b52mcb5rwl2xeqqbspzgsqq7kf2mghkaxxhc4
+  tests/test_preview_restart.py: bafybeic6t4uvhruohtdwfokj2bk6fdvrfwkzkm6ukcrodstjzbfq2jvls4
+  tests/test_preview_selection.py: bafybeicsra5nc3h6ltxsszy7mwqgc3hccz7rapfl7xxzfatgz2qonuu4qy
+  tests/test_refresh_discovery_clock.py: bafybeiepm772vzsvrqj6yq3vn5rqqtpoeazjt7hvkh7y3lxcc3byh7lsw4
+  tests/test_round3_base_rate.py: bafybeigsaxvxxgego6pqajpr7f73qtrsmpcd4z5s63brl5mfyn4yq7mpfi
+  tests/test_rounds.py: bafybeigifwszzzvsqydl624xyg6ebsr6on3mmdku2a72uo3uy5mnxtocwa
+  tests/test_rpc_cadence.py: bafybeibpyh2adnxwpnumljf3glid7ddrs6o5yjbnamxrqa7ukyxhmdmhu4
+  tests/test_rpc_deadlines.py: bafybeifqmpfunh6b7fma4n7hqly5bw3peosl2yyo2nyt66feyezetp77zi
+  tests/test_selection_rollbacks.py: bafybeigkjwte2vlppplyy6tjio3wcmdsecu7rqkeqzlwkbfitz2cgaixvm
   tests/test_strategy.py: bafybeidg5u2gfkudquygzlit6svpqxspnfc2zvquo6j6kaugttohtdbw5q
 fingerprint_ignore_patterns: []
 connections: []
 contracts:
+- valory/omen_event_reader:0.1.0:bafybeiaskconhfwbkbrlazlwi2sdbc3v2cfxiptjlkgab3uclqtsjynfdu
 - valory/gnosis_safe:0.1.0:bafybeiek7zs3r5c4wspwwuvnhunc2ddvccbsuy3xccedbjffju5eywp3ju
 protocols:
+- open_aea/signing:1.0.0:bafybeifsjmldwyki3beqyvdt5lzenrg6wyrqaar5plc5rpnvtc4zlentye
 - valory/contract_api:1.0.0:bafybeibld2xb5m7kyluiptkamp4nrt6oeomkohz7a3yppbv2oo7qw2e4la
+- valory/http:1.0.0:bafybeidxkp3vga7t6x2pbt2tpkgyaxa5bgpdgryao54py7w3yxyzr7neoy
 - valory/ledger_api:1.0.0:bafybeiecq56phjfws36rgrefw6niyo4ezesloodsfis647mpm5ygqo4ysi
 skills:
+- valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m
 - valory/staking_abci:0.1.0:bafybeihjsvg6qmpcvca24hlj34ppdgnhx6wnbi56ddcnnfdj2p7bg66mii
 - valory/check_stop_trading_abci:0.1.0:bafybeidwkfafnhkew4ylhqwg5pv3y2sakgkl6d6d2q7hjmfrag4xe6pfxq
 - valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
 - valory/abstract_round_abci:0.1.0:bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4
 - valory/market_manager_abci:0.1.0:bafybeicle4v4hbzfitrndz4iezmpzqft7q26eijmzpqpfs7o4ccv7pkfcu
-- valory/decision_maker_abci:0.1.0:bafybeibmczauoonpt5oxrbxhs6ybpmknwkmqpwc7vciv7atrrjclhc3tuy
-- valory/trader_abci:0.1.0:bafybeicc343vbjzy3tfkvjwufg6y2ik452rv2w5mnx64xtqlghmage3gyu
+- valory/decision_maker_abci:0.1.0:bafybeidwkhevmcyjihkgw4cchui2rd4g2pajkk6kypqdkdjhmgso7jan2u
+- valory/trader_abci:0.1.0:bafybeiacumnkennohhjat6owyw44dm4awjjxk3sr22jnbcenp3fsdyebu4
 behaviours:
   main:
     args: {}
@@ -374,6 +404,20 @@ models:
       price_margin: 0.01
       max_slip: 0.2
       min_stake: 0.1
+      lightning_still_hold: false
+      lightning_still_hold_max_price: 0.93
+      lightning_base_rate_window_days: 21
+      lightning_base_rate_min_n: 60
+      lightning_base_rate_floor: 0.9
+      still_hold_prior: 0.85
+      lightning_chain_detect: false
+      omen_fpmm_factory: '0x9083A2B699c0a4AD06F63580BDE2635d26a3eeF0'
+      lightning_rpc_fallback_s: 60
+      lightning_preview: false
+      lightning_preview_max_per_night: 15
+      lightning_creators:
+      - '0x89c5cc945dd550bcffb72fe42bff002429f46fec'
+      - '0xffc8029154ecd55abed15bd428ba596e7d23f557'
     class_name: FastParams
   benchmarking_mode:
     args:

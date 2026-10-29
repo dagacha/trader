@@ -22,6 +22,8 @@
 from typing import List
 
 from packages.valory.skills.fresh_watch_abci.behaviours import (
+    FastMechRequestBehaviour,
+    FastMechResponseBehaviour,
     FreshMarketPoller,
     FreshWatchRoundBehaviour,
 )
@@ -62,7 +64,9 @@ class FastPreTxSettlementBehaviour(PreTxSettlementBehaviour):
 
 
 _REPLACED = {b.matching_round for b in FreshWatchRoundBehaviour.behaviours} | {
-    FastMechInformationBehaviour.matching_round
+    FastMechInformationBehaviour.matching_round,
+    FastMechRequestBehaviour.matching_round,
+    FastMechResponseBehaviour.matching_round,
 }
 
 
@@ -79,6 +83,8 @@ class OmenstratFastConsensusBehaviour(TraderConsensusBehaviour):
         ],
         *FreshWatchRoundBehaviour.behaviours,
         FastMechInformationBehaviour,
+        FastMechRequestBehaviour,
+        FastMechResponseBehaviour,
         FastPreTxSettlementBehaviour,
         *TerminationAbciBehaviours.behaviours,
     }

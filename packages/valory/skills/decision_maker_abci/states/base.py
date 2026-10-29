@@ -205,7 +205,7 @@ class SynchronizedData(
         """
         selected = self.selected_tool_key
         if selected is None:
-            return self.mech_tool
+            return self.db.get("mech_tool", None)
         delivering = self.delivering_mech
         identities = self.mech_identities
         if delivering is None or not identities:
