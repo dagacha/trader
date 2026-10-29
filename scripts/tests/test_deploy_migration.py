@@ -3395,3 +3395,126 @@ def test_lightning_rejects_invalid_recorded_service(tmp_path, service):
     marker.write_text(json.dumps({"added": [], "service": service}))
     with pytest.raises(ValueError, match="Invalid lightning migration provenance"):
         run(tmp_path, "--service", "omenstrat_lightning")
+
+
+@pytest.mark.parametrize("restriction_source", ["source", "saved"])
+@pytest.mark.parametrize("edited_after_switch", [False, True])
+def test_shipped_fast_creator_restriction_reaches_lightning(
+    tmp_path, restriction_source, edited_after_switch
+):
+    """Replace the inert lightning list with the effective fast restriction."""
+    paths = fixture(tmp_path)
+    ignored = tmp_path / ".operate/ignored-quickstart-config.json"
+    ignored.mkdir()
+    source = json.loads(
+        (SCRIPT.parents[1] / "configs/config_omenstrat_fast.json").read_text()
+    )
+    prior = source["env_variables"]["LIGHTNING_CREATORS"]["value"]
+    restricted = json.dumps(["0x89c5cc945dd550bcffb72fe42bff002429f46fec"])
+    saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
+    args = {}
+    if restriction_source == "source":
+        source["env_variables"]["CREATORS"]["value"] = restricted
+    else:
+        args["CREATORS"] = restricted
+    paths[0].write_text(json.dumps(source))
+    saved.write_text(json.dumps({"user_provided_args": args}))
+    run(tmp_path, "--service", "omenstrat_lightning")
+    assert ignored.is_dir()
+    for path in paths:
+        env = json.loads(path.read_text())["env_variables"]
+        assert env["LIGHTNING_CREATORS"]["value"] == restricted
+        assert env["CREATORS"]["value"] == restricted
+    assert (
+        json.loads(saved.read_text())["user_provided_args"]["LIGHTNING_CREATORS"]
+        == restricted
+    )
+    assert json.loads(saved.read_text())["user_provided_args"]["CREATORS"] == restricted
+    marker = tmp_path / "configs/.lightning_defaults_added.json"
+    record = json.loads(marker.read_text())
+    assert record["previous"]["LIGHTNING_CREATORS"] == prior
+    before = {path: path.read_bytes() for path in (*paths, marker, saved)}
+    run(tmp_path, "--service", "omenstrat_lightning")
+    assert all(path.read_bytes() == value for path, value in before.items())
+    explicit = json.dumps(["0x2222222222222222222222222222222222222222"])
+    if edited_after_switch:
+        edited = json.loads(paths[0].read_text())
+        edited["env_variables"]["LIGHTNING_CREATORS"]["value"] = explicit
+        paths[0].write_text(json.dumps(edited))
+        run(tmp_path, "--service", "omenstrat_lightning")
+    output = run(tmp_path, "--service", "omenstrat_fast")
+    expected = explicit if edited_after_switch else prior
+    for path in paths:
+        env = json.loads(path.read_text())["env_variables"]
+        assert env["LIGHTNING_CREATORS"]["value"] == expected
+        assert env["CREATORS"]["value"] == restricted
+    assert (
+        json.loads(saved.read_text())["user_provided_args"]["LIGHTNING_CREATORS"]
+        == expected
+    )
+    if edited_after_switch:
+        assert "keep operator value LIGHTNING_CREATORS" in output
+    # An explicit lightning list is kept on the next actual service switch.
+    edited = json.loads(paths[0].read_text())
+    edited["env_variables"]["LIGHTNING_CREATORS"]["value"] = explicit
+    paths[0].write_text(json.dumps(edited))
+    saved_args = json.loads(saved.read_text())
+    saved_args["user_provided_args"]["LIGHTNING_CREATORS"] = explicit
+    saved.write_text(json.dumps(saved_args))
+    run(tmp_path, "--service", "omenstrat_lightning")
+    for path in paths:
+        assert (
+            json.loads(path.read_text())["env_variables"]["LIGHTNING_CREATORS"]["value"]
+            == explicit
+        )
+    run(tmp_path, "--service", "omenstrat_fast")
+    # A saved fast restriction must also keep an explicit source lightning list.
+    edited = json.loads(paths[0].read_text())
+    edited["env_variables"]["CREATORS"]["value"] = prior
+    paths[0].write_text(json.dumps(edited))
+    saved_args = json.loads(saved.read_text())
+    saved_args["user_provided_args"].pop("LIGHTNING_CREATORS")
+    saved_args["user_provided_args"]["CREATORS"] = restricted
+    saved.write_text(json.dumps(saved_args))
+    run(tmp_path, "--service", "omenstrat_lightning")
+    for path in paths:
+        env = json.loads(path.read_text())["env_variables"]
+        assert env["LIGHTNING_CREATORS"]["value"] == explicit
+        assert env["CREATORS"]["value"] == restricted
+
+
+@pytest.mark.parametrize("source_lightning", ["inert", "missing", "explicit"])
+def test_saved_lightning_creator_override_is_kept(tmp_path, source_lightning):
+    """Keep an explicit saved lightning list through a service switch and rollback."""
+    paths = fixture(tmp_path)
+    source = json.loads(
+        (SCRIPT.parents[1] / "configs/config_omenstrat_fast.json").read_text()
+    )
+    restricted = json.dumps(["0x89c5cc945dd550bcffb72fe42bff002429f46fec"])
+    explicit = json.dumps(["0x2222222222222222222222222222222222222222"])
+    if source_lightning == "missing":
+        del source["env_variables"]["LIGHTNING_CREATORS"]
+    elif source_lightning == "explicit":
+        source["env_variables"]["LIGHTNING_CREATORS"]["value"] = restricted
+    paths[0].write_text(json.dumps(source))
+    saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
+    saved.write_text(
+        json.dumps(
+            {
+                "user_provided_args": {
+                    "CREATORS": restricted,
+                    "LIGHTNING_CREATORS": explicit,
+                }
+            }
+        )
+    )
+    run(tmp_path, "--service", "omenstrat_lightning")
+    run(tmp_path, "--service", "omenstrat_fast")
+    for path in paths:
+        env = json.loads(path.read_text())["env_variables"]
+        assert env["LIGHTNING_CREATORS"]["value"] == explicit
+        assert env["CREATORS"]["value"] == restricted
+    assert (
+        json.loads(saved.read_text())["user_provided_args"]["LIGHTNING_CREATORS"]
+        == explicit
+    )

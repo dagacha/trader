@@ -150,7 +150,7 @@ def receipt_question(
         if outcomes != ["Yes", "No"]:
             return {}
         return dict(
-            title=parts[0],
+            title=json.loads('"' + parts[0] + '"'),
             openingTimestamp=opening,
             outcomes=outcomes,
             outcomeSlotCount=2,
@@ -304,6 +304,7 @@ class ChainDiscoveryMixin:
         :param market_id: market address.
         :yield: subgraph HTTP I/O.
         :return: full market row or None until the indexer catches up.
+        :raises ChainRPCError: when the title response deadline expires.
         """
         subgraph = self.context.omen_subgraph
         query = (
@@ -313,9 +314,13 @@ class ChainDiscoveryMixin:
             + MARKET_FIELDS
             + "} }"
         )
-        response = yield from self.get_http_response(
+        message, dialogue = self._build_http_request_message(
             content=json.dumps({"query": query}).encode(), **subgraph.get_spec()
         )
+        try:
+            response = yield from request_with_timeout(self, message, dialogue, 5.0)
+        except TimeoutException as exc:
+            raise ChainRPCError("Market title response timed out") from exc
         rows = subgraph.process_response(response)
         return rows[0] if isinstance(rows, list) and rows else None
 
@@ -365,14 +370,12 @@ class ChainDiscoveryMixin:
             )
             if balances is None:
                 raise ChainRPCError("Market pool read failed")
-            if not balances:
+            if not balances or min(balances) <= 0:
                 return {}
             total = sum(balances)
             market.update(
                 outcomeTokenAmounts=balances,
-                outcomeTokenMarginalPrices=(
-                    [balances[1] / total, balances[0] / total] if total else [0, 0]
-                ),
+                outcomeTokenMarginalPrices=[balances[1] / total, balances[0] / total],
                 scaledLiquidityMeasure=min(balances) / 10**18,
             )
             market.pop("conditional_tokens")

@@ -395,11 +395,18 @@ def test_rpc_helper_reports_ledger_errors(ledger_harness: Any, timeout: bool) ->
 
 
 @pytest.mark.parametrize("rows", [[{"id": "market", "title": "Exact title"}], [], {}])
-def test_subgraph_lookup_uses_exact_market_id(tmp_path: Path, rows: Any) -> None:
+def test_subgraph_lookup_uses_exact_market_id(ledger_harness: Any, rows: Any) -> None:
     """Return the exact market row only when the indexer has a usable list."""
-    harness: Any = Harness(tmp_path)
+    harness = ledger_harness
     response = object()
-    harness.get_http_response = MagicMock(return_value=done(response))
+    harness._build_http_request_message = MagicMock(
+        return_value=(MagicMock(), MagicMock())
+    )
+    harness.context.outbox.put_message.side_effect = (
+        lambda **kwargs: harness.context.requests.request_id_to_callback.pop("nonce")(
+            response, harness
+        )
+    )
     harness.context.omen_subgraph = SimpleNamespace(
         get_spec=lambda: {"method": "POST", "url": "http://subgraph.invalid"},
         process_response=lambda reply: rows if reply is response else None,
@@ -407,7 +414,7 @@ def test_subgraph_lookup_uses_exact_market_id(tmp_path: Path, rows: Any) -> None
     market_id = creation_details(CREATION)["id"]
     result = run(ChainDiscoveryMixin._chain_subgraph_market(harness, market_id))
     assert result == (rows[0] if isinstance(rows, list) and rows else None)
-    request = harness.get_http_response.call_args.kwargs
+    request = harness._build_http_request_message.call_args.kwargs
     query = json.loads(request["content"])["query"]
     assert 'where: {id: "' + market_id + '"}' in query
     assert "outcomeTokenMarginalPrices" in query
@@ -442,14 +449,12 @@ def test_subgraph_title_fallback_reports_source(tmp_path: Path, question: Any) -
     )
 
 
-def test_empty_pool_has_zero_prices(tmp_path: Path) -> None:
-    """Represent an empty pool without dividing by zero."""
+def test_empty_pool_is_not_materialised(tmp_path: Path) -> None:
+    """Do not construct a market with unfunded outcome balances."""
     harness: Any = Harness(tmp_path)
     harness._chain_pool_balances = lambda *args: done([0, 0])
     row = run(harness._chain_market(CREATION, {"timestamp": CREATED}, CREATED))
-    assert row["outcomeTokenAmounts"] == [0, 0]
-    assert row["outcomeTokenMarginalPrices"] == [0, 0]
-    assert row["scaledLiquidityMeasure"] == 0
+    assert row == {}
 
 
 def test_stale_creation_advances_cursor_without_queueing(tmp_path: Path) -> None:
@@ -920,3 +925,52 @@ def test_fallback_with_known_unsupported_template_never_enters_queue(
     assert state["last_block"] == BLOCK
     assert state["rpc_error_since"] is None
     assert FreshQueue(tmp_path / "fresh_watch.json").pending == []
+
+
+@pytest.mark.parametrize("balances", [[0, 0], [0, 7 * 10**18], [7 * 10**18, 0]])
+def test_unfunded_chain_pool_is_never_queued_or_marked_asked(
+    tmp_path: Path, balances: list[int]
+) -> None:
+    """Skip unsupported zero-liquidity rows before Bet can blacklist their outcomes."""
+    harness: Any = Harness(tmp_path)
+    harness._chain_pool_balances = lambda *args: done(balances)
+    assert run(harness.chain_markets(CREATED + 5)) == []
+    state = json.loads((tmp_path / "lightning_chain.json").read_text())
+    assert state["last_block"] == BLOCK
+    assert state["rpc_error_since"] is None
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    assert queue.pending == []
+    assert queue.asked == {}
+
+
+@pytest.mark.parametrize(
+    "encoded_title,expected_title,rule",
+    [
+        (r"Will \"X\" win?", 'Will "X" win?', None),
+        (r"Will it st\u0069ll hold?", "Will it still hold?", "still_hold_phrase"),
+    ],
+)
+def test_chain_title_is_unescaped_before_queueing_and_classification(
+    tmp_path: Path, encoded_title: str, expected_title: str, rule: Any
+) -> None:
+    """Decode Realitio JSON escapes before title matching and direct-rule selection."""
+    from packages.valory.skills.fresh_watch_abci.lightning import (
+        LightningConfig,
+        still_hold_rule,
+    )
+
+    harness = Harness(tmp_path)
+    types = ["uint256", "string", "address", "uint32", "uint32", "uint256", "uint256"]
+    values = list(decode(types, bytes.fromhex(QUESTION["data"][2:])))
+    values[:2] = [2, encoded_title + '␟"Yes","No"']
+    question = dict(QUESTION, data=encode(types, values))
+    harness.receipt = {"logs": [question, CONDITION]}
+    rows = run(harness.chain_markets(CREATED + 5))
+    assert len(rows) == 1
+    assert rows[0]["title"] == expected_title
+    assert (
+        FreshQueue(tmp_path / "fresh_watch.json").pending[0]["title"] == expected_title
+    )
+    assert (
+        still_hold_rule(expected_title, rows[0]["creator"], LightningConfig()) == rule
+    )

@@ -1017,10 +1017,18 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
     legacy = quickstart / ".operate/local_config.json"
     if legacy.is_file():
         saved.append(legacy)
+    creator_inputs = {}
     for path in saved:
-        if path.is_file() and is_polymarket(path):
+        if not path.is_file():
+            continue
+        if is_polymarket(path):
             print(f"WARNING: {path}: Polymarket saved input; skipping all files")
             return
+        for obj in objects(json.loads(path.read_text())):
+            args = obj.get("user_provided_args", {})
+            for key in ("CREATORS", "LIGHTNING_CREATORS"):
+                if key in args:
+                    creator_inputs[key] = args[key]
     paths = [config, *saved]
     services = sorted((quickstart / ".operate/services").glob("sc-*"))
     different_public_ids = set()
@@ -1094,6 +1102,26 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
     service_switch = service is not None and service != (
         source_service or recorded_service
     )
+    creator_overrides = {}
+    if lightning_mode and service_switch:
+        creator_overrides.update(creator_inputs)
+        if "LIGHTNING_CREATORS" not in creator_inputs:
+            fast_env = json.loads(
+                (
+                    Path(__file__).resolve().parents[1]
+                    / "configs/config_omenstrat_fast.json"
+                ).read_text()
+            )["env_variables"]
+            current = source_env.get("LIGHTNING_CREATORS")
+            if current is None or json.loads(current["value"]) == json.loads(
+                fast_env["LIGHTNING_CREATORS"]["value"]
+            ):
+                creator_overrides["LIGHTNING_CREATORS"] = creator_inputs.get(
+                    "CREATORS",
+                    source_env.get("CREATORS", defaults["CREATORS"])["value"],
+                )
+        for key, value in creator_overrides.items():
+            defaults[key] = {**defaults[key], "value": value}
     if lightning_mode:
         env = json.loads(config.read_text()).get("env_variables", {})
         newly_added = set(LIGHTNING_ENV) - set(env)
@@ -1103,6 +1131,21 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                 if key in env:
                     lightning_previous.setdefault(key, env[key]["value"])
                 lightning_values[key] = defaults[key]["value"]
+            if "LIGHTNING_CREATORS" in creator_inputs:
+                newly_added.discard("LIGHTNING_CREATORS")
+            elif (
+                "LIGHTNING_CREATORS" in creator_overrides
+                and "LIGHTNING_CREATORS" in env
+                and env["LIGHTNING_CREATORS"]["value"]
+                != creator_overrides["LIGHTNING_CREATORS"]
+            ):
+                newly_added.add("LIGHTNING_CREATORS")
+                lightning_previous.setdefault(
+                    "LIGHTNING_CREATORS", env["LIGHTNING_CREATORS"]["value"]
+                )
+                lightning_values["LIGHTNING_CREATORS"] = creator_overrides[
+                    "LIGHTNING_CREATORS"
+                ]
         lightning_added = sorted(set(lightning_recorded) | newly_added)
         for key in sorted(newly_added):
             lightning_values.setdefault(key, defaults[key]["value"])
@@ -1242,6 +1285,13 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                             changes.append(
                                 f"switch lightning flag {key}={source['value']}"
                             )
+                    elif (
+                        key in creator_overrides
+                        and data["env_variables"][key]["value"] != source["value"]
+                    ):
+                        data["env_variables"][key]["value"] = source["value"]
+                        updated = edit_json(updated, data, source["value"])
+                        changes.append(f"sync creator input {key}={source['value']}")
                     elif (
                         key == "MAX_SLIP"
                         and upgrade_slip

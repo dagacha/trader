@@ -8,8 +8,8 @@ aea_version: '>=2.0.0, <3.0.0'
 fingerprint:
   README.md: bafybeieurwex74dtimmmndedzrhznyfivsuaf27lteomz4cz23upjtv2pq
   __init__.py: bafybeihyphnywie3dyf7f7mmwm7yvcwekkgsa4mq5273ojuzbjsznvorv4
-  behaviours.py: bafybeiesmpuq36f7huo3gkbming2arltdbdqn7el5k7ygqxkmmuitrrw7u
-  chain_discovery.py: bafybeiaiiygtpud5hihy3mouvpw2xs5gvhmlurlo2evrud4cbdvt7eexxa
+  behaviours.py: bafybeic6l3ichcbukn6hm5nmuc3torh76ivcklrvpiyptvbnyrtyblmcdq
+  chain_discovery.py: bafybeie52tbc3p6homy6bfbws7kw5uxmqxywilxthfozcyffoqchvdeqpq
   dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
   fsm_specification.yaml: bafybeifhpatx5365ubtse2g6kqo6cjeuzoruf75dv5r5xg27n4wtyrtrbm
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
@@ -24,9 +24,10 @@ fingerprint:
   tests/fixtures/question_preview.json: bafybeie2ouuxhajfkeln7cgcjm3c3ngus64jtdg5rjz4pix5rcgrpj3hzq
   tests/fixtures/question_preview_metadata.json: bafybeihhtgcztco4xdf5zgeny6ldafa7pnshaeun74zppc4ygvuutyro3i
   tests/test_base_rate_deadlines.py: bafybeicsuzvhmbzhbeliuolk3mr7txrvvowayjr7g2ztj4r37pyel2i2ey
-  tests/test_behaviours.py: bafybeifqejs2p5jbjurmnb2bzan2umbfhhz3x4eeglu6cpho5ckjal2flu
-  tests/test_chain_discovery.py: bafybeifun6rvvp37koe3dzqrmu6fboz4jcg5vvffsqklgi4ohhxas22gta
+  tests/test_behaviours.py: bafybeiein6fqhd2tamjkorj7v2gvw3mk6i73j5jbiwiaqwvlmtfb4uwugi
+  tests/test_chain_discovery.py: bafybeiewzhy5iwuztq32kdqcwjhe2cp4d4kc3uykeiimgjlugfladftt2u
   tests/test_chain_pool_reads.py: bafybeiav26vusjg3nz7ve3ta43oxwnmvvnnfffaa6rayhuveaqj4suocdm
+  tests/test_chain_title_reads.py: bafybeic42v2ivrufxfz364kxc745pzbx3c6sysdcdk766uv2k6vpv75glm
   tests/test_configured_prior.py: bafybeibmk7ilhbdlpprmzgg5muvqu7zdfhszcw25ks4asr7bevssusjpli
   tests/test_event_reader.py: bafybeib6wxe56sudyw4tz3gi5zvv2r3ofqjycwviscadkz2dawk3zieptq
   tests/test_lightning.py: bafybeigd4kzvglolqtxono5arcmiqgksilzexpnqkun7v23jpeggcv5ph4
@@ -42,6 +43,7 @@ fingerprint:
   tests/test_rounds.py: bafybeigifwszzzvsqydl624xyg6ebsr6on3mmdku2a72uo3uy5mnxtocwa
   tests/test_rpc_cadence.py: bafybeibpyh2adnxwpnumljf3glid7ddrs6o5yjbnamxrqa7ukyxhmdmhu4
   tests/test_rpc_deadlines.py: bafybeifqmpfunh6b7fma4n7hqly5bw3peosl2yyo2nyt66feyezetp77zi
+  tests/test_selection_rollbacks.py: bafybeigkjwte2vlppplyy6tjio3wcmdsecu7rqkeqzlwkbfitz2cgaixvm
   tests/test_strategy.py: bafybeidg5u2gfkudquygzlit6svpqxspnfc2zvquo6j6kaugttohtdbw5q
 fingerprint_ignore_patterns: []
 connections: []
@@ -51,6 +53,7 @@ contracts:
 protocols:
 - open_aea/signing:1.0.0:bafybeifsjmldwyki3beqyvdt5lzenrg6wyrqaar5plc5rpnvtc4zlentye
 - valory/contract_api:1.0.0:bafybeibld2xb5m7kyluiptkamp4nrt6oeomkohz7a3yppbv2oo7qw2e4la
+- valory/http:1.0.0:bafybeidxkp3vga7t6x2pbt2tpkgyaxa5bgpdgryao54py7w3yxyzr7neoy
 - valory/ledger_api:1.0.0:bafybeiecq56phjfws36rgrefw6niyo4ezesloodsfis647mpm5ygqo4ysi
 skills:
 - valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m

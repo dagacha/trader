@@ -493,8 +493,7 @@ class FreshWatchBehaviour(
         :return: the selected lane and its inputs.
         """
         cfg = self.params.fast
-        if lightning_controls(self).lightning_preview:
-            remove_preview_bets(self)
+        remove_preview_bets(self)
         queue = FreshQueue(self.params.store_path / "fresh_watch.json")
         now = time.time()
         yield from self._refresh_base_rate(now)
@@ -550,6 +549,13 @@ class FreshWatchBehaviour(
 
         lightning = lightning_controls(self)
         candidate = queue.pending[0]
+        if "block_hash" in candidate and (
+            float(candidate["scaledLiquidityMeasure"]) <= 0
+            or min(map(int, candidate["outcomeTokenAmounts"])) <= 0
+        ):
+            queue.pending.pop(0)
+            queue.save()
+            return {"lane": "wait"}
         canonical = natural_yes_index(candidate) is not None
         rule = still_hold_rule(candidate["title"], candidate["creator"], lightning)
         probability = None
@@ -640,6 +646,10 @@ class FreshWatchBehaviour(
                     key=lambda row: (int(row["creationTimestamp"]), row["id"])
                 )
                 del queue.asked[bet.id]
+                queue.save()
+            elif "block_hash" in raw and balances and min(balances) <= 0:
+                queue = FreshQueue(queue.path)
+                queue.asked.pop(bet.id, None)
                 queue.save()
             log_decision(
                 self,

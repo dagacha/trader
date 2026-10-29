@@ -152,6 +152,7 @@ def test_select_requires_eligible_offchain_mech(
 ) -> None:
     """Keep the market queued when its tool has no eligible dynamic endpoint."""
     b = make(FreshWatchBehaviour, tmp_path)
+    (tmp_path / "multi_bets.json").write_text("[]")
     b.context.params.fast_dynamic_mech = dynamic
     b.context.params.use_offchain = offchain
     b.context.state.penalized_mechs = penalized
