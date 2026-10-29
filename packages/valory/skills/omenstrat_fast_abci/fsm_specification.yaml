@@ -15,6 +15,7 @@ alphabet_in:
 - INCORRECT_SERIALIZATION
 - INSUFFICIENT_BALANCE
 - INSUFFICIENT_FUNDS
+- LIGHTNING
 - MARKET
 - MECH_ONLY
 - MECH_REQUESTING_DONE
@@ -163,6 +164,7 @@ transition_func:
     (FinalizationRound, FINALIZE_TIMEOUT): SelectKeeperTransactionSubmissionBAfterTimeoutRound
     (FinalizationRound, INSUFFICIENT_FUNDS): SelectKeeperTransactionSubmissionBRound
     (FreshWatchRound, HOUSEKEEPING): RedeemRound
+    (FreshWatchRound, LIGHTNING): FastDecisionRound
     (FreshWatchRound, MARKET): DecisionRequestRound
     (FreshWatchRound, MECH_ONLY): MechOnlySelectionRound
     (FreshWatchRound, NO_MAJORITY): FreshWatchRound

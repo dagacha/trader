@@ -4,6 +4,7 @@ alphabet_in:
 - DONE
 - HOUSEKEEPING
 - INSUFFICIENT_BALANCE
+- LIGHTNING
 - MARKET
 - MECH_ONLY
 - MOCK_MECH_REQUEST
@@ -57,6 +58,7 @@ transition_func:
     (FastDecisionRound, ROUND_TIMEOUT): FastDecisionRound
     (FastDecisionRound, SKIP): FreshWatchRound
     (FreshWatchRound, HOUSEKEEPING): RedeemRound
+    (FreshWatchRound, LIGHTNING): FastDecisionRound
     (FreshWatchRound, MARKET): DecisionRequestRound
     (FreshWatchRound, MECH_ONLY): MechOnlySelectionRound
     (FreshWatchRound, NO_MAJORITY): FreshWatchRound

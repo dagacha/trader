@@ -3041,3 +3041,119 @@ def test_fast_tools_conflict_requires_kubernetes_value(tail):
     text = 'env:\n  - name: FAST_TOOLS\n    value: "keep"\n  - name: TOOLS' + tail
     with pytest.raises(ValueError, match="Missing value for TOOLS"):
         helper(text, False)
+
+
+@pytest.fixture
+def lightning_repo(tmp_path, monkeypatch):
+    """Use an isolated release helper with a known lightning service hash."""
+    repo = tmp_path / "repo"
+    original = SCRIPT.parents[1]
+    for relative in (
+        "scripts/migrate_trader_config.py",
+        "configs/config_omenstrat_fast.json",
+        "configs/config_omenstrat_lightning.json",
+        "packages/packages.json",
+        "packages/valory/services/trader_pearl/service.yaml",
+    ):
+        target = repo / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(original / relative, target)
+    packages = repo / "packages/packages.json"
+    data = json.loads(packages.read_text())
+    data["dev"]["service/valory/omenstrat_lightning/0.1.0"] = "lightning-service-cid"
+    packages.write_text(json.dumps(data))
+    monkeypatch.setattr(
+        sys.modules[__name__], "SCRIPT", repo / "scripts/migrate_trader_config.py"
+    )
+    return repo
+
+
+@pytest.mark.parametrize("rollback", ["omenstrat_fast", "trader_pearl"])
+@pytest.mark.parametrize("explicit", [False, True])
+def test_lightning_defaults_have_separate_reversible_provenance(
+    tmp_path, lightning_repo, rollback, explicit
+):
+    """Remove added lightning controls from every copy and keep operator inputs."""
+    quickstart = tmp_path / "quickstart"
+    paths = fixture(quickstart)
+    source = json.loads(paths[0].read_text())
+    if explicit:
+        source["env_variables"]["LIGHTNING_RPC_FALLBACK_S"] = entry("75")
+    paths[0].write_text(json.dumps(source))
+    saved = quickstart / ".operate/trader-quickstart-config.json"
+    saved.write_text(json.dumps({"user_provided_args": {"KEEP": "yes"}}))
+    agent = paths[1].parent / "agent_0.env"
+    agent.write_text("KEEP=yes\n")
+    marker = quickstart / "configs/.lightning_defaults_added.json"
+    before = {path: path.read_bytes() for path in (*paths, saved, agent)}
+    for flag in ("--dry-run", "--warn-only"):
+        run(quickstart, "--service", "omenstrat_lightning", flag)
+        assert all(path.read_bytes() == content for path, content in before.items())
+        assert not marker.exists()
+    run(quickstart, "--service", "omenstrat_lightning")
+    added = json.loads(marker.read_text())["added"]
+    assert "LIGHTNING_CHAIN_DETECT" in added
+    assert ("LIGHTNING_RPC_FALLBACK_S" in added) is (not explicit)
+    fast_marker = quickstart / "configs/.fast_defaults_added.json"
+    fast_added = json.loads(fast_marker.read_text())["added"]
+    assert "LIGHTNING_CHAIN_DETECT" not in fast_added
+    assert "MAX_PRICE" in fast_added
+    for path in paths:
+        env = json.loads(path.read_text())["env_variables"]
+        assert env["LIGHTNING_CHAIN_DETECT"]["value"] == "true"
+        assert env["STILL_HOLD_PRIOR"]["value"] == "0.95"
+        assert env["MAX_PRICE"]["value"] == "0.93"
+        assert env["LIGHTNING_RPC_FALLBACK_S"]["value"] == ("75" if explicit else "60")
+    all_paths = (*paths, saved, agent, marker, fast_marker)
+    after = {path: path.read_bytes() for path in all_paths}
+    run(quickstart, "--service", "omenstrat_lightning")
+    assert all(path.read_bytes() == content for path, content in after.items())
+    run(quickstart, "--service", rollback)
+    for path in paths:
+        env = json.loads(path.read_text())["env_variables"]
+        assert "LIGHTNING_CHAIN_DETECT" not in env
+        assert "STILL_HOLD_PRIOR" not in env
+        assert ("LIGHTNING_RPC_FALLBACK_S" in env) is explicit
+    args = json.loads(saved.read_text())["user_provided_args"]
+    assert "LIGHTNING_CHAIN_DETECT" not in args
+    assert ("LIGHTNING_RPC_FALLBACK_S" in args) is explicit
+    assert "LIGHTNING_CHAIN_DETECT=" not in agent.read_text()
+    assert json.loads(marker.read_text()) == {"added": []}
+    if rollback == "omenstrat_fast":
+        assert json.loads(fast_marker.read_text())["added"] == fast_added
+
+
+def test_lightning_hash_selects_defaults_without_service(tmp_path, lightning_repo):
+    """Apply lightning defaults when the source already has the lightning hash."""
+    quickstart = tmp_path / "quickstart"
+    paths = fixture(quickstart)
+    data = json.loads(paths[0].read_text())
+    data["hash"] = "lightning-service-cid"
+    data["env_variables"]["MAX_PRICE"] = entry("0.90")
+    paths[0].write_text(json.dumps(data))
+    run(quickstart)
+    actual = json.loads(paths[0].read_text())["env_variables"]
+    assert actual["LIGHTNING_STILL_HOLD"]["value"] == "true"
+    assert actual["MAX_PRICE"]["value"] == "0.90"
+
+
+@pytest.mark.parametrize("operator", [None, "0.93", "0.97"])
+def test_lightning_price_default_rolls_back_without_overwriting_operator(
+    tmp_path, lightning_repo, operator
+):
+    """Restore the fast price default only when lightning added the value."""
+    quickstart = tmp_path / "quickstart"
+    paths = fixture(quickstart)
+    if operator == "0.93":
+        data = json.loads(paths[0].read_text())
+        data["env_variables"]["MAX_PRICE"] = entry(operator)
+        paths[0].write_text(json.dumps(data))
+    run(quickstart, "--service", "omenstrat_lightning")
+    if operator == "0.97":
+        data = json.loads(paths[0].read_text())
+        data["env_variables"]["MAX_PRICE"]["value"] = operator
+        paths[0].write_text(json.dumps(data))
+    run(quickstart, "--service", "omenstrat_fast")
+    for path in paths:
+        env = json.loads(path.read_text())["env_variables"]
+        assert env["MAX_PRICE"]["value"] == (operator or "0.9")

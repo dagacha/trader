@@ -11,7 +11,7 @@ fingerprint:
   behaviours.py: bafybeidekktpzp57maqhumitkz5nruylxlz2ico23ogzpt5nm5yikrwcly
   composition.py: bafybeid4mxycmyb6jflihmflreamsakytajqmt6zrq5bcr4p27d34di7vq
   dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
-  fsm_specification.yaml: bafybeiahw5ctub5lidjldddvx3qndaeifo7frhsqogizu6pyuwpl72aja4
+  fsm_specification.yaml: bafybeifbfhecigg6pyjfoti7rcvaoflgxliycif66aaaptdumyhl2zyy4i
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
   models.py: bafybeicihpfeq66ahhuboojdrf7f33xu6tmktmskzodh7oiqvxtggka4om
   tests/__init__.py: bafybeifx5qa3c7rsjbe4ujuif363osh23mvgprcd5jwv67t5kl3kgqrszu
@@ -34,7 +34,7 @@ skills:
 - valory/chatui_abci:0.1.0:bafybeihj5y6cecuw4iz2gshicoygghrgi5b6rzynnofx25ycsv56ehgdvq
 - valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
 - valory/trader_abci:0.1.0:bafybeicc343vbjzy3tfkvjwufg6y2ik452rv2w5mnx64xtqlghmage3gyu
-- valory/fresh_watch_abci:0.1.0:bafybeigk5rp2yc7wti6o637lcvkpbuldzdfdzvg5ryo42tt3pvv6eyz5em
+- valory/fresh_watch_abci:0.1.0:bafybeieouy6am5hpngpt2vzz5vomy72g7oasg7n6kwmrfwjcbjwq4rtjcq
 behaviours:
   main:
     args: {}
@@ -381,6 +381,20 @@ models:
       price_margin: 0.01
       max_slip: 0.2
       min_stake: 0.1
+      lightning_still_hold: false
+      lightning_still_hold_max_price: 0.93
+      lightning_base_rate_window_days: 21
+      lightning_base_rate_min_n: 60
+      lightning_base_rate_floor: 0.9
+      still_hold_prior: 0.85
+      lightning_chain_detect: false
+      omen_fpmm_factory: '0x9083A2B699c0a4AD06F63580BDE2635d26a3eeF0'
+      lightning_rpc_fallback_s: 60
+      lightning_preview: false
+      lightning_preview_max_per_night: 15
+      lightning_creators:
+      - '0x89c5cc945dd550bcffb72fe42bff002429f46fec'
+      - '0xffc8029154ecd55abed15bd428ba596e7d23f557'
     class_name: FastParams
   benchmarking_mode:
     args:

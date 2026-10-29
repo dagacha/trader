@@ -19,9 +19,10 @@
 
 """Watch fresh Omen markets and execute the fixed fast strategy."""
 
+import hashlib
 import json
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from fractions import Fraction
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple, cast
 
@@ -70,6 +71,17 @@ from packages.valory.skills.decision_maker_abci.behaviours.trade_count import (
 )
 from packages.valory.skills.decision_maker_abci.models import RedeemingProgress
 from packages.valory.skills.decision_maker_abci.policy import EGreedyPolicy
+from packages.valory.skills.fresh_watch_abci.chain_discovery import (
+    ChainDiscoveryMixin,
+    ChainRPCError,
+)
+from packages.valory.skills.fresh_watch_abci.lightning import (
+    BaseRateCache,
+    LightningConfig,
+    lightning_config,
+    still_hold_rule,
+)
+from packages.valory.skills.fresh_watch_abci.preview import PreviewMixin, preview_night
 from packages.valory.skills.fresh_watch_abci.rounds import (
     FastDecisionRound,
     FreshWatchAbciApp,
@@ -112,7 +124,33 @@ def log_decision(behaviour: DecisionMakerBaseBehaviour, result: Dict[str, Any]) 
     )
 
 
-class FreshWatchBehaviour(DecisionMakerBaseBehaviour, CheckStopTradingBehaviour):
+def lightning_controls(behaviour: DecisionMakerBaseBehaviour) -> LightningConfig:
+    """Read the optional controls for a fast or lightning agent."""
+    controls = getattr(behaviour.params, "lightning", None)
+    return controls if isinstance(controls, LightningConfig) else LightningConfig()
+
+
+def remove_preview_bets(behaviour: DecisionMakerBaseBehaviour) -> None:
+    """Remove request-only records before any normal market processing.
+
+    :param behaviour: foreground behaviour with the local bets store.
+    """
+    behaviour.read_bets()
+    retained = [bet for bet in behaviour.bets if not bet.id.startswith("preview:")]
+    if len(retained) != len(behaviour.bets):
+        behaviour.bets = retained
+        if retained:
+            behaviour.store_bets()
+        else:
+            write_json_atomically(behaviour.params.store_path / "multi_bets.json", [])
+
+
+class FreshWatchBehaviour(
+    ChainDiscoveryMixin,
+    PreviewMixin,
+    DecisionMakerBaseBehaviour,
+    CheckStopTradingBehaviour,
+):
     """Poll the fresh-market query and select one durable queue entry."""
 
     matching_round = FreshWatchRound  # type: ignore[assignment]
@@ -133,6 +171,20 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour, CheckStopTradingBehaviour)
             )
         return (yield from super().contract_interact(*args, **kwargs))
 
+    def _discovery_creators(self) -> List[str]:
+        """Use lightning creators when any independent lightning path is enabled.
+
+        :return: the allowed creator addresses for market discovery.
+        """
+        cfg = lightning_controls(self)
+        if (
+            cfg.lightning_still_hold
+            or cfg.lightning_chain_detect
+            or cfg.lightning_preview
+        ):
+            return cfg.lightning_creators
+        return self.params.fast.creators
+
     def _fetch_fresh(
         self, cursor: int, now: int
     ) -> Generator[None, None, Optional[List[Dict[str, Any]]]]:
@@ -145,7 +197,7 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour, CheckStopTradingBehaviour)
         """
         subgraph = self.context.omen_subgraph
         creators = json.dumps(
-            [creator.lower() for creator in self.params.fast.creators]
+            [creator.lower() for creator in self._discovery_creators()]
         )
         rows: List[Dict[str, Any]] = []
         while True:
@@ -168,6 +220,86 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour, CheckStopTradingBehaviour)
             rows.extend(page)
             if len(page) < 1000:
                 return rows
+
+    def _refresh_base_rate(self, now: float) -> Generator[None, None, None]:
+        """Refresh a complete daily sample outside the trading window."""
+        cfg = lightning_controls(self)
+        cache = BaseRateCache(self.params.store_path / "lightning_base_rate.json")
+        if not cache.refresh_due(now, cfg, self.params.fast):
+            return
+        cache.reserve_refresh(now)
+        subgraph = self.context.omen_subgraph
+        creators = json.dumps([value.lower() for value in cfg.lightning_creators])
+        rows: List[Dict[str, Any]] = []
+        cursor = int(now - cfg.lightning_base_rate_window_days * 86400)
+        while True:
+            query = (
+                "{ fixedProductMarketMakers(first: 1000, skip: "
+                + str(len(rows))
+                + ", orderBy: creationTimestamp, orderDirection: asc, where: {"
+                + f'creator_in: {creators}, creationTimestamp_gte: "{cursor}", '
+                + f'creationTimestamp_lte: "{int(now)}", payouts_not: null, '
+                + "outcomeSlotCount: 2}) {id title creator creationTimestamp payouts} }"
+            )
+            response = yield from self.get_http_response(
+                content=json.dumps({"query": query}).encode(), **subgraph.get_spec()
+            )
+            page = subgraph.process_response(response)
+            if not isinstance(page, list):
+                return
+            rows.extend(page)
+            if len(page) < 1000:
+                break
+        cache.update(rows, now, cfg)
+        self.context.logger.info(
+            "[LIGHTNING_BASE_RATE] n=%s yes=%s rate=%s window=%s",
+            cache.sample,
+            cache.data["yes"],
+            cache.rate,
+            cfg.lightning_base_rate_window_days,
+        )
+
+    def _discovery_period(self) -> float:
+        """Poll each block only while chain detection is enabled."""
+        return (
+            5.0
+            if lightning_controls(self).lightning_chain_detect
+            or lightning_controls(self).lightning_preview
+            else self.params.fast.poll_s
+        )
+
+    def _poll_markets(
+        self, queue: FreshQueue, now: float
+    ) -> Generator[None, None, Optional[List[Dict[str, Any]]]]:
+        """Use configured discovery and retain the existing subgraph fallback."""
+        cfg = self.params.fast
+        controls = lightning_controls(self)
+        chain_rows = None
+        if controls.lightning_chain_detect:
+            chain_rows = yield from self.chain_markets(now)
+            if chain_rows:
+                return chain_rows
+        if controls.lightning_preview:
+            try:
+                yield from self.preview_poll(now)
+            except (ChainRPCError, TimeoutException) as error:
+                self.context.logger.warning(
+                    "Lightning preview discovery failed: %s", error
+                )
+        if chain_rows is not None:
+            return chain_rows
+        rows = yield from self._fetch_fresh(
+            max(queue.last_seen - cfg.overlap_s, int(now) - cfg.fresh_max_age_s),
+            int(now),
+        )
+        if controls.lightning_chain_detect and rows is not None:
+            for row in rows:
+                self.context.logger.info(
+                    "[LIGHTNING_DETECT] market=%s delay_s=%.3f source=subgraph",
+                    row["id"],
+                    max(0, now - int(row["creationTimestamp"])),
+                )
+        return rows
 
     def select(self) -> Generator[None, None, Dict[str, Any]]:
         """Choose the next lane and persist a market before its paid request.
@@ -232,63 +364,9 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour, CheckStopTradingBehaviour)
             mech_only_mode=capped,
         )
 
-    def _select(
-        self, capped: bool, target_met: bool
-    ) -> Generator[None, None, Dict[str, Any]]:
-        """Select a market, a capped request, or periodic housekeeping.
-
-        :param capped: whether the period trade cap is reached.
-        :param target_met: whether no more staking activity is needed.
-        :yield: polling and contract I/O.
-        :return: the selected lane and its inputs.
-        """
+    def _fast_tool(self) -> Optional[str]:
+        """Select the existing fast tool with the same mech eligibility rules."""
         cfg = self.params.fast
-        queue = FreshQueue(self.params.store_path / "fresh_watch.json")
-        now = time.time()
-        if capped:
-            if housekeeping_due(now, queue.last_housekeeping, False, cfg):
-                self.context.state.redeeming_progress = RedeemingProgress(
-                    event_filtering_batch_size=self.params.event_filtering_batch_size
-                )
-                queue.last_housekeeping = now
-                queue.save()
-                return {"lane": "housekeeping"}
-            yield from self.sleep(cfg.poll_s)
-            if not target_met:
-                return {"lane": "mech_only"}
-            return {"lane": "wait"}
-        last_poll = self.context.state.fast_last_poll
-        if cfg.in_window(now) or queue.pending:
-            if self.context.state.fast_background_running is True:
-                if not queue.pending and (
-                    self.context.state.fast_polling or now - last_poll >= cfg.poll_s
-                ):
-                    yield from self.sleep(1)
-                    return {"lane": "wait"}
-            elif now - last_poll >= cfg.poll_s:
-                rows = yield from self._fetch_fresh(
-                    max(
-                        queue.last_seen - cfg.overlap_s, int(now) - cfg.fresh_max_age_s
-                    ),
-                    int(now),
-                )
-                self.context.state.fast_last_poll = now
-                if rows is not None:
-                    queue.ingest(
-                        rows, now, cfg.creators, cfg.fresh_max_age_s, cfg.overlap_s
-                    )
-                    queue.save()
-        if not queue.pending:
-            if housekeeping_due(now, queue.last_housekeeping, False, cfg):
-                self.context.state.redeeming_progress = RedeemingProgress(
-                    event_filtering_batch_size=self.params.event_filtering_batch_size
-                )
-                queue.last_housekeeping = now
-                queue.save()
-                return {"lane": "housekeeping"}
-            yield from self.sleep(cfg.poll_s)
-            return {"lane": "wait"}
-
         mechs = self.synchronized_data.mechs_info
         if self.params.fast_dynamic_mech is True and self.params.use_offchain is True:
             penalized = {
@@ -304,8 +382,140 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour, CheckStopTradingBehaviour)
                 mech for mech in endpoints if mech.address.lower() not in penalized
             ] or endpoints
         offered = {tool for mech in mechs for tool in mech.relevant_tools}
-        tool = next((tool for tool in cfg.tools if tool in offered), None)
-        if tool is None:
+        return next((tool for tool in cfg.tools if tool in offered), None)
+
+    def _preview_selection(self, now: float) -> Optional[Dict[str, Any]]:
+        """Reserve one proposed question before the paid fast request."""
+        cfg = lightning_controls(self)
+        if not cfg.lightning_preview or not self.params.fast.in_window(now):
+            return None
+        store = self.preview_store()
+        title = store.next_title(now)
+        tool = self._fast_tool() if title else None
+        if title is None or tool is None:
+            return None
+        entry = store.reserve(
+            title,
+            now,
+            preview_night(now, self.params.fast.active_window_utc),
+            cfg.lightning_preview_max_per_night,
+        )
+        if entry is None:
+            return None
+        bet = Bet(
+            id="preview:" + hashlib.sha256(title.encode()).hexdigest(),
+            market="omen_subgraph",
+            title=title,
+            collateralToken="0x0000000000000000000000000000000000000000",
+            creator=cfg.lightning_creators[0],
+            fee=0,
+            creationTimestamp=int(now),
+            openingTimestamp=int(now) + 900,
+            outcomeSlotCount=2,
+            outcomeTokenAmounts=[1, 1],
+            outcomeTokenMarginalPrices=[0.5, 0.5],
+            outcomes=["Yes", "No"],
+            scaledLiquidityMeasure=1,
+        )
+        self.read_bets()
+        self.bets.append(bet)
+        self.store_bets()
+        self.preview_log(entry)
+        return dict(
+            lane="preview_request",
+            sampled_bet_index=len(self.bets) - 1,
+            mech_tool=tool,
+            request_prices=[0.5, 0.5],
+            requested_at=now,
+            lightning_preview_title=title,
+            lightning_preview_request=True,
+        )
+
+    def _select(
+        self, capped: bool, target_met: bool
+    ) -> Generator[None, None, Dict[str, Any]]:
+        """Select a market, a capped request, or periodic housekeeping.
+
+        :param capped: whether the period trade cap is reached.
+        :param target_met: whether no more staking activity is needed.
+        :yield: polling and contract I/O.
+        :return: the selected lane and its inputs.
+        """
+        cfg = self.params.fast
+        if lightning_controls(self).lightning_preview:
+            remove_preview_bets(self)
+        queue = FreshQueue(self.params.store_path / "fresh_watch.json")
+        now = time.time()
+        yield from self._refresh_base_rate(now)
+        if capped:
+            if housekeeping_due(now, queue.last_housekeeping, False, cfg):
+                self.context.state.redeeming_progress = RedeemingProgress(
+                    event_filtering_batch_size=self.params.event_filtering_batch_size
+                )
+                queue.last_housekeeping = now
+                queue.save()
+                return {"lane": "housekeeping"}
+            yield from self.sleep(cfg.poll_s)
+            if not target_met:
+                return {"lane": "mech_only"}
+            return {"lane": "wait"}
+        last_poll = self.context.state.fast_last_poll
+        poll_s = self._discovery_period()
+        if cfg.in_window(now) or queue.pending:
+            if self.context.state.fast_background_running is True:
+                if not queue.pending and (
+                    self.context.state.fast_polling or now - last_poll >= poll_s
+                ):
+                    yield from self.sleep(1)
+                    return {"lane": "wait"}
+            elif now - last_poll >= poll_s:
+                rows = yield from self._poll_markets(queue, now)
+                self.context.state.fast_last_poll = now
+                if rows is not None:
+                    queue.ingest(
+                        rows,
+                        now,
+                        self._discovery_creators(),
+                        cfg.fresh_max_age_s,
+                        cfg.overlap_s,
+                    )
+                    queue.save()
+        if not queue.pending:
+            preview = self._preview_selection(now)
+            if preview is not None:
+                return preview
+            if housekeeping_due(now, queue.last_housekeeping, False, cfg):
+                self.context.state.redeeming_progress = RedeemingProgress(
+                    event_filtering_batch_size=self.params.event_filtering_batch_size
+                )
+                queue.last_housekeeping = now
+                queue.save()
+                return {"lane": "housekeeping"}
+            yield from self.sleep(cfg.poll_s)
+            return {"lane": "wait"}
+
+        lightning = lightning_controls(self)
+        candidate = queue.pending[0]
+        rule = still_hold_rule(candidate["title"], candidate["creator"], lightning)
+        probability = (
+            BaseRateCache(self.params.store_path / "lightning_base_rate.json").usable(
+                now, lightning
+            )
+            if lightning.lightning_still_hold and rule
+            else None
+        )
+        preview = (
+            self.preview_store().match(candidate["title"], now)
+            if lightning.lightning_preview
+            else None
+        )
+        if preview is not None:
+            self.preview_log(preview)
+            if preview.get("p_yes") is None:
+                yield from self.sleep(1)
+                return {"lane": "wait"}
+        tool = self._fast_tool()
+        if tool is None and probability is None and preview is None:
             self.context.logger.warning("Neither fast prediction tool is available.")
             yield from self.sleep(cfg.poll_s)
             return {"lane": "wait"}
@@ -375,6 +585,31 @@ class FreshWatchBehaviour(DecisionMakerBaseBehaviour, CheckStopTradingBehaviour)
                 yield from self.sleep(cfg.poll_s)
             return {"lane": "wait"}
         prices = [balances[1] / sum(balances), balances[0] / sum(balances)]
+        if probability is not None:
+            self.context.logger.info(
+                "[LIGHTNING_STILL_HOLD] market=%s rule=%s p_yes=%s",
+                bet.id,
+                rule,
+                probability,
+            )
+            return dict(
+                lane="lightning_decision",
+                sampled_bet_index=index,
+                request_prices=prices,
+                requested_at=requested_at,
+                lightning_probability=probability,
+                lightning_rule=rule,
+            )
+        if preview is not None:
+            self.preview_store().consume(bet.title, requested_at)
+            return dict(
+                lane="lightning_decision",
+                sampled_bet_index=index,
+                request_prices=prices,
+                requested_at=preview["requested_at"],
+                lightning_preview_title=bet.title,
+                lightning_preview_probability=preview["p_yes"],
+            )
         return dict(
             lane="market",
             sampled_bet_index=index,
@@ -414,23 +649,24 @@ class FreshMarketPoller(FreshWatchBehaviour):
         now = time.time()
         state = self.context.state
         queue = FreshQueue(self.params.store_path / "fresh_watch.json")
+        yield from self._refresh_base_rate(now)
+        poll_s = self._discovery_period()
         if (
             cfg.in_window(now) or queue.pending
-        ) and now - state.fast_last_poll >= cfg.poll_s:
+        ) and now - state.fast_last_poll >= poll_s:
             state.fast_last_poll = now
             state.fast_polling = True
             try:
-                rows = yield from self._fetch_fresh(
-                    max(
-                        queue.last_seen - cfg.overlap_s, int(now) - cfg.fresh_max_age_s
-                    ),
-                    int(now),
-                )
+                rows = yield from self._poll_markets(queue, now)
                 if rows is not None:
                     # The foreground can pop a market while the HTTP request waits.
                     queue = FreshQueue(queue.path)
                     queue.ingest(
-                        rows, now, cfg.creators, cfg.fresh_max_age_s, cfg.overlap_s
+                        rows,
+                        now,
+                        self._discovery_creators(),
+                        cfg.fresh_max_age_s,
+                        cfg.overlap_s,
                     )
                     queue.save()
             except TimeoutException:
@@ -439,10 +675,25 @@ class FreshMarketPoller(FreshWatchBehaviour):
                 )
             finally:
                 state.fast_polling = False
-        yield from self.sleep(max(1.0, cfg.poll_s - (time.time() - now)))
+        yield from self.sleep(max(1.0, poll_s - (time.time() - now)))
 
 
-class FastDecisionBehaviour(DecisionMakerBaseBehaviour):
+class FastDecisionRequestBehaviour(DecisionRequestBehaviour):
+    """Keep the normal request path without invented preview market context."""
+
+    def setup(self) -> None:
+        """Use the same prompt and tool for a proposed exact title."""
+        super().setup()
+        if (
+            lightning_controls(self).lightning_preview
+            and self.synchronized_data.db.get("lightning_preview_request", False)
+            is True
+            and self._metadata is not None
+        ):
+            self._metadata = replace(self._metadata, request_context=None)
+
+
+class FastDecisionBehaviour(PreviewMixin, DecisionMakerBaseBehaviour):
     """Apply the fixed strategy to one response and a live pool quote."""
 
     matching_round = FastDecisionRound
@@ -491,10 +742,67 @@ class FastDecisionBehaviour(DecisionMakerBaseBehaviour):
             else {}
         )
         result.update(mech=timing.get("mech"), latency_s=timing.get("latency_s"))
-        prediction = self._get_decision_prediction()
-        if prediction is None:
+        lightning = lightning_controls(self)
+        direct = (
+            db.get("lightning_probability", None)
+            if lightning.lightning_still_hold
+            else None
+        )
+        direct = direct if isinstance(direct, (int, float)) else None
+        preview_probability = (
+            db.get("lightning_preview_probability", None)
+            if lightning.lightning_preview
+            else None
+        )
+        preview_probability = (
+            preview_probability
+            if isinstance(preview_probability, (int, float))
+            else None
+        )
+        prediction = (
+            None
+            if direct is not None or preview_probability is not None
+            else self._get_decision_prediction()
+        )
+        if (
+            lightning.lightning_preview
+            and db.get("lightning_preview_request", False) is True
+        ):
+            title = db.get_strict("lightning_preview_title")
+            store = self.preview_store()
+            for orphan in store.expire(now):
+                self.preview_log(orphan, "orphan_fee_loss")
+            if title not in store.entries:
+                result["reason"] = "preview_expired"
+            elif prediction is None:
+                store.answer_failed(title, now)
+                result["reason"] = "preview_answer_failed"
+            else:
+                store.answer(title, prediction.p_yes, now)
+                result["reason"] = "preview_answer_cached"
+                result["p_tool"] = prediction.p_yes
+            entry = store.entries.get(title)
+            if entry is not None:
+                self.preview_log(entry, str(result["reason"]))
+            remove_preview_bets(self)
             return result
-        result["p_tool"] = prediction.p_yes
+        if preview_probability is not None and now - requested_at >= 900:
+            result["reason"] = "preview_expired"
+            return result
+        if direct is None and preview_probability is None and prediction is None:
+            return result
+        if direct is not None:
+            p_yes = direct
+        elif preview_probability is not None:
+            p_yes = preview_probability
+        elif prediction is not None:
+            p_yes = prediction.p_yes
+        else:
+            return result
+        result["p_tool"] = None if direct is not None else p_yes
+        result["lightning_rule"] = (
+            db.get("lightning_rule", None) if direct is not None else None
+        )
         balances = yield from self._get_pool_balances(
             bet.id, bet.collateralToken, bet.condition_id
         )
@@ -504,13 +812,40 @@ class FastDecisionBehaviour(DecisionMakerBaseBehaviour):
         if bet.openingTimestamp <= time.time():
             result["reason"] = "market_closed"
             return result
+        cache = BaseRateCache(self.params.store_path / "lightning_base_rate.json")
+        enabled = (
+            lightning.lightning_still_hold
+            or lightning.lightning_chain_detect
+            or lightning.lightning_preview
+        )
+        prior = cache.current_rate(now, lightning) if enabled else None
+        if prior is None:
+            prior = (
+                0.95
+                if enabled and lightning.still_hold_prior == 0.85
+                else lightning.still_hold_prior
+            )
+        cfg = lightning_config(
+            self.params.fast,
+            lightning,
+            prior if enabled or lightning.still_hold_prior != 0.85 else None,
+        )
+        if direct is not None:
+            cfg = replace(
+                cfg,
+                prior_weight=1.0,
+                max_price=min(cfg.max_price, lightning.lightning_still_hold_max_price),
+            )
         decision = decide(
             bet.title,
-            prediction.p_yes,
+            p_yes,
             balances,
             db.get_strict("request_prices"),
-            self.params.fast,
+            cfg,
             bet.fee,
+            yes_only=bool(
+                enabled and still_hold_rule(bet.title, bet.creator, lightning)
+            ),
         )
         result.update(asdict(decision))
         result["request_price"] = db.get_strict("request_prices")[decision.side]
@@ -583,7 +918,7 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
             self.outcome_index
         ]
         cfg = self.params.fast
-        if price > cfg.max_price:
+        if price > self._execution_max_price():
             self._placement_failure = "max_price"
             return False
         if price - requested > cfg.max_slip + 1e-12:
@@ -601,6 +936,19 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
         self._min_tokens_out = self.buy_amount
         return True
 
+    def _execution_max_price(self) -> float:
+        """Apply the direct still-hold price cap to the final live quote."""
+        maximum = self.params.fast.max_price
+        cfg = lightning_controls(self)
+        db = self.synchronized_data.db
+        if (
+            cfg.lightning_still_hold
+            and db.get("lightning_rule", None) == "still_hold_phrase"
+            and isinstance(db.get("lightning_probability", None), (int, float))
+        ):
+            maximum = min(maximum, cfg.lightning_still_hold_max_price)
+        return maximum
+
     def _ceiling_min_out(
         self, p_side: float, requested_price: float
     ) -> Optional[Tuple[float, int]]:
@@ -612,7 +960,7 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
         """
         cfg = self.params.fast
         ceiling = min(
-            Fraction(str(cfg.max_price)),
+            Fraction(str(self._execution_max_price())),
             Fraction(str(requested_price)) + Fraction(str(cfg.max_slip)),
             Fraction(str(p_side)) - Fraction(str(self.params.placement_min_edge)),
         )
@@ -785,7 +1133,7 @@ class FreshWatchRoundBehaviour(AbstractRoundBehaviour):
         MechOnlySelectionBehaviour,
         FastDecisionBehaviour,
         FastBetPlacementBehaviour,
-        DecisionRequestBehaviour,
+        FastDecisionRequestBehaviour,
         PostBetUpdateBehaviour,
         HousekeepingRedeemBehaviour,
     }

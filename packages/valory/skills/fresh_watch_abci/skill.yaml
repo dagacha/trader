@@ -8,16 +8,25 @@ aea_version: '>=2.0.0, <3.0.0'
 fingerprint:
   README.md: bafybeieurwex74dtimmmndedzrhznyfivsuaf27lteomz4cz23upjtv2pq
   __init__.py: bafybeihyphnywie3dyf7f7mmwm7yvcwekkgsa4mq5273ojuzbjsznvorv4
-  behaviours.py: bafybeiaovz2f3l26oh74ojygspetv7hlxdkglehzsfuv7icfjqe3gr4xiq
+  behaviours.py: bafybeib6gom23tnchozzzerx77avniqs3k6fzqivlhtldvqku4uuw5cpqq
+  chain_discovery.py: bafybeidht4lvoxfhh3bijluqxsbbtasq6z7aqp2txyigqxx4kcefkrcfki
   dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
-  fsm_specification.yaml: bafybeiffp3l4z3irl7ahhffn4ip6may7bsaym5irq52vm5dl7a2a7kbpti
+  fsm_specification.yaml: bafybeifhpatx5365ubtse2g6kqo6cjeuzoruf75dv5r5xg27n4wtyrtrbm
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
-  models.py: bafybeia4nzzmxrtqorynrwiq5px3mpuq5ecbdtg7ygmbx6u75nw54s7gdu
-  rounds.py: bafybeihpvt4reookpnr4pqcjwrag7qlgtrkn4lxtl5oaa6m32ig5455qte
-  strategy.py: bafybeigm7rhi4dprkxh55n74fjiibyj5qldp7l3sf4sio5t3bn7ecq5lvm
+  lightning.py: bafybeihvelosw4dmwdt63b7grgplhyhif4xvarojakzf52s76js4avg55i
+  models.py: bafybeia2nckpf7kw5wd3jt66kfsiqocps63o6dhyxpshueq3hy6iekqkjy
+  preview.py: bafybeiglgjdfffeg4lgjetgjzcofuxetzj3acglgwwncaty577yzkayodi
+  rounds.py: bafybeiejrgeu5do3gc34sqaf24vyhrzp3hin2ylgp6xgnpj3br4prnvrki
+  strategy.py: bafybeie6oxcejzwc4j4utc24bfochyinclyzc3vzldrpw6hvnukd6l6aam
   tests/__init__.py: bafybeiebuokdlpgmmm6orggvfnnm537acc3eogkkrn6jyjaxzqyb7t7yzy
-  tests/test_behaviours.py: bafybeigprzuhsqfoneiw56xvewt4avjcvajlwxewxdz6uhjxcyenkqdxue
-  tests/test_rounds.py: bafybeiethtm2rdws2ecocfiznx7mewmmxo4k6aro3nzteg6easjbu6hvqe
+  tests/fixtures/chain_creation.json: bafybeibsvrn4ppzzldhqqy4tziri47oxviicqocyoq7hmcs4hgaom7i5ui
+  tests/fixtures/question_preview.json: bafybeie2ouuxhajfkeln7cgcjm3c3ngus64jtdg5rjz4pix5rcgrpj3hzq
+  tests/fixtures/question_preview_metadata.json: bafybeihhtgcztco4xdf5zgeny6ldafa7pnshaeun74zppc4ygvuutyro3i
+  tests/test_behaviours.py: bafybeieaxcsrjpskhfg4slzzuddiyzz7yyfxp6aoodzs6yjxcpwo7y5go4
+  tests/test_chain_discovery.py: bafybeibosqwx3ssrbappmpjixhfxnpbncyejinowt6cpuoytwerlo6uqzm
+  tests/test_lightning.py: bafybeickfjom7h54fpp3cmvox6t5w4tztwldo5wipcafyigtx42s3opm2u
+  tests/test_preview.py: bafybeiewk4cai7we4jgcip76aaff65o7byawocv4lcllpmipthqnm6dfla
+  tests/test_rounds.py: bafybeicqdd6ycrhwzt6bwa5zid44egcxcrpd3dqr2tsx5wr3zl2qwomu4q
   tests/test_strategy.py: bafybeidg5u2gfkudquygzlit6svpqxspnfc2zvquo6j6kaugttohtdbw5q
 fingerprint_ignore_patterns: []
 connections: []
@@ -374,6 +383,20 @@ models:
       price_margin: 0.01
       max_slip: 0.2
       min_stake: 0.1
+      lightning_still_hold: false
+      lightning_still_hold_max_price: 0.93
+      lightning_base_rate_window_days: 21
+      lightning_base_rate_min_n: 60
+      lightning_base_rate_floor: 0.9
+      still_hold_prior: 0.85
+      lightning_chain_detect: false
+      omen_fpmm_factory: '0x9083A2B699c0a4AD06F63580BDE2635d26a3eeF0'
+      lightning_rpc_fallback_s: 60
+      lightning_preview: false
+      lightning_preview_max_per_night: 15
+      lightning_creators:
+      - '0x89c5cc945dd550bcffb72fe42bff002429f46fec'
+      - '0xffc8029154ecd55abed15bd428ba596e7d23f557'
     class_name: FastParams
   benchmarking_mode:
     args:

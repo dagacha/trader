@@ -1,0 +1,386 @@
+# -*- coding: utf-8 -*-
+# ------------------------------------------------------------------------------
+#
+#   Copyright 2026 Valory AG
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+#
+# ------------------------------------------------------------------------------
+
+"""Discover Omen markets through the agent's own ledger connection."""
+
+import json
+from typing import Any, Dict, Generator, List, Optional, cast
+
+from eth_abi import decode
+from eth_utils import to_checksum_address  # type: ignore[import-not-found]
+
+from packages.valory.protocols.ledger_api import LedgerApiMessage
+from packages.valory.skills.abstract_round_abci.base import LEDGER_API_ADDRESS
+from packages.valory.skills.abstract_round_abci.behaviour_utils import TimeoutException
+from packages.valory.skills.abstract_round_abci.dialogues import (
+    LedgerApiDialogue,
+    LedgerApiDialogues,
+)
+from packages.valory.skills.abstract_round_abci.models import Requests
+from packages.valory.skills.fresh_watch_abci.strategy import FreshQueue
+
+# Verified against Gnosis creation tx 0x1a1d567d7d7c596895327e53568aacc24378cf45234b8a00fbe98d0c31608c00.
+CREATION_TOPIC = "0x92e0912d3d7f3192cad5c7ae3b47fb97f9c465c1dd12a5c24fd901ddb3905f43"
+CONDITION_TOPIC = "0xab3760c3bd2bb38b5bcf54dc79802ed67338b4cf29f3054ded67ed24661e4177"
+QUESTION_TOPIC = "0xfe2dac156a3890636ce13f65f4fdf41dcaee11526e4a5374531572d92194796c"
+MARKET_FIELDS = """id title collateralToken condition { id } creator fee creationTimestamp
+openingTimestamp outcomeSlotCount outcomeTokenAmounts outcomeTokenMarginalPrices
+outcomes scaledLiquidityMeasure"""
+
+
+class ChainRPCError(Exception):
+    """A chain read did not return usable data."""
+
+
+def _hex(value: Any) -> str:
+    """Normalize an RPC byte value.
+
+    :param value: hex string or raw bytes.
+    :return: lowercase hex string with a prefix.
+    """
+    return value.lower() if isinstance(value, str) else "0x" + bytes(value).hex()
+
+
+def _number(value: Any) -> int:
+    """Normalize an RPC integer.
+
+    :param value: JSON-RPC hex string or integer.
+    :return: integer value.
+    """
+    return (
+        int(value, 16)
+        if isinstance(value, str) and value.startswith("0x")
+        else int(value)
+    )
+
+
+def creation_details(log: Dict[str, Any]) -> Dict[str, Any]:
+    """Decode the factory event, whose creator is its only indexed field.
+
+    :param log: raw creation event.
+    :return: market fields, including the condition contract address.
+    :raises ValueError: if the event has no single binary-market condition.
+    """
+    topics = [_hex(topic) for topic in log["topics"]]
+    if len(topics) != 2 or topics[0] != CREATION_TOPIC:
+        raise ValueError("Unexpected factory event")
+    market, conditional, collateral, conditions, fee = decode(
+        ["address", "address", "address", "bytes32[]", "uint256"],
+        bytes.fromhex(_hex(log["data"])[2:]),
+    )
+    if len(conditions) != 1:
+        raise ValueError("Require one market condition")
+    return dict(
+        id=market.lower(),
+        creator="0x" + topics[1][-40:],
+        collateralToken=collateral.lower(),
+        condition={"id": _hex(conditions[0])},
+        conditional_tokens=conditional.lower(),
+        fee=fee,
+    )
+
+
+def receipt_question(
+    logs: List[Dict[str, Any]], condition_id: str
+) -> Optional[Dict[str, Any]]:
+    """Match the condition's question ID before reading its Realitio title.
+
+    :param logs: receipt events.
+    :param condition_id: the market's condition ID.
+    :return: title, opening time and outcomes, or None when unavailable.
+    """
+    question_id = None
+    for log in logs:
+        topics = [_hex(topic) for topic in log["topics"]]
+        if (
+            len(topics) == 4
+            and topics[0] == CONDITION_TOPIC
+            and topics[1] == condition_id
+        ):
+            if decode(["uint256"], bytes.fromhex(_hex(log["data"])[2:]))[0] != 2:
+                return None
+            question_id = topics[3]
+            break
+    if question_id is None:
+        return None
+    for log in logs:
+        topics = [_hex(topic) for topic in log["topics"]]
+        if len(topics) != 4 or topics[0] != QUESTION_TOPIC or topics[1] != question_id:
+            continue
+        template_id, question, _, _, opening, _, _ = decode(
+            ["uint256", "string", "address", "uint32", "uint32", "uint256", "uint256"],
+            bytes.fromhex(_hex(log["data"])[2:]),
+        )
+        parts = question.replace("\x1f", "␟").split("␟")
+        if template_id == 2 and len(parts) >= 2:
+            outcomes = json.loads("[" + parts[1] + "]")
+        elif template_id == 0:
+            outcomes = ["Yes", "No"]
+        else:
+            return None
+        if outcomes != ["Yes", "No"]:
+            return None
+        return dict(
+            title=parts[0],
+            openingTimestamp=opening,
+            outcomes=outcomes,
+            outcomeSlotCount=2,
+        )
+    return None
+
+
+class ChainDiscoveryMixin:
+    """Supply chain reads to both the foreground and background market pollers."""
+
+    def _chain_rpc(self: Any, method: str, **kwargs: Any) -> Generator[None, None, Any]:
+        """Bound a read through the configured ledger API to five seconds.
+
+        :param method: Web3 eth method name.
+        :param kwargs: method inputs.
+        :yield: ledger API I/O.
+        :return: normalized method result.
+        :raises ChainRPCError: on an RPC failure or timeout.
+        """
+        dialogues = cast(LedgerApiDialogues, self.context.ledger_api_dialogues)
+        message, dialogue = dialogues.create(
+            counterparty=LEDGER_API_ADDRESS,
+            performative=LedgerApiMessage.Performative.GET_STATE,
+            ledger_id=self.context.default_ledger_id,
+            callable=method,
+            kwargs=LedgerApiMessage.Kwargs(
+                dict(kwargs, chain_id=self.params.mech_chain_id)
+            ),
+            args=tuple(),
+        )
+        dialogue = cast(LedgerApiDialogue, dialogue)
+        dialogue.terms = self._get_default_terms()
+        nonce = self._get_request_nonce_from_dialogue(dialogue)
+        cast(Requests, self.context.requests).request_id_to_callback[
+            nonce
+        ] = self.get_callback_request()
+        self.context.outbox.put_message(message=message)
+        try:
+            response = yield from self.wait_for_message(timeout=5.0)
+        except TimeoutException as exc:
+            raise ChainRPCError("Ledger response timed out") from exc
+        if response.performative != LedgerApiMessage.Performative.STATE:
+            raise ChainRPCError(str(response.message))
+        body = response.state.body
+        return body.get(method + "_result", body)
+
+    def _chain_subgraph_market(
+        self: Any, market_id: str
+    ) -> Generator[None, None, Optional[Dict[str, Any]]]:
+        """Use an exact market lookup when its question is absent from the receipt.
+
+        :param market_id: market address.
+        :yield: subgraph HTTP I/O.
+        :return: full market row or None until the indexer catches up.
+        """
+        subgraph = self.context.omen_subgraph
+        query = (
+            "{ fixedProductMarketMakers(where: {id: "
+            + json.dumps(market_id)
+            + "}) {"
+            + MARKET_FIELDS
+            + "} }"
+        )
+        response = yield from self.get_http_response(
+            content=json.dumps({"query": query}).encode(), **subgraph.get_spec()
+        )
+        rows = subgraph.process_response(response)
+        return rows[0] if isinstance(rows, list) and rows else None
+
+    def _chain_market(
+        self: Any, log: Dict[str, Any], block: Dict[str, Any], now: float
+    ) -> Generator[None, None, Optional[Dict[str, Any]]]:
+        """Read one receipt and live pool before adding the market to the queue.
+
+        :param log: creation log.
+        :param block: creation block header.
+        :param now: detection timestamp.
+        :yield: ledger and optional subgraph I/O.
+        :return: market row or None for a transient materialization failure.
+        :raises ChainRPCError: when the live pool read fails.
+        """
+        market = creation_details(log)
+        created = _number(block["timestamp"])
+        if now - created > self.params.fast.fresh_max_age_s:
+            return {}
+        receipt = yield from self._chain_rpc(
+            "get_transaction_receipt", transaction_hash=_hex(log["transactionHash"])
+        )
+        question = receipt_question(receipt["logs"], market["condition"]["id"])
+        source = "chain"
+        if question is None:
+            market = yield from self._chain_subgraph_market(market["id"])
+            source = "subgraph"
+            if market is None:
+                return None
+        else:
+            market.update(question, creationTimestamp=created)
+            balances = yield from self._get_pool_balances(
+                market["id"], market["collateralToken"], market["condition"]["id"]
+            )
+            if balances is None:
+                raise ChainRPCError("Market pool read failed")
+            total = sum(balances)
+            market.update(
+                outcomeTokenAmounts=balances,
+                outcomeTokenMarginalPrices=(
+                    [balances[1] / total, balances[0] / total] if total else [0, 0]
+                ),
+                scaledLiquidityMeasure=min(balances) / 10**18,
+            )
+            market.pop("conditional_tokens")
+        self.context.logger.info(
+            "[LIGHTNING_DETECT] market=%s delay_s=%.3f source=%s",
+            market["id"],
+            max(0, now - created),
+            source,
+        )
+        return market
+
+    def chain_markets(
+        self: Any, now: float
+    ) -> Generator[None, None, Optional[List[Dict[str, Any]]]]:
+        """Fetch creator logs and persist markets before advancing the block cursor.
+
+        Scan each new block once, with a two-block overlap for short reorgs.
+        Empty scans also advance the durable block cursor.
+
+        :param now: detection timestamp.
+        :yield: cooperative ledger and optional title lookup I/O.
+        :return: rows, or None when the standard subgraph poll must run.
+        :raises ChainRPCError: for an invalid chain read, caught for fallback.
+        """
+        cfg = self.params.lightning
+        if not cfg.lightning_chain_detect:
+            return None
+        if not self.params.fast.in_window(now):
+            return []
+        path = self.params.store_path / "lightning_chain.json"
+        state = (
+            json.loads(path.read_text())
+            if path.exists()
+            else {"last_block": None, "rpc_error_since": None}
+        )
+
+        def save() -> None:
+            """Save this agent's cursor and error interval atomically."""
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(state))
+            temporary.replace(path)
+
+        try:
+            head = yield from self._chain_rpc("get_block", block_identifier="latest")
+            number = _number(head["number"])
+            blocks = {number: head}
+            if state["last_block"] is None:
+                state["last_block"] = max(
+                    0, number - self.params.fast.fresh_max_age_s // 5 - 1
+                )
+                save()
+            elif number <= state["last_block"]:
+                state["rpc_error_since"] = None
+                save()
+                return []
+            creators = [creator.lower() for creator in cfg.lightning_creators]
+            filters = {
+                "address": to_checksum_address(cfg.omen_fpmm_factory),
+                "fromBlock": max(
+                    0,
+                    state["last_block"] - 2,
+                    number - self.params.fast.fresh_max_age_s // 5 - 1,
+                ),
+                "toBlock": number,
+                "topics": [
+                    CREATION_TOPIC,
+                    ["0x" + creator[2:].rjust(64, "0") for creator in creators],
+                ],
+            }
+            logs = yield from self._chain_rpc("get_logs", filter_params=filters)
+            if not isinstance(logs, list):
+                raise ChainRPCError("Invalid getLogs result")
+            rows = []
+            last_block = number
+            retry_block = None
+            market_error = None
+            for log in sorted(
+                logs,
+                key=lambda row: (_number(row["blockNumber"]), _number(row["logIndex"])),
+            ):
+                if log.get("removed"):
+                    continue
+                market = creation_details(log)
+                if (
+                    _hex(log["address"]) != cfg.omen_fpmm_factory.lower()
+                    or market["creator"] not in creators
+                ):
+                    continue
+                number = _number(log["blockNumber"])
+                if number not in blocks:
+                    blocks[number] = yield from self._chain_rpc(
+                        "get_block", block_identifier=number
+                    )
+                try:
+                    row = yield from self._chain_market(log, blocks[number], now)
+                except (ChainRPCError, TimeoutException) as exc:
+                    row = None
+                    market_error = exc
+                if row is None:
+                    # Keep ready markets moving while this block needs a retry.
+                    retry_block = min(retry_block or number, number)
+                    continue
+                if row:
+                    rows.append(row)
+                last_block = max(last_block, number)
+            queue = FreshQueue(self.params.store_path / "fresh_watch.json")
+            queue.ingest(
+                rows,
+                now,
+                creators,
+                self.params.fast.fresh_max_age_s,
+                self.params.fast.overlap_s,
+            )
+            queue.save()
+            state["last_block"] = (
+                min(state["last_block"], retry_block - 1) if retry_block else last_block
+            )
+            if market_error is not None:
+                raise ChainRPCError(str(market_error))
+            state["rpc_error_since"] = None
+            save()
+            return rows
+        except (
+            ChainRPCError,
+            TimeoutException,
+            ValueError,
+            KeyError,
+            TypeError,
+        ) as exc:
+            if state["rpc_error_since"] is None:
+                state["rpc_error_since"] = now
+            save()
+            self.context.logger.warning("Lightning market RPC error: %s", exc)
+            return (
+                None
+                if now - state["rpc_error_since"] > cfg.lightning_rpc_fallback_s
+                else []
+            )

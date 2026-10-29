@@ -39,6 +39,7 @@ from packages.valory.skills.fresh_watch_abci.rounds import (
     "lane,event",
     [
         ("market", Event.MARKET),
+        ("lightning_decision", Event.LIGHTNING),
         ("mech_only", Event.MECH_ONLY),
         ("housekeeping", Event.HOUSEKEEPING),
         ("wait", Event.WAIT),
@@ -53,6 +54,9 @@ def test_watch(lane: Any, event: Any) -> None:
                 participants=[("agent",)],
                 consensus_threshold=[1],
                 tx_submitter=["bet_placement_round"],
+                lightning_probability=[0.99],
+                lightning_preview_probability=[0.99],
+                lightning_preview_request=[True],
             )
         )
     )
@@ -67,6 +71,9 @@ def test_watch(lane: Any, event: Any) -> None:
     assert actual == event
     assert result.db.get("sampled_bet_index") == 0
     assert result.db.get("tx_submitter") is None
+    assert result.db.get("lightning_probability") is None
+    assert result.db.get("lightning_preview_probability") is None
+    assert result.db.get("lightning_preview_request") is False
     assert result.db.get("mech_responses") == "[]"
     assert result.db.get("is_marketplace_v2") is True
 
