@@ -416,7 +416,12 @@ def test_subgraph_title_fallback_reports_source(tmp_path: Path) -> None:
     """Return the indexed market and identify its delayed title source."""
     harness: Any = Harness(tmp_path)
     harness.receipt = {"logs": []}
-    market = {"id": creation_details(CREATION)["id"], "title": "Exact title"}
+    market = {
+        "id": creation_details(CREATION)["id"],
+        "title": "Exact title",
+        "outcomeSlotCount": 2,
+        "outcomes": ["Yes", "No"],
+    }
     harness.fallback = market
     assert (
         run(harness._chain_market(CREATION, {"timestamp": hex(CREATED)}, CREATED + 8))
@@ -450,7 +455,11 @@ def test_stale_creation_advances_cursor_without_queueing(tmp_path: Path) -> None
     assert not FreshQueue(tmp_path / "fresh_watch.json").pending
     assert all(method != "get_transaction_receipt" for method, _ in harness.calls)
     state = json.loads((tmp_path / "lightning_chain.json").read_text())
-    assert state == {"last_block": BLOCK, "rpc_error_since": None}
+    assert state == {
+        "last_block": BLOCK,
+        "rpc_error_since": None,
+        "scanned_head": BLOCK,
+    }
 
 
 def test_invalid_get_logs_result_starts_fallback_interval(tmp_path: Path) -> None:
@@ -685,3 +694,168 @@ def test_overlap_replaces_orphan_rows_before_selecting_newer_market(
         for method, kwargs in harness.calls
         if method == "get_block"
     ] == ["latest", BLOCK]
+
+
+@pytest.mark.parametrize(
+    "slot_count,outcomes,retry",
+    [
+        (3, ["Yes", "No", "Maybe"], False),
+        (2, ["No", "Yes"], False),
+        (None, ["Yes", "No"], True),
+        (2, None, True),
+    ],
+)
+def test_fallback_requires_complete_binary_metadata_before_queueing(
+    tmp_path: Path, slot_count: Any, outcomes: Any, retry: bool
+) -> None:
+    """Reject unsupported outcomes and retry incomplete indexer rows."""
+    from packages.valory.skills.fresh_watch_abci.behaviours import FreshWatchBehaviour
+    from packages.valory.skills.fresh_watch_abci.tests.test_behaviours import (
+        make,
+        raw_market,
+    )
+
+    harness: Any = Harness(tmp_path)
+    harness.receipt = {"logs": []}
+    harness.fallback = {
+        **raw_market(),
+        "id": creation_details(CREATION)["id"],
+        "creationTimestamp": CREATED,
+        "openingTimestamp": CREATED + 3600,
+        "outcomeSlotCount": slot_count,
+        "outcomes": outcomes,
+    }
+    assert run(harness.chain_markets(CREATED + 5)) == []
+    state = json.loads((tmp_path / "lightning_chain.json").read_text())
+    assert (state["last_block"] < BLOCK) is retry
+    assert state["rpc_error_since"] is None
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    assert queue.pending == []
+    queue.last_housekeeping = CREATED + 5
+    queue.save()
+    watch = make(FreshWatchBehaviour, tmp_path)
+    watch.context.state.fast_background_running = True
+    watch.context.state.fast_last_poll = CREATED + 5
+    watch._get_pool_balances = MagicMock(
+        side_effect=AssertionError("Unsupported market must not set up a request")
+    )
+    watch.sleep = lambda delay: done(None)
+    with patch(
+        "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+        return_value=CREATED + 5,
+    ):
+        assert run(watch._select(False, True)) == {"lane": "wait"}
+    watch._get_pool_balances.assert_not_called()
+    assert FreshQueue(queue.path).asked == {}
+
+
+def test_retry_cursor_does_not_hide_a_queued_orphan_from_overlap_check(
+    tmp_path: Path,
+) -> None:
+    """Reconcile ready rows even when another receipt keeps the retry cursor back."""
+    from packages.valory.skills.fresh_watch_abci.behaviours import FreshWatchBehaviour
+    from packages.valory.skills.fresh_watch_abci.lightning import LightningConfig
+    from packages.valory.skills.fresh_watch_abci.tests.test_behaviours import make
+
+    harness: Any = Harness(tmp_path)
+    state_path = tmp_path / "lightning_chain.json"
+    state_path.write_text(
+        json.dumps({"last_block": BLOCK - 1, "rpc_error_since": None})
+    )
+    original_rpc = harness._chain_rpc
+    canonical_hash = "0x" + "11" * 32
+
+    def rpc(method: str, **kwargs: Any) -> Any:
+        """Keep one title unavailable while the ready creation's block changes."""
+        if method == "get_block":
+            harness.calls.append((method, kwargs))
+            height = kwargs["block_identifier"]
+            height = harness.head if height == "latest" else height
+            return (
+                yield from done(
+                    {
+                        "number": height,
+                        "timestamp": CREATED + height - BLOCK,
+                        "hash": canonical_hash if height == BLOCK else "0x" + "22" * 32,
+                    }
+                )
+            )
+        if (
+            method == "get_transaction_receipt"
+            and kwargs["transaction_hash"] == CREATION["transactionHash"]
+        ):
+            return (yield from done({"logs": []}))
+        return (yield from original_rpc(method, **kwargs))
+
+    harness._chain_rpc = rpc
+    ready = dict(
+        CREATION,
+        data="0x" + "00" * 12 + "ab" * 20 + CREATION["data"][66:],
+        logIndex=CREATION["logIndex"] + 1,
+        transactionHash="0x" + "12" * 32,
+    )
+    harness.logs = [CREATION, ready]
+    assert len(run(harness.chain_markets(CREATED + 5))) == 1
+    assert json.loads(state_path.read_text())["last_block"] == BLOCK - 1
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    assert [row["id"] for row in queue.pending] == ["0x" + "ab" * 20]
+    subgraph_row = {
+        **queue.pending[0],
+        "id": "subgraph-market",
+        "creationTimestamp": CREATED + 2,
+    }
+    subgraph_row.pop("block_number")
+    subgraph_row.pop("block_hash")
+    queue.pending.append(subgraph_row)
+    queue.save()
+    canonical_hash = "0x" + "33" * 32
+    harness.head = BLOCK + 1
+    harness.logs = [
+        dict(
+            ready,
+            data="0x" + "00" * 12 + "cd" * 20 + CREATION["data"][66:],
+            blockNumber=BLOCK + 1,
+        )
+    ]
+    harness.calls = []
+    run(harness.chain_markets(CREATED + 10))
+    assert [row["id"] for row in FreshQueue(queue.path).pending] == [
+        "0x" + "cd" * 20,
+        "subgraph-market",
+    ]
+    assert [
+        kwargs["block_identifier"]
+        for method, kwargs in harness.calls
+        if method == "get_block"
+    ] == ["latest", BLOCK]
+    watch = make(FreshWatchBehaviour, tmp_path)
+    watch.context.params.lightning = LightningConfig(lightning_chain_detect=True)
+    watch.context.state.fast_background_running = True
+    watch._fast_tool = lambda: "superforcaster"
+    watch._chain_pool_balances = lambda *args: done([7 * 10**18] * 2)
+    with patch(
+        "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+        return_value=CREATED + 10,
+    ):
+        selected = run(watch._select(False, True))
+    assert selected["lane"] == "market"
+    assert watch.bets[selected["sampled_bet_index"]].id == "0x" + "cd" * 20
+
+
+def test_future_creation_keeps_retry_cursor_until_local_clock_catches_up(
+    tmp_path: Path,
+) -> None:
+    """A head timestamp ahead of the local tick must not lose its market."""
+    harness = Harness(tmp_path)
+    state_path = tmp_path / "lightning_chain.json"
+    state_path.write_text(
+        json.dumps({"last_block": BLOCK - 1, "rpc_error_since": None})
+    )
+    assert run(harness.chain_markets(CREATED - 1)) == []
+    state = json.loads(state_path.read_text())
+    assert state["last_block"] == BLOCK - 1
+    assert state["rpc_error_since"] is None
+    assert FreshQueue(tmp_path / "fresh_watch.json").pending == []
+    rows = run(harness.chain_markets(CREATED + 1))
+    assert [row["id"] for row in rows] == [creation_details(CREATION)["id"]]
+    assert FreshQueue(tmp_path / "fresh_watch.json").pending == rows

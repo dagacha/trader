@@ -189,6 +189,7 @@ class BaseRateCache:
                 continue
             if (
                 not still_hold_rule(row.get("title", ""), row.get("creator", ""), cfg)
+                or row.get("outcomes") != ["Yes", "No"]
                 or not cutoff <= int(row["creationTimestamp"]) <= now
             ):
                 continue

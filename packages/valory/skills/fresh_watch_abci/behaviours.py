@@ -264,7 +264,7 @@ class FreshWatchBehaviour(
                 + ", orderBy: creationTimestamp, orderDirection: asc, where: {"
                 + f'creator_in: {creators}, creationTimestamp_gte: "{cursor}", '
                 + f'creationTimestamp_lte: "{int(now)}", payouts_not: null, '
-                + "outcomeSlotCount: 2}) {id title creator creationTimestamp payouts} }"
+                + "outcomeSlotCount: 2}) {id title creator creationTimestamp outcomes payouts} }"
             )
             response = yield from self.get_http_response(
                 content=json.dumps({"query": query}).encode(), **subgraph.get_spec()
@@ -480,6 +480,7 @@ class FreshWatchBehaviour(
         queue = FreshQueue(self.params.store_path / "fresh_watch.json")
         now = time.time()
         yield from self._refresh_base_rate(now)
+        now = time.time()
         if capped:
             if housekeeping_due(now, queue.last_housekeeping, False, cfg):
                 self.context.state.redeeming_progress = RedeemingProgress(
@@ -532,7 +533,11 @@ class FreshWatchBehaviour(
         candidate = queue.pending[0]
         rule = still_hold_rule(candidate["title"], candidate["creator"], lightning)
         probability = None
-        if lightning.lightning_still_hold and rule:
+        if (
+            lightning.lightning_still_hold
+            and rule
+            and candidate.get("outcomes") == ["Yes", "No"]
+        ):
             base_rate = BaseRateCache(
                 self.params.store_path / "lightning_base_rate.json"
             )
@@ -717,6 +722,7 @@ class FreshMarketPoller(FreshWatchBehaviour):
         state = self.context.state
         queue = FreshQueue(self.params.store_path / "fresh_watch.json")
         yield from self._refresh_base_rate(now)
+        now = time.time()
         poll_s = self._discovery_period()
         if (
             cfg.in_window(now) or queue.pending
@@ -779,6 +785,7 @@ class PreviewDeadlineBehaviour(PreviewMixin, MechInteractBaseBehaviour, ABC):
             )
         ):
             self.stop()
+            self._on_sent_message()
             self._preview_deadline_reached = True
             self.preview_store().answer_failed(
                 db.get_strict("lightning_preview_title"), time.time()
@@ -866,6 +873,24 @@ class FastDecisionBehaviour(PreviewMixin, DecisionMakerBaseBehaviour):
 
     matching_round = FastDecisionRound
 
+    def _restore_preview_market(self, bet: Bet) -> None:
+        """Return the selected market to its normal request path.
+
+        :param bet: market whose consumed preview is now too old.
+        """
+        fields = asdict(bet)
+        row = {key: fields[key] for key in _FIELDS.split() if key in fields}
+        row["condition"] = {"id": bet.condition_id}
+        queue = FreshQueue(self.params.store_path / "fresh_watch.json")
+        pending = {item["id"]: item for item in queue.pending}
+        pending.setdefault(bet.id, row)
+        queue.pending = sorted(
+            pending.values(),
+            key=lambda item: (int(item["creationTimestamp"]), item["id"]),
+        )
+        queue.asked.pop(bet.id, None)
+        queue.save()
+
     def evaluate(self) -> Generator[None, None, Dict[str, Any]]:
         """Build the decision without policy or strategy downloads.
 
@@ -913,7 +938,7 @@ class FastDecisionBehaviour(PreviewMixin, DecisionMakerBaseBehaviour):
         lightning = lightning_controls(self)
         direct = (
             db.get("lightning_probability", None)
-            if lightning.lightning_still_hold
+            if lightning.lightning_still_hold and bet.outcomes == ["Yes", "No"]
             else None
         )
         direct = direct if isinstance(direct, (int, float)) else None
@@ -958,6 +983,7 @@ class FastDecisionBehaviour(PreviewMixin, DecisionMakerBaseBehaviour):
             remove_preview_bets(self)
             return result
         if preview_probability is not None and now - requested_at >= 900:
+            self._restore_preview_market(bet)
             result["reason"] = "preview_expired"
             return result
         if direct is None and preview_probability is None and prediction is None:
@@ -975,6 +1001,10 @@ class FastDecisionBehaviour(PreviewMixin, DecisionMakerBaseBehaviour):
         balances = yield from self._get_pool_balances(
             bet.id, bet.collateralToken, bet.condition_id
         )
+        if preview_probability is not None and time.time() - requested_at >= 900:
+            self._restore_preview_market(bet)
+            result["reason"] = "preview_expired"
+            return result
         if balances is None:
             result["reason"] = "live_price_unavailable"
             return result
@@ -1009,7 +1039,9 @@ class FastDecisionBehaviour(PreviewMixin, DecisionMakerBaseBehaviour):
             cfg,
             bet.fee,
             yes_only=bool(
-                enabled and still_hold_rule(bet.title, bet.creator, lightning)
+                enabled
+                and bet.outcomes == ["Yes", "No"]
+                and still_hold_rule(bet.title, bet.creator, lightning)
             ),
         )
         result.update(asdict(decision))
@@ -1110,6 +1142,7 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
             cfg.lightning_still_hold
             and db.get("lightning_rule", None) == "still_hold_phrase"
             and isinstance(db.get("lightning_probability", None), (int, float))
+            and self.sampled_bet.outcomes == ["Yes", "No"]
         ):
             maximum = cfg.lightning_still_hold_max_price
         return maximum

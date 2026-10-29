@@ -887,7 +887,7 @@ def test_queued_market_expires_before_request(
         patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
         patch(
             "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
-            side_effect=[selected_at, quoted_at],
+            side_effect=[selected_at, selected_at, quoted_at],
         ),
     ):
         sd.return_value.mechs_info = [
@@ -2123,6 +2123,12 @@ def test_lightning_placement_respects_template_price_cap(tmp_path: Any) -> None:
     with (
         patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
         patch.object(
+            type(b),
+            "sampled_bet",
+            new_callable=PropertyMock,
+            return_value=SimpleNamespace(outcomes=["Yes", "No"]),
+        ),
+        patch.object(
             type(b), "investment_amount", new_callable=PropertyMock, return_value=10**18
         ),
     ):
@@ -2763,6 +2769,12 @@ def test_direct_execution_uses_direct_cap_and_retains_edge_and_slip(
     b.quoted_tokens = 2 * 10**18
     with (
         patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch.object(
+            type(b),
+            "sampled_bet",
+            new_callable=PropertyMock,
+            return_value=SimpleNamespace(outcomes=["Yes", "No"]),
+        ),
         patch.object(
             type(b), "investment_amount", new_callable=PropertyMock, return_value=10**18
         ),

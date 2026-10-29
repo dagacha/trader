@@ -42,6 +42,7 @@ def resolved(
         title=title,
         creator=FastConfig().creators[0],
         creationTimestamp=created,
+        outcomes=["Yes", "No"],
         payouts=[1, 0] if payout is None else payout,
     )
 

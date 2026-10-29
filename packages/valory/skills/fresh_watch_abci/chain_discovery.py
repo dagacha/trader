@@ -333,6 +333,8 @@ class ChainDiscoveryMixin:
         """
         market = creation_details(log)
         created = _number(block["timestamp"])
+        if created > now:
+            return None
         if now - created > self.params.fast.fresh_max_age_s:
             return {}
         receipt = yield from self._chain_rpc(
@@ -343,8 +345,14 @@ class ChainDiscoveryMixin:
         if question is None:
             market = yield from self._chain_subgraph_market(market["id"])
             source = "subgraph"
-            if market is None:
+            if (
+                market is None
+                or market.get("outcomeSlotCount") is None
+                or market.get("outcomes") is None
+            ):
                 return None
+            if market["outcomeSlotCount"] != 2 or market["outcomes"] != ["Yes", "No"]:
+                return {}
         else:
             market.update(question, creationTimestamp=created)
             balances = yield from self._chain_pool_balances(
@@ -420,14 +428,13 @@ class ChainDiscoveryMixin:
                 number - self.params.fast.fresh_max_age_s // 5 - 1,
                 state["last_block"] - 2,
             )
+            scanned_head = state.get("scanned_head", state["last_block"])
             orphan_ids = set()
             queue = FreshQueue(self.params.store_path / "fresh_watch.json")
             for pending in queue.pending:
                 if (
                     "block_hash" not in pending
-                    or not overlap_start
-                    <= pending["block_number"]
-                    <= state["last_block"]
+                    or not overlap_start <= pending["block_number"] <= scanned_head
                 ):
                     continue
                 height = pending["block_number"]
@@ -490,6 +497,7 @@ class ChainDiscoveryMixin:
                 self.params.fast.overlap_s,
             )
             queue.save()
+            state["scanned_head"] = _number(head["number"])
             state["last_block"] = (
                 min(state["last_block"], retry_block - 1) if retry_block else last_block
             )

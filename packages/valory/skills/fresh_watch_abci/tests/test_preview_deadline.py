@@ -444,3 +444,90 @@ def test_preview_deadline_reuses_unanswered_slot(tmp_path: Path) -> None:
     assert helpers._form_field(stub.posted_bodies[0], "nonce") == "7"
     assert shared[MECH_SLOT_REGISTRY].live[(chain, safe)] == {7}
     assert shared[MECH_SLOT_ABANDONED] == set()
+
+
+def test_notified_poll_reply_is_cleared_before_deadline_signing(tmp_path: Path) -> None:
+    """A reply queued before expiry must not enter the failure signing wait."""
+    from packages.open_aea.protocols.signing.message import SigningMessage
+
+    behaviour = make(FastMechResponseBehaviour, tmp_path)
+    behaviour.context.params.lightning = LightningConfig(lightning_preview=True)
+    behaviour.context.params.mech_marketplace_config.offchain_poll_timeout_seconds = 900
+    behaviour.context.state.round_sequence.syncing_up = False
+    behaviour.context.shared_state = {}
+    behaviour.setup = lambda: None
+    behaviour._check_round_timeout_fits_poll_budget = lambda: None
+    pending: dict[str, Any] = {
+        "request_id": "ab" * 32,
+        "nonce": 7,
+        "mech_address": "0x" + "aa" * 20,
+        "mech_url": "https://m.test",
+        "sender": "0x" + "bb" * 20,
+        "delivery_rate": 1,
+        "ipfs_hash": "0x" + "cc" * 31,
+        "ipfs_data": "{}",
+        "metadata_nonce": "meta-nonce",
+    }
+    values = {
+        "lightning_preview_request": True,
+        "requested_at": 1000,
+        "lightning_preview_title": "Will event X happen?",
+    }
+    synced = SimpleNamespace(
+        db=SimpleNamespace(
+            get=lambda key, default=None: values.get(key, default),
+            get_strict=lambda key: values[key],
+        ),
+        offchain_pending_request=pending,
+        mech_responses=[MechInteractionResponse(data=pending["request_id"])],
+    )
+    callbacks = []
+    signed = []
+    sent = []
+
+    def http(**_kwargs: Any) -> Any:
+        callbacks.append(behaviour.get_callback_request())
+        return (yield from behaviour.wait_for_message())
+
+    def send(payload: Any) -> Any:
+        sent.append(payload)
+        signed.append((yield from behaviour.get_signature(b"failure payload")))
+
+    behaviour.get_http_response = http
+    behaviour.send_a2a_transaction = send
+    behaviour.wait_until_round_end = lambda: done(None)
+    behaviour._send_signing_request = lambda *_args: callbacks.append(
+        behaviour.get_callback_request()
+    )
+    clock = [1299.0]
+    with (
+        patch.object(
+            type(behaviour),
+            "synchronized_data",
+            new_callable=PropertyMock,
+            return_value=synced,
+        ),
+        patch("time.time", side_effect=lambda: clock[0]),
+    ):
+        behaviour.act()
+        clock[0] = 1299.9
+        callbacks[0](
+            SimpleNamespace(status_code=200, body=b'{"status":"processing"}'), behaviour
+        )
+        assert behaviour.is_notified
+        clock[0] = 1300
+        behaviour.act()
+        assert json.loads(sent[0].information)[-1]["error"] == "preview_deadline"
+        clock[0] = 1300.1
+        behaviour.act()
+        assert signed == []
+        assert behaviour.received_message is None
+        callbacks[1](
+            SimpleNamespace(
+                performative=SigningMessage.Performative.SIGNED_MESSAGE,
+                signed_message=SimpleNamespace(body=b"signature"),
+            ),
+            behaviour,
+        )
+        behaviour.act()
+    assert signed == [b"signature"]
