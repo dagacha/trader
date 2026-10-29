@@ -27,6 +27,10 @@ from aea.contracts.base import Contract
 from aea.crypto.base import LedgerApi
 from aea_ledger_ethereum import EthereumApi
 
+from packages.valory.contracts.market_maker.contract import (
+    FixedProductMarketMakerContract,
+)
+
 PUBLIC_ID = PublicId.from_str("valory/omen_event_reader:0.1.0")
 
 
@@ -69,3 +73,33 @@ class OmenEventReaderContract(Contract):
                 for log in logs
             ]
         }
+
+    @classmethod
+    def get_pool_balances(
+        cls,
+        ledger_api: LedgerApi,
+        contract_address: str,
+        conditional_tokens_address: str,
+        collateral_token: str,
+        condition_id: str,
+    ) -> JSONLike:
+        """Confirm the pool exists before reading its binary token balances.
+
+        :param ledger_api: configured chain ledger.
+        :param contract_address: market maker address.
+        :param conditional_tokens_address: ConditionalTokens contract address.
+        :param collateral_token: market collateral token address.
+        :param condition_id: binary market condition ID.
+        :return: balances, or an empty list when the contract is absent.
+        """
+        ethereum = cast(EthereumApi, ledger_api)
+        address = ethereum.api.to_checksum_address(contract_address)
+        if not ethereum.api.eth.get_code(address):
+            return {"balances": []}
+        return FixedProductMarketMakerContract.get_pool_balances_via_ct(
+            ethereum,
+            contract_address,
+            conditional_tokens_address,
+            collateral_token,
+            condition_id,
+        )

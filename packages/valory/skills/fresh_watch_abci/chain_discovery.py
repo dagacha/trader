@@ -37,6 +37,7 @@ from packages.valory.skills.abstract_round_abci.dialogues import (
     LedgerApiDialogue,
     LedgerApiDialogues,
 )
+from packages.valory.skills.fresh_watch_abci.lightning import preview_enabled
 from packages.valory.skills.fresh_watch_abci.rpc import request_with_timeout
 from packages.valory.skills.fresh_watch_abci.strategy import FreshQueue
 
@@ -191,7 +192,7 @@ def event_scan(
             earliest = max(0, height - reader.params.fast.fresh_max_age_s // 5 - 1)
             if last is None or height > last:
                 firsts.append(earliest if last is None else max(earliest, last - 2))
-        if cfg.lightning_preview:
+        if cfg.lightning_preview and preview_enabled(reader):
             addresses.extend(
                 [
                     to_checksum_address(
@@ -237,12 +238,14 @@ class ChainDiscoveryMixin:
         :return: normalized method result.
         :raises ChainRPCError: on an RPC failure or timeout.
         """
-        if method == "get_logs":
+        if method in {"get_logs", "get_pool_balances"}:
             message_class = ContractApiMessage
             dialogues = cast(ContractApiDialogues, self.context.contract_api_dialogues)
             inputs = dict(
                 contract_id=str(PUBLIC_ID),
-                contract_address=self.params.lightning.omen_fpmm_factory,
+                contract_address=kwargs.pop(
+                    "contract_address", self.params.lightning.omen_fpmm_factory
+                ),
             )
         else:
             message_class = LedgerApiMessage
@@ -269,6 +272,29 @@ class ChainDiscoveryMixin:
         return (
             body["logs"] if method == "get_logs" else body.get(method + "_result", body)
         )
+
+    def _chain_pool_balances(
+        self: Any, market: str, collateral: str, condition: Optional[str]
+    ) -> Generator[None, None, Optional[List[int]]]:
+        """Bound a pool read and distinguish absent contracts from RPC failures.
+
+        :param market: market maker address.
+        :param collateral: collateral token address.
+        :param condition: binary market condition ID.
+        :yield: contract API I/O.
+        :return: balances, an empty list for no contract, or None on read failure.
+        """
+        try:
+            body = yield from self._chain_rpc(
+                "get_pool_balances",
+                contract_address=market,
+                conditional_tokens_address=self.params.conditional_tokens_address,
+                collateral_token=collateral,
+                condition_id=condition,
+            )
+            return cast(List[int], body["balances"])
+        except (ChainRPCError, KeyError, TypeError):
+            return None
 
     def _chain_subgraph_market(
         self: Any, market_id: str
@@ -321,11 +347,13 @@ class ChainDiscoveryMixin:
                 return None
         else:
             market.update(question, creationTimestamp=created)
-            balances = yield from self._get_pool_balances(
+            balances = yield from self._chain_pool_balances(
                 market["id"], market["collateralToken"], market["condition"]["id"]
             )
             if balances is None:
                 raise ChainRPCError("Market pool read failed")
+            if not balances:
+                return {}
             total = sum(balances)
             market.update(
                 outcomeTokenAmounts=balances,

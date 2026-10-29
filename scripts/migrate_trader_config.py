@@ -760,7 +760,7 @@ def rename_fast_tools(text, json_file, env_file=False):
     return "".join(lines), changes
 
 
-def rollback_fast_inputs(text, added, json_file, kind="fast"):
+def rollback_fast_inputs(text, added, json_file, kind="fast", recorded_values=None):
     """Remove recorded fast inputs from quickstart, saved args, and caches."""
     names = {}
     for key in added:
@@ -774,11 +774,31 @@ def rollback_fast_inputs(text, added, json_file, kind="fast"):
         if key == "TM_CHECK_SLEEP_DELAY":
             names["tendermint_check_sleep_delay"] = key
     changes = []
+
+    def keep_edited(key, value):
+        if recorded_values is None:
+            return False
+
+        def parsed(raw):
+            if isinstance(raw, dict):
+                raw = raw.get("value")
+            try:
+                return decode_env(raw) if isinstance(raw, str) else raw
+            except ValueError:
+                return raw.strip("'\"")
+
+        if key not in recorded_values or parsed(value) != parsed(recorded_values[key]):
+            changes.append(f"keep operator value {key}")
+            return True
+        return False
+
     if json_file:
         data = json.loads(text)
         for obj in list(objects(data)):
             for key in list(obj):
                 if key in names:
+                    if keep_edited(names[key], obj[key]):
+                        continue
                     del obj[key]
                     text = remove_json_key(text, data, key)
                     changes.append(f"remove {kind} default {names[key]}")
@@ -793,6 +813,9 @@ def rollback_fast_inputs(text, added, json_file, kind="fast"):
                     if end >= len(lines) or not re.match(r"\s*value:", lines[end]):
                         raise ValueError(f"Missing value for {match[1]}")
                     end += 1
+                value = re.split(r"[:=]", lines[end - 1], maxsplit=1)[1].strip()
+                if keep_edited(names[match[1]], value):
+                    continue
                 del lines[index:end]
                 changes.append(f"remove {kind} default {names[match[1]]}")
         text = "".join(lines)
@@ -989,21 +1012,27 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
             provenance_changes.append("rename provenance TOOLS -> FAST_TOOLS")
     lightning_provenance = quickstart / "configs/.lightning_defaults_added.json"
     lightning_recorded = []
+    lightning_values = {}
     if lightning_provenance.is_file():
         lightning_record = json.loads(lightning_provenance.read_text())
         lightning_recorded = lightning_record["added"]
-        if not isinstance(lightning_recorded, list) or any(
-            key not in LIGHTNING_ENV for key in lightning_recorded
+        lightning_values = lightning_record.get("values", {})
+        if (
+            not isinstance(lightning_recorded, list)
+            or any(key not in LIGHTNING_ENV for key in lightning_recorded)
+            or not isinstance(lightning_values, dict)
+            or any(key not in lightning_recorded for key in lightning_values)
         ):
             raise ValueError(
                 f"Invalid lightning migration provenance: {lightning_provenance}"
             )
     if lightning_mode:
         env = json.loads(config.read_text()).get("env_variables", {})
-        lightning_added = sorted(
-            set(lightning_recorded) | (set(LIGHTNING_ENV) - set(env))
-        )
-        lightning_data = {"added": lightning_added}
+        newly_added = set(LIGHTNING_ENV) - set(env)
+        lightning_added = sorted(set(lightning_recorded) | newly_added)
+        for key in sorted(newly_added):
+            lightning_values.setdefault(key, defaults[key]["value"])
+        lightning_data = {"added": lightning_added, "values": lightning_values}
         lightning_changes = (
             ["record added lightning defaults: " + ", ".join(lightning_added)]
             if not lightning_provenance.is_file()
@@ -1073,7 +1102,11 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
         changes.extend(renamed)
         if lightning_rollback and lightning_recorded:
             updated, removed_changes = rollback_fast_inputs(
-                updated, lightning_recorded, path.suffix == ".json", "lightning"
+                updated,
+                lightning_recorded,
+                path.suffix == ".json",
+                "lightning",
+                lightning_values,
             )
             changes.extend(removed_changes)
         if rollback:

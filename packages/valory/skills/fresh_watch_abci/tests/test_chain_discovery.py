@@ -72,6 +72,8 @@ class Harness(ChainDiscoveryMixin):
         self.params = SimpleNamespace(
             store_path=path,
             mech_chain_id="gnosis",
+            use_offchain=True,
+            conditional_tokens_address="0x" + "12" * 20,
             fast=FastConfig(active_window_utc="00:00-23:59"),
             lightning=SimpleNamespace(
                 lightning_chain_detect=True,
@@ -102,12 +104,9 @@ class Harness(ChainDiscoveryMixin):
             },
             "get_logs": self.logs,
             "get_transaction_receipt": self.receipt,
+            "get_pool_balances": {"balances": [7 * 10**18, 7 * 10**18]},
         }
         return (yield from done(results[method]))
-
-    def _get_pool_balances(self, *args: Any) -> Any:
-        """Return a liquid live pool."""
-        return (yield from done([7 * 10**18, 7 * 10**18]))
 
     def _chain_subgraph_market(self, market_id: str) -> Any:
         """Return a configured last-resort title lookup."""
@@ -310,7 +309,7 @@ def test_one_missing_title_does_not_block_other_markets(tmp_path: Path) -> None:
 def test_pool_rpc_failures_eventually_allow_subgraph_fallback(tmp_path: Path) -> None:
     """Count failed pool reads toward the continuous RPC failure interval."""
     harness: Any = Harness(tmp_path)
-    harness._get_pool_balances = lambda *args: done(None)
+    harness._chain_pool_balances = lambda *args: done(None)
     assert run(harness.chain_markets(CREATED)) == []
     assert run(harness.chain_markets(CREATED + 61)) is None
 
@@ -434,7 +433,7 @@ def test_subgraph_title_fallback_reports_source(tmp_path: Path) -> None:
 def test_empty_pool_has_zero_prices(tmp_path: Path) -> None:
     """Represent an empty pool without dividing by zero."""
     harness: Any = Harness(tmp_path)
-    harness._get_pool_balances = lambda *args: done([0, 0])
+    harness._chain_pool_balances = lambda *args: done([0, 0])
     row = run(harness._chain_market(CREATION, {"timestamp": CREATED}, CREATED))
     assert row["outcomeTokenAmounts"] == [0, 0]
     assert row["outcomeTokenMarginalPrices"] == [0, 0]

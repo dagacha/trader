@@ -65,6 +65,7 @@ def make(cls: Any, tmp_path: Any) -> Any:
     context.state.fast_started_at = 1000
     context.params.mech_marketplace_config.offchain_poll_timeout_seconds = 300
     context.benchmarking_mode.enabled = False
+    context.params.use_offchain = True
     context.params.max_trades = 3
     context.params.placement_min_edge = 0.03
     context.state.synchronized_data.successful_trade_count = 0
@@ -1805,6 +1806,7 @@ def test_estimate_gas_bounded_wait_returns_none_on_deadline(tmp_path: Any) -> No
             gen.send(None)
     assert exc_info.value.value is None
     b.context.outbox.put_message.assert_called_once()
+    b.context.requests.request_id_to_callback.pop("nonce")(None, b)
     assert b.context.requests.request_id_to_callback == {}
 
 

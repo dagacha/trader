@@ -213,7 +213,9 @@ def test_weighted_accuracy(sync_data: SynchronizedData, mocked_db: MagicMock) ->
     mocked_db.get_strict = lambda name: (
         policy_mock if name == policy_db_name else selected_mech_tool
     )
-    mocked_db.get = lambda name, default=None: default
+    mocked_db.get = lambda name, default=None: (
+        selected_mech_tool if name == "mech_tool" else default
+    )
     policy = EGreedyPolicy.deserialize(policy_mock)
     assert selected_mech_tool in policy.weighted_accuracy
     assert sync_data.weighted_accuracy == policy.weighted_accuracy[selected_mech_tool]
@@ -243,6 +245,7 @@ def _wire_db(
     if policy is not None:
         strict["policy"] = policy
     loose = {
+        **strict,
         "selected_tool_key": selected_key,
         "mech_responses": json.dumps([{"nonce": "n", "mech_address": delivering}]),
         "mech_identities": json.dumps(identities) if identities else None,

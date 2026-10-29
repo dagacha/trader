@@ -39,6 +39,7 @@ from packages.valory.skills.fresh_watch_abci.chain_discovery import (
     REQUEST_TOPIC,
     event_scan,
 )
+from packages.valory.skills.fresh_watch_abci.lightning import preview_enabled
 
 PREVIEW_TTL = 15 * 60
 
@@ -346,7 +347,11 @@ class PreviewMixin:
         :yield: cooperative ledger and gateway I/O.
         """
         cfg = self.params.lightning
-        if not cfg.lightning_preview or not self.params.fast.in_window(now):
+        if (
+            not cfg.lightning_preview
+            or not preview_enabled(self)
+            or not self.params.fast.in_window(now)
+        ):
             return
         store = self.preview_store()
         for orphan in store.expire(now):

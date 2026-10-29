@@ -23,7 +23,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import PropertyMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -33,11 +33,13 @@ from packages.valory.skills.fresh_watch_abci.behaviours import (
     FastMechResponseBehaviour,
 )
 from packages.valory.skills.fresh_watch_abci.lightning import LightningConfig
-from packages.valory.skills.fresh_watch_abci.preview import PreviewStore
+from packages.valory.skills.fresh_watch_abci.preview import PreviewMixin, PreviewStore
+from packages.valory.skills.fresh_watch_abci.strategy import FreshQueue
 from packages.valory.skills.fresh_watch_abci.tests.test_behaviours import (
     done,
     evaluate_preview,
     make,
+    run,
 )
 from packages.valory.skills.mech_interact_abci.behaviours.offchain_request import (
     OffchainCycleResult,
@@ -263,3 +265,182 @@ def test_preview_success_can_finish_consensus_after_deadline(tmp_path: Path) -> 
         "failed_at"
         not in PreviewStore(store.path).entries[values["lightning_preview_title"]]
     )
+
+
+def test_preview_requires_offchain_and_logs_once(tmp_path: Path) -> None:
+    """Disable preview discovery, reservations and deadlines on the on-chain route."""
+    from packages.valory.skills.fresh_watch_abci.behaviours import FreshWatchBehaviour
+
+    watch = make(FreshWatchBehaviour, tmp_path)
+    watch.context.shared_state = {}
+    watch.context.params.lightning = LightningConfig(lightning_preview=True)
+    watch.context.params.use_offchain = False
+    watch.context.state.fast_chain_fallback = False
+    watch._fast_tool = lambda: "superforcaster"
+    watch._fetch_fresh = lambda *_args: done([])
+    watch.preview_poll = MagicMock(
+        side_effect=AssertionError("on-chain mode must not poll preview events")
+    )
+    title = "Will event X happen?"
+    store = PreviewStore(tmp_path / "lightning_preview.json")
+    store.ingest({"result": {"questions": [{"question": title}]}}, 990, 990)
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    assert watch._preview_selection(1050) is None
+    assert watch._preview_selection(1051) is None
+    assert run(watch._poll_markets(queue, 1050)) == []
+    run(PreviewMixin.preview_poll(watch, 1050))
+    assert watch._discovery_period() == watch.params.fast.poll_s
+    assert PreviewStore(store.path).counts == {}
+    disabled_logs = [
+        call
+        for call in watch.context.logger.info.call_args_list
+        if "requires USE_OFFCHAIN=true" in str(call)
+    ]
+    assert len(disabled_logs) == 1
+
+    response = make(FastMechResponseBehaviour, tmp_path)
+    response.context.params.lightning = watch.params.lightning
+    response.context.params.use_offchain = False
+    response.context.shared_state = watch.context.shared_state
+    response.context.state.round_sequence.syncing_up = False
+    response.setup = lambda: None
+    ordinary_work = []
+
+    def ordinary_response() -> Any:
+        ordinary_work.append("on-chain")
+        yield from ()
+
+    response.async_act = ordinary_response
+    values = {
+        "lightning_preview_request": True,
+        "requested_at": 1000,
+        "lightning_preview_title": title,
+    }
+    synced = SimpleNamespace(
+        db=SimpleNamespace(
+            get=lambda key, default=None: values.get(key, default),
+            get_strict=lambda key: values[key],
+        )
+    )
+    with (
+        patch.object(
+            type(response),
+            "synchronized_data",
+            new_callable=PropertyMock,
+            return_value=synced,
+        ),
+        patch("time.time", return_value=1300),
+    ):
+        response.act()
+    assert ordinary_work == ["on-chain"]
+    assert "failed_at" not in PreviewStore(store.path).entries[title]
+    watch.context.params.use_offchain = True
+    assert watch._discovery_period() == 5.0
+    selection = watch._preview_selection(1050)
+    assert selection["lane"] == "preview_request"
+    assert list(PreviewStore(store.path).counts.values()) == [1]
+
+
+def test_preview_deadline_reuses_unanswered_slot(tmp_path: Path) -> None:
+    """Keep an accepted slot reserved and let the next request use it once."""
+    from packages.valory.skills.mech_interact_abci.nonce_allocator import (
+        MECH_SLOT_ABANDONED,
+        MECH_SLOT_REGISTRY,
+        note_slot_accepted,
+        reserve_slot,
+    )
+    from packages.valory.skills.mech_interact_abci.tests.behaviours import (
+        test_offchain_request_helpers as helpers,
+    )
+
+    stub = helpers._StubBehaviour(
+        ranked_mechs=[helpers._FakeMechInfo("0x" + "aa" * 20, "https://m.test")],
+        contract_api_responses=[
+            helpers._state_resp({"data": 100}),
+            helpers._state_resp({"data": 7}),
+            helpers._state_resp({"payment_type": helpers._NATIVE_PAYMENT_TYPE}),
+            helpers._state_resp({"max_delivery_rate": 10**16}),
+        ],
+        http_responses=[helpers._make_http_response(200)],
+    )
+    chain = stub.params.mech_chain_id
+    safe = stub.synchronized_data.safe_contract_address
+    shared = stub.context.shared_state
+    reserve_slot(shared, chain=chain, safe=safe, on_chain_nonce=7)
+    note_slot_accepted(shared, chain=chain, safe=safe, slot=7)
+    behaviour = make(FastMechResponseBehaviour, tmp_path)
+    behaviour.context.shared_state = shared
+    behaviour.context.params.lightning = LightningConfig(lightning_preview=True)
+    behaviour.context.params.use_offchain = True
+    behaviour.context.params.mech_chain_id = chain
+    behaviour.context.params.mech_marketplace_config.offchain_poll_timeout_seconds = 900
+    behaviour.context.params.mech_marketplace_config.offchain_poll_interval_seconds = 1
+    behaviour.context.state.round_sequence.syncing_up = False
+    behaviour.setup = lambda: None
+    behaviour._check_round_timeout_fits_poll_budget = lambda: None
+    behaviour.get_http_response = lambda **_kwargs: done(
+        SimpleNamespace(status_code=200, body=b'{"status":"processing"}')
+    )
+
+    def sleep(_seconds: float) -> Any:
+        yield
+
+    behaviour.sleep = sleep
+    sent = []
+
+    def finish(payload: Any) -> Any:
+        sent.append(payload)
+        yield from ()
+
+    behaviour.finish_behaviour = finish
+    values = {
+        "lightning_preview_request": True,
+        "requested_at": 1000,
+        "lightning_preview_title": "Will event X happen?",
+    }
+    pending = {
+        "request_id": "ab" * 32,
+        "nonce": 7,
+        "mech_address": "0x" + "aa" * 20,
+        "mech_url": "https://m.test",
+        "sender": safe,
+        "delivery_rate": 1,
+        "ipfs_hash": "0x" + "cc" * 31,
+        "ipfs_data": "{}",
+        "metadata_nonce": "meta-nonce",
+    }
+    synced = SimpleNamespace(
+        db=SimpleNamespace(
+            get=lambda key, default=None: values.get(key, default),
+            get_strict=lambda key: values[key],
+        ),
+        offchain_pending_request=pending,
+        mech_responses=[MechInteractionResponse(data=pending["request_id"])],
+    )
+    clock = [1299]
+    with (
+        patch.object(
+            type(behaviour),
+            "synchronized_data",
+            new_callable=PropertyMock,
+            return_value=synced,
+        ),
+        patch("time.time", side_effect=lambda: clock[0]),
+        patch("time.monotonic", side_effect=lambda: clock[0]),
+    ):
+        behaviour.act()
+        assert sent == []
+        clock[0] = 1300
+        behaviour.act()
+    assert len(sent) == 1
+    assert json.loads(sent[0].information)[-1]["error"] == "preview_deadline"
+    assert shared.get(MECH_SLOT_ABANDONED) == {(chain, safe, 7)}
+    assert shared[MECH_SLOT_REGISTRY].live[(chain, safe)] == {7}
+    behaviour.context.state.penalize_mech.assert_called_once_with(
+        pending["mech_address"]
+    )
+    result = run(OffchainRequestExecutor(stub)._fresh_cycle())
+    assert result.offchain_result == "offchain_done"
+    assert helpers._form_field(stub.posted_bodies[0], "nonce") == "7"
+    assert shared[MECH_SLOT_REGISTRY].live[(chain, safe)] == {7}
+    assert shared[MECH_SLOT_ABANDONED] == set()

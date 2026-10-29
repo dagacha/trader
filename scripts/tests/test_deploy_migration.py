@@ -3043,35 +3043,10 @@ def test_fast_tools_conflict_requires_kubernetes_value(tail):
         helper(text, False)
 
 
-@pytest.fixture
-def lightning_repo(tmp_path, monkeypatch):
-    """Use an isolated release helper with a known lightning service hash."""
-    repo = tmp_path / "repo"
-    original = SCRIPT.parents[1]
-    for relative in (
-        "scripts/migrate_trader_config.py",
-        "configs/config_omenstrat_fast.json",
-        "configs/config_omenstrat_lightning.json",
-        "packages/packages.json",
-        "packages/valory/services/trader_pearl/service.yaml",
-    ):
-        target = repo / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(original / relative, target)
-    packages = repo / "packages/packages.json"
-    data = json.loads(packages.read_text())
-    data["dev"]["service/valory/omenstrat_lightning/0.1.0"] = "lightning-service-cid"
-    packages.write_text(json.dumps(data))
-    monkeypatch.setattr(
-        sys.modules[__name__], "SCRIPT", repo / "scripts/migrate_trader_config.py"
-    )
-    return repo
-
-
 @pytest.mark.parametrize("rollback", ["omenstrat_fast", "trader_pearl"])
 @pytest.mark.parametrize("explicit", [False, True])
 def test_lightning_defaults_have_separate_reversible_provenance(
-    tmp_path, lightning_repo, rollback, explicit
+    tmp_path, rollback, explicit
 ):
     """Remove added lightning controls from every copy and keep operator inputs."""
     quickstart = tmp_path / "quickstart"
@@ -3123,12 +3098,13 @@ def test_lightning_defaults_have_separate_reversible_provenance(
         assert json.loads(fast_marker.read_text())["added"] == fast_added
 
 
-def test_lightning_hash_selects_defaults_without_service(tmp_path, lightning_repo):
+def test_lightning_hash_selects_defaults_without_service(tmp_path):
     """Apply lightning defaults when the source already has the lightning hash."""
     quickstart = tmp_path / "quickstart"
     paths = fixture(quickstart)
     data = json.loads(paths[0].read_text())
-    data["hash"] = "lightning-service-cid"
+    packages = json.loads((SCRIPT.parents[1] / "packages/packages.json").read_text())
+    data["hash"] = packages["dev"]["service/valory/omenstrat_lightning/0.1.0"]
     data["env_variables"]["MAX_PRICE"] = entry("0.90")
     paths[0].write_text(json.dumps(data))
     run(quickstart)
@@ -3139,7 +3115,7 @@ def test_lightning_hash_selects_defaults_without_service(tmp_path, lightning_rep
 
 @pytest.mark.parametrize("operator", [None, "0.93", "0.97"])
 def test_lightning_keeps_fast_price_default_without_overwriting_operator(
-    tmp_path, lightning_repo, operator
+    tmp_path, operator
 ):
     """Keep the shared price default and preserve operator values on rollback."""
     quickstart = tmp_path / "quickstart"
@@ -3159,12 +3135,47 @@ def test_lightning_keeps_fast_price_default_without_overwriting_operator(
         assert env["MAX_PRICE"]["value"] == (operator or "0.9")
 
 
-def test_lightning_provenance_needs_no_special_fast_price_default(
-    tmp_path, lightning_repo
-):
+def test_lightning_provenance_needs_no_special_fast_price_default(tmp_path):
     """Track lightning controls without a separate normal-price default."""
     quickstart = tmp_path / "quickstart"
     fixture(quickstart)
     run(quickstart, "--service", "omenstrat_lightning")
     marker = quickstart / "configs/.lightning_defaults_added.json"
-    assert set(json.loads(marker.read_text())) == {"added"}
+    assert set(json.loads(marker.read_text())) == {"added", "values"}
+
+
+@pytest.mark.parametrize("rollback", ["omenstrat_fast", "trader_pearl"])
+def test_lightning_rollback_keeps_edited_defaults(tmp_path, rollback):
+    """Keep operator edits across repeated migration and rollback in every copy."""
+    quickstart = tmp_path / "quickstart"
+    paths = fixture(quickstart)
+    saved = quickstart / ".operate/trader-quickstart-config.json"
+    saved.write_text(json.dumps({"user_provided_args": {}}))
+    agent = paths[1].parent / "agent_0.env"
+    agent.write_text("KEEP=yes\n")
+    build = paths[1].parent / "build.yaml"
+    build.write_text("environment:\n  - USE_OFFCHAIN=true\n")
+    run(quickstart, "--service", "omenstrat_lightning")
+    marker = quickstart / "configs/.lightning_defaults_added.json"
+    original = json.loads(marker.read_text())
+    source = json.loads(paths[0].read_text())
+    source["env_variables"]["STILL_HOLD_PRIOR"]["value"] = "0.70"
+    paths[0].write_text(json.dumps(source))
+    run(quickstart, "--service", "omenstrat_lightning")
+    assert json.loads(marker.read_text()) == original
+    output = run(quickstart, "--service", rollback)
+    for path in paths:
+        env = json.loads(path.read_text())["env_variables"]
+        assert env["STILL_HOLD_PRIOR"]["value"] == "0.70"
+        assert "LIGHTNING_PREVIEW" not in env
+    assert (
+        json.loads(saved.read_text())["user_provided_args"]["STILL_HOLD_PRIOR"]
+        == "0.70"
+    )
+    assert "=0.70" in agent.read_text()
+    assert "=0.70" in build.read_text()
+    assert "keep operator value STILL_HOLD_PRIOR" in output
+    assert original["values"]["STILL_HOLD_PRIOR"] == "0.95"
+    marker.write_text(json.dumps({"added": ["STILL_HOLD_PRIOR"], "values": []}))
+    with pytest.raises(ValueError, match="Invalid lightning migration provenance"):
+        run(quickstart, "--service", "omenstrat_lightning")

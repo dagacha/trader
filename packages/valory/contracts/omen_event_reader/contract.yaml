@@ -8,7 +8,7 @@ aea_version: '>=2.0.0, <3.0.0'
 fingerprint:
   __init__.py: bafybeigmrcdrvfdpmkdm734r5b7tfa33627r3l2urwrcffrvcrcwxjwsiq
   build/OmenEventReader.json: bafybeidszosxho2b2j2vt6fxabdhrejyzj72sillclrji6kt2hreb267pa
-  contract.py: bafybeih6ll6wnqjpg5d3h6cat2t6y3vlogkwwzd6576u3fqss3dgsheplm
+  contract.py: bafybeic5ejmev2lqi4ujzegcfv6d5j6uqfxv7nauf4pfxmzwbxtv6ejoeu
 fingerprint_ignore_patterns: []
 class_name: OmenEventReaderContract
 contract_interface_paths:
@@ -16,4 +16,5 @@ contract_interface_paths:
 dependencies:
   open-aea-ledger-ethereum:
     version: ==2.2.9
-contracts: []
+contracts:
+- valory/market_maker:0.1.0:bafybeiaogkujiilubosloromkikuhltgiiadjvtzw2b5p5hc3klzi4m4nq

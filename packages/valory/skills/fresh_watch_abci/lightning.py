@@ -69,6 +69,23 @@ class LightningConfig:
             raise ValueError("Lightning windows and budgets must be positive.")
 
 
+def preview_enabled(behaviour: Any) -> bool:
+    """Require the off-chain route before any preview work.
+
+    :param behaviour: behaviour with the preview controls.
+    :return: whether the configured request route supports previews.
+    """
+    if getattr(behaviour.params, "use_offchain", False) is True:
+        return True
+    shared = behaviour.context.shared_state
+    if shared.get("lightning_preview_disabled") is not True:
+        behaviour.context.logger.info(
+            "[LIGHTNING_PREVIEW] off reason=requires USE_OFFCHAIN=true"
+        )
+        shared["lightning_preview_disabled"] = True
+    return False
+
+
 def still_hold_rule(title: str, creator: str, cfg: LightningConfig) -> Optional[str]:
     """Match the explicit phrase only for a configured creator."""
     if creator.lower() in {

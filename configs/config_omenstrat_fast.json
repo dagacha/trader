@@ -1,6 +1,6 @@
 {
     "name": "omenstrat_fast",
-    "hash": "bafybeihq5v2wrpmiqjlg3zwpokkft4saevxsmwtg2qjdikf2ymiq4gwyve",
+    "hash": "bafybeicni6g5xi2ja5jp2lr4h7wxn22azjflaextxflnxlzfkpu6hlhwq4",
     "description": "Fresh-watch Omen agent with the fixed fast strategy.",
     "image": "https://operate.olas.network/_next/image?url=%2Fimages%2Fprediction-agent.png&w=3840&q=75",
     "service_version": "main",

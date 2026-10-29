@@ -32,7 +32,7 @@ from packages.valory.skills.abstract_round_abci.models import Requests
 def request_with_timeout(
     behaviour: Any, message: Message, dialogue: Dialogue, timeout: float
 ) -> Generator[None, None, Any]:
-    """Poll for a response on scheduler ticks and remove expired callbacks.
+    """Poll on scheduler ticks and retain a discard callback after expiry.
 
     :param behaviour: calling behaviour.
     :param message: ledger or contract API request.
@@ -55,11 +55,11 @@ def request_with_timeout(
     callbacks = cast(Requests, behaviour.context.requests).request_id_to_callback
     callbacks[nonce] = receive
     behaviour.context.outbox.put_message(message=message)
-    try:
-        while not responses:
-            if time.monotonic() >= deadline:
-                raise TimeoutException()
-            yield from behaviour.sleep(0.2)
-        return responses[0]
-    finally:
-        callbacks.pop(nonce, None)
+    while not responses:
+        if time.monotonic() >= deadline:
+            if nonce in callbacks:
+                callbacks[nonce] = lambda _response, _behaviour: None
+            raise TimeoutException()
+        yield from behaviour.sleep(0.2)
+    callbacks.pop(nonce, None)
+    return responses[0]

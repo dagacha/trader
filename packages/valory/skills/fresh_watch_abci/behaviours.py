@@ -82,6 +82,7 @@ from packages.valory.skills.fresh_watch_abci.lightning import (
     BaseRateCache,
     LightningConfig,
     lightning_config,
+    preview_enabled,
     still_hold_rule,
 )
 from packages.valory.skills.fresh_watch_abci.preview import PreviewMixin, preview_night
@@ -110,6 +111,8 @@ from packages.valory.skills.mech_interact_abci.behaviours.offchain_request impor
     OffchainCycleResult,
 )
 from packages.valory.skills.mech_interact_abci.behaviours.offchain_response import (
+    OffchainResponsePoller,
+    _PollSnapshot,
     serialise_responses,
 )
 from packages.valory.skills.mech_interact_abci.payloads import JSONPayload
@@ -146,7 +149,10 @@ def log_decision(behaviour: DecisionMakerBaseBehaviour, result: Dict[str, Any]) 
 def lightning_controls(behaviour: DecisionMakerBaseBehaviour) -> LightningConfig:
     """Read the optional controls for a fast or lightning agent."""
     controls = getattr(behaviour.params, "lightning", None)
-    return controls if isinstance(controls, LightningConfig) else LightningConfig()
+    controls = controls if isinstance(controls, LightningConfig) else LightningConfig()
+    if controls.lightning_preview and not preview_enabled(behaviour):
+        return replace(controls, lightning_preview=False)
+    return controls
 
 
 def remove_preview_bets(behaviour: DecisionMakerBaseBehaviour) -> None:
@@ -583,19 +589,21 @@ class FreshWatchBehaviour(
             self.bets[index].update_market_info(bet)
         self.bets[index].queue_status = QueueStatus.TO_PROCESS
         self.store_bets()
-        balances = yield from self._get_pool_balances(
-            bet.id, bet.collateralToken, bet.condition_id
+        pool_read = (
+            self._chain_pool_balances
+            if "block_hash" in raw
+            else self._get_pool_balances
         )
+        balances = yield from pool_read(bet.id, bet.collateralToken, bet.condition_id)
         requested_at = time.time()
         if (
             balances is None
-            or ("block_hash" in raw and min(balances) <= 0)
+            or ("block_hash" in raw and (not balances or min(balances) <= 0))
             or bet.openingTimestamp <= requested_at
             or requested_at - bet.creationTimestamp > cfg.fresh_max_age_s
         ):
             retry = (
                 balances is None
-                and "block_hash" not in raw
                 and bet.openingTimestamp > requested_at
                 and requested_at - bet.creationTimestamp <= cfg.fresh_max_age_s
             )
@@ -761,7 +769,7 @@ class PreviewDeadlineBehaviour(PreviewMixin, MechInteractBaseBehaviour, ABC):
         if (
             not getattr(self, "_preview_deadline_reached", False)
             and not getattr(self, "_preview_work_finished", False)
-            and self.params.lightning.lightning_preview
+            and lightning_controls(self).lightning_preview
             and db.get("lightning_preview_request", False) is True
             and time.time()
             >= db.get_strict("requested_at")
@@ -804,6 +812,25 @@ class FastMechRequestBehaviour(PreviewDeadlineBehaviour, TraderMechRequestBehavi
         yield from self.finish_behaviour(self._payload_from_offchain_result(result))
 
 
+class PreviewDeadlinePoller(OffchainResponsePoller):
+    """Use normal unanswered handling after a preview's deadline."""
+
+    def _poll_until_terminal(
+        self, mech_url: str, request_id_int_str: str
+    ) -> Generator[None, None, _PollSnapshot]:
+        """Report the expired work through the normal poller path.
+
+        :param mech_url: endpoint of the unanswered mech.
+        :param request_id_int_str: unanswered request identifier.
+        :yield: no further I/O after the deadline.
+        :return: an unanswered preview result.
+        """
+        yield from ()
+        return _PollSnapshot(
+            status="rejected", error="preview_deadline", unanswered=True
+        )
+
+
 class FastMechResponseBehaviour(PreviewDeadlineBehaviour, TraderMechResponseBehaviour):
     """Keep normal response polling and bound paid preview responses."""
 
@@ -812,10 +839,7 @@ class FastMechResponseBehaviour(PreviewDeadlineBehaviour, TraderMechResponseBeha
         if not getattr(self, "_preview_deadline_reached", False):
             yield from super()._run_offchain_response_cycle()
             return
-        responses = [
-            replace(response, result=None, error="preview_deadline")
-            for response in self.synchronized_data.mech_responses
-        ]
+        responses = yield from PreviewDeadlinePoller(self).run()
         payload = JSONPayload(
             self.context.agent_address, serialise_responses(responses)
         )

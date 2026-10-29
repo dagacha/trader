@@ -22,7 +22,7 @@
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from aea.contracts.base import Contract
@@ -34,6 +34,13 @@ from packages.valory.protocols.contract_api import ContractApiMessage
 from packages.valory.protocols.contract_api.serialization import ContractApiSerializer
 from packages.valory.protocols.ledger_api import LedgerApiMessage
 from packages.valory.protocols.ledger_api.serialization import LedgerApiSerializer
+from packages.valory.skills.fresh_watch_abci.tests.test_chain_discovery import (
+    CREATED,
+    CREATION,
+    Harness,
+    done,
+    run,
+)
 
 
 def test_event_reader_loads_as_contract() -> None:
@@ -102,3 +109,50 @@ def test_empty_event_read_is_serializable() -> None:
     assert OmenEventReaderContract.get_logs(ledger, "0x" + "12" * 20, {}) == {
         "logs": []
     }
+
+
+def test_missing_contract_is_reported_without_conditional_token_reads(
+    tmp_path: Path,
+) -> None:
+    """An address with no code is confirmed missing rather than an RPC failure."""
+    ledger: Any = MagicMock()
+    ledger.api.eth.get_code.return_value = HexBytes("0x")
+    body = OmenEventReaderContract.get_pool_balances(
+        ledger, "0x" + "12" * 20, "0x" + "34" * 20, "0x" + "56" * 20, "0x" + "78" * 32
+    )
+    assert body == {"balances": []}
+    ledger.api.eth.contract.assert_not_called()
+    harness: Any = Harness(tmp_path)
+    read = harness._chain_rpc
+
+    def rpc(method: str, **kwargs: Any) -> Any:
+        """Pass the actual no-code result through market materialisation."""
+        if method == "get_pool_balances":
+            return (yield from done(body))
+        return (yield from read(method, **kwargs))
+
+    harness._chain_rpc = rpc
+    assert run(harness._chain_market(CREATION, {"timestamp": CREATED}, CREATED)) == {}
+
+
+def test_present_contract_reads_real_conditional_token_balances() -> None:
+    """Keep funded and zero balances distinct from connection errors."""
+    ledger: Any = MagicMock()
+    ledger.api.eth.get_code.return_value = HexBytes("0x6000")
+    contract = ledger.get_contract_instance.return_value
+    contract.functions.getOutcomeSlotCount.return_value.call.return_value = 2
+    contract.functions.getCollectionId.return_value.call.return_value = bytes(32)
+    contract.functions.balanceOf.return_value.call.side_effect = [7, 0]
+    ledger.api.solidity_keccak.return_value = bytes(32)
+    with patch(
+        "packages.valory.contracts.market_maker.contract.ConditionalTokensContract.get_instance",
+        return_value=contract,
+    ):
+        body = OmenEventReaderContract.get_pool_balances(
+            ledger,
+            "0x" + "12" * 20,
+            "0x" + "34" * 20,
+            "0x" + "56" * 20,
+            "0x" + "78" * 32,
+        )
+    assert body == {"balances": [7, 0]}

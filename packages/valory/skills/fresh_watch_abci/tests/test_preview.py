@@ -165,7 +165,9 @@ def test_preview_disabled_has_no_io(tmp_path: Path) -> None:
     """Leave the fast lane unchanged while preview is off."""
     mixin = PreviewMixin()
     mixin.params = SimpleNamespace(
-        lightning=SimpleNamespace(lightning_preview=False), store_path=tmp_path
+        use_offchain=True,
+        lightning=SimpleNamespace(lightning_preview=False),
+        store_path=tmp_path,
     )
     mixin._chain_rpc = MagicMock(side_effect=AssertionError("unexpected RPC"))
     assert run(mixin.preview_poll(1000)) is None
@@ -229,6 +231,7 @@ def test_chain_delivery_uses_creator_tool_and_gateway(
     }
     mixin = PreviewMixin()
     mixin.params = SimpleNamespace(
+        use_offchain=True,
         lightning=SimpleNamespace(
             lightning_chain_detect=False,
             lightning_preview=True,
@@ -327,6 +330,7 @@ def test_malformed_preview_rpc_becomes_recoverable_error(
 
     mixin = PreviewMixin()
     mixin.params = SimpleNamespace(
+        use_offchain=True,
         lightning=SimpleNamespace(lightning_chain_detect=False, lightning_preview=True),
         fast=SimpleNamespace(in_window=lambda now: True),
         store_path=tmp_path,
@@ -360,6 +364,7 @@ def test_malformed_preview_event_becomes_recoverable_error(tmp_path: Path) -> No
     replies = iter([{"number": 100}, [malformed]])
     mixin = PreviewMixin()
     mixin.params = SimpleNamespace(
+        use_offchain=True,
         lightning=SimpleNamespace(
             lightning_chain_detect=False,
             lightning_preview=True,
@@ -389,6 +394,7 @@ def test_preview_overnight_gap_keeps_recent_scan_window(tmp_path: Path) -> None:
     store.save()
     mixin = PreviewMixin()
     mixin.params = SimpleNamespace(
+        use_offchain=True,
         lightning=SimpleNamespace(
             lightning_chain_detect=False,
             lightning_preview=True,
@@ -451,6 +457,7 @@ def preview_mixin(tmp_path: Path) -> PreviewMixin:
     """Build a preview reader with local state and no external I/O."""
     mixin = PreviewMixin()
     mixin.params = SimpleNamespace(
+        use_offchain=True,
         lightning=SimpleNamespace(
             lightning_chain_detect=False,
             lightning_preview=True,

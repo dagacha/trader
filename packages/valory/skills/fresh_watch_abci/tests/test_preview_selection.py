@@ -129,7 +129,7 @@ def test_preview_expiring_during_quote_uses_normal_request(
         assert FreshQueue(queue.path).asked == {market["id"]: 1800}
 
 
-@pytest.mark.parametrize("balances", [None, [0, 0]])
+@pytest.mark.parametrize("balances", [[], [0, 0]])
 def test_chain_market_without_funded_pool_is_dropped(
     tmp_path: Path, balances: object
 ) -> None:
@@ -148,6 +148,7 @@ def test_chain_market_without_funded_pool_is_dropped(
     behaviour._get_pool_balances = lambda address, *args: done(
         balances if address == market["id"] else [100 * 10**18] * 2
     )
+    behaviour._chain_pool_balances = behaviour._get_pool_balances
     with patch(
         "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
         return_value=1050,

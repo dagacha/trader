@@ -95,6 +95,8 @@ class FreshWatchRound(CollectSameUntilThresholdRound):
             return data, event
         selection = json.loads(data.db.get_strict(self.selection_key))
         lane = selection.pop("lane")
+        if selection.get("lightning_probability") is not None:
+            selection.update(mech_tool=None, selected_tool_key=None)
         data = data.update(
             synchronized_data_class=SynchronizedData,
             tx_submitter=None,
