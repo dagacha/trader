@@ -92,17 +92,19 @@ def test_base_rate_window_floor_and_sample(tmp_path: Any) -> None:
     assert cache.usable(1001 + 86401, cfg) is None
 
 
-def test_base_rate_refresh_outside_window_only(tmp_path: Any) -> None:
+def test_usable_base_rate_refresh_outside_window_only(tmp_path: Any) -> None:
     """Refresh once each day and only outside the active window."""
     cache = BaseRateCache(tmp_path / "rate.json")
-    cfg = LightningConfig(lightning_still_hold=True)
+    cfg = LightningConfig(lightning_still_hold=True, lightning_base_rate_min_n=1)
     fast = FastConfig(active_window_utc="00:00-05:30")
+    cache.update([resolved()], 1001, cfg)
     assert not cache.refresh_due(3600, cfg, fast)
-    assert cache.refresh_due(21600, cfg, fast)
-    cache.update([], 21600, cfg)
-    assert not cache.refresh_due(21601, cfg, fast)
+    assert not cache.refresh_due(21600, cfg, fast)
     assert cache.refresh_due(21600 + 86400, cfg, fast)
-    assert not cache.refresh_due(21600 + 86400, LightningConfig(), fast)
+    cache.update([resolved()], 21600 + 86400, cfg)
+    assert not cache.refresh_due(21601 + 86400, cfg, fast)
+    assert cache.refresh_due(21600 + 172800, cfg, fast)
+    assert not cache.refresh_due(21600 + 172800, LightningConfig(), fast)
 
 
 def test_probability_and_yes_only() -> None:
@@ -259,5 +261,6 @@ def test_base_rate_window_and_clock_must_match(tmp_path: Any) -> None:
     cache.update([resolved()], 1001, cfg)
     assert cache.usable(1000, cfg) is None
     assert cache.usable(1001 + 86400, cfg) == 1
-    assert cache.usable(1001 + 86401, cfg) is None
+    assert cache.usable(1001 + 172800, cfg) == 1
+    assert cache.usable(1001 + 172801, cfg) is None
     assert cache.usable(1001, replace(cfg, lightning_base_rate_window_days=20)) is None

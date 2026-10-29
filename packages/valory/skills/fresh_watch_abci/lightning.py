@@ -115,20 +115,20 @@ class BaseRateCache:
         return self.data.get("rate")
 
     def refresh_due(self, now: float, cfg: LightningConfig, fast: FastConfig) -> bool:
-        """Permit at most one off-window refresh each UTC day."""
+        """Refresh daily, or retry unusable evidence after 30 minutes."""
         try:
             attempted = float(self.path.with_suffix(".attempt.json").read_text())
         except (OSError, ValueError):
             attempted = -86400
-        return (
-            cfg.lightning_still_hold
-            and not fast.in_window(now)
-            and max(attempted, self.data.get("refreshed_at", -86400)) // 86400
-            < int(now) // 86400
-        )
+        if not cfg.lightning_still_hold:
+            return False
+        last = max(attempted, self.data.get("refreshed_at", -86400))
+        if self.usable(now, cfg) is None:
+            return now - last >= 1800
+        return not fast.in_window(now) and last // 86400 < int(now) // 86400
 
     def reserve_refresh(self, now: float) -> None:
-        """Reserve a daily refresh before either behaviour starts HTTP I/O."""
+        """Reserve a refresh before either behaviour starts HTTP I/O."""
         self.path.with_suffix(".attempt.json").write_text(str(now))
 
     def current_rate(self, now: float, cfg: LightningConfig) -> Optional[float]:
@@ -137,23 +137,28 @@ class BaseRateCache:
         if (
             self.data.get("creators") != creators
             or self.data.get("window_days") != cfg.lightning_base_rate_window_days
-            or not 0 <= now - self.data.get("refreshed_at", 0) <= 86400
+            or not 0 <= now - self.data.get("refreshed_at", 0) <= 172800
         ):
             return None
         return self.rate
 
     def usable(self, now: float, cfg: LightningConfig) -> Optional[float]:
         """Disable direct bets for stale, small, or low-rate samples."""
-        if (
-            self.sample < cfg.lightning_base_rate_min_n
-            or self.current_rate(now, cfg) is None
-            or self.rate is None
-            or self.rate < cfg.lightning_base_rate_floor
-            or not 0 <= now - self.data.get("refreshed_at", 0) <= 86400
-            or self.data.get("window_days") != cfg.lightning_base_rate_window_days
-        ):
+        if self.off_reason(now, cfg) is not None:
             return None
         return self.rate
+
+    def off_reason(self, now: float, cfg: LightningConfig) -> Optional[str]:
+        """Explain why the direct still-hold path has no usable evidence."""
+        if self.rate is None:
+            return "missing"
+        if self.current_rate(now, cfg) is None:
+            return "stale"
+        if self.sample < cfg.lightning_base_rate_min_n:
+            return "small"
+        if self.rate < cfg.lightning_base_rate_floor:
+            return "below_floor"
+        return None
 
     def update(
         self, rows: List[Dict[str, Any]], now: float, cfg: LightningConfig

@@ -62,6 +62,8 @@ def make(cls: Any, tmp_path: Any) -> Any:
     context.params.fast = FastConfig(active_window_utc="00:00-23:59")
     context.state.fast_activity_status = None
     context.state.fast_last_poll = 0
+    context.state.fast_started_at = 1000
+    context.params.mech_marketplace_config.offchain_poll_timeout_seconds = 300
     context.benchmarking_mode.enabled = False
     context.params.max_trades = 3
     context.params.placement_min_edge = 0.03
@@ -2398,6 +2400,8 @@ def test_lightning_creator_ingestion_uses_enabled_controls(
     b = make(FreshMarketPoller if background else FreshWatchBehaviour, tmp_path)
     controls: dict[str, Any] = {"lightning_creators": [creator], flag: True}
     b.context.params.lightning = LightningConfig(**controls)
+    b.get_http_response = lambda **kwargs: done(None)
+    b.context.omen_subgraph.process_response.return_value = None
     row = {**raw_market(), "creator": creator}
     b._poll_markets = lambda *args: done([row])
     b._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
@@ -2695,3 +2699,79 @@ def test_failed_or_expired_preview_answer_cannot_trade(
         )
     assert latest.counts == {"night": 1}
     b._get_pool_balances.assert_not_called()
+
+
+def test_direct_still_hold_can_buy_above_fast_price_cap(tmp_path: Any) -> None:
+    """Use the direct cap at .91 and retain the fast cap for other markets."""
+    from dataclasses import replace
+
+    from packages.valory.skills.fresh_watch_abci.lightning import LightningConfig
+
+    b = make(FastDecisionBehaviour, tmp_path)
+    b.context.params.fast = replace(FastConfig(), prior_weight=1.0, price_margin=0)
+    b.context.params.lightning = LightningConfig(lightning_still_hold=True)
+    b._get_pool_balances = lambda *args: done([9 * 10**27, 91 * 10**27])
+    b._get_decision_prediction = lambda: SimpleNamespace(p_yes=0.95)
+    values = dict(
+        requested_at=1050,
+        request_prices=[0.91, 0.09],
+        lightning_probability=0.95,
+        lightning_rule="still_hold_phrase",
+    )
+    raw = raw_market()
+    raw.pop("condition")
+    bet = Bet(**raw, market="omen_subgraph")
+    with (
+        patch.object(
+            type(b), "sampled_bet", new_callable=PropertyMock, return_value=bet
+        ),
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+            return_value=1100,
+        ),
+    ):
+        sd.return_value.db.get_strict.side_effect = values.__getitem__
+        sd.return_value.db.get.side_effect = lambda key, default=None: values.get(
+            key, default
+        )
+        direct = run(b.evaluate())
+        assert direct["stake"] > 0
+        assert direct["price"] == pytest.approx(0.91)
+        assert direct["p_hat"] == 0.95
+        values.pop("lightning_probability")
+        values.pop("lightning_rule")
+        bet.title = "Will event X happen?"
+        ordinary = run(b.evaluate())
+    assert ordinary["stake"] == 0
+    assert ordinary["reason"] == "max_price"
+
+
+def test_direct_execution_uses_direct_cap_and_retains_edge_and_slip(
+    tmp_path: Any,
+) -> None:
+    """Replace only the direct price cap and retain each execution bound."""
+    from packages.valory.skills.fresh_watch_abci.lightning import LightningConfig
+
+    b = make(FastBetPlacementBehaviour, tmp_path)
+    b.context.params.lightning = LightningConfig(lightning_still_hold=True)
+    values = dict(lightning_probability=0.95, lightning_rule="still_hold_phrase")
+    b.quoted_tokens = 2 * 10**18
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch.object(
+            type(b), "investment_amount", new_callable=PropertyMock, return_value=10**18
+        ),
+    ):
+        sd.return_value.db.get.side_effect = lambda key, default=None: values.get(
+            key, default
+        )
+        assert b._execution_max_price() == 0.93
+        assert b._ceiling_min_out(0.95, 0.91) == (0.92, 1086956521739130435)
+        assert b._ceiling_min_out(0.99, 0.91) == (0.93, 1075268817204301076)
+        assert b._ceiling_min_out(0.95, 0.7) == (0.9, 1111111111111111112)
+        values.pop("lightning_probability")
+        assert b._execution_max_price() == 0.9
+        values["lightning_probability"] = 0.95
+        b.context.params.lightning = LightningConfig()
+        assert b._execution_max_price() == 0.9

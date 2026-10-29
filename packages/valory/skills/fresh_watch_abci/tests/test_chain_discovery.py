@@ -76,6 +76,7 @@ class Harness(ChainDiscoveryMixin):
             fast=FastConfig(active_window_utc="00:00-23:59"),
             lightning=SimpleNamespace(
                 lightning_chain_detect=True,
+                lightning_preview=False,
                 lightning_creators=FastConfig().creators,
                 omen_fpmm_factory=FACTORY,
                 lightning_rpc_fallback_s=60,
@@ -193,11 +194,8 @@ def test_chain_filter_cursor_persistence_and_no_replayed_market(tmp_path: Path) 
     filters = next(
         kwargs["filter_params"] for name, kwargs in harness.calls if name == "get_logs"
     )
-    assert filters["address"].lower() == FACTORY.lower()
-    assert filters["topics"] == [
-        CREATION_TOPIC,
-        ["0x" + creator[2:].rjust(64, "0") for creator in FastConfig().creators],
-    ]
+    assert [address.lower() for address in filters["address"]] == [FACTORY.lower()]
+    assert filters["topics"] == [[CREATION_TOPIC]]
     assert filters["fromBlock"] <= BLOCK
     assert len(FreshQueue(tmp_path / "fresh_watch.json").pending) == 1
     harness.context.logger.info.assert_any_call(
@@ -334,7 +332,7 @@ def ledger_harness(tmp_path: Path) -> Any:
 @pytest.mark.parametrize(
     "body,expected",
     [
-        ({"get_logs_result": [CREATION]}, [CREATION]),
+        ({"get_block_result": {"number": BLOCK}}, {"number": BLOCK}),
         ({"number": BLOCK}, {"number": BLOCK}),
     ],
 )
@@ -352,16 +350,14 @@ def test_rpc_helper_uses_own_ledger_and_bounded_wait(
         )
     )
     rows = run(
-        ChainDiscoveryMixin._chain_rpc(
-            harness, "get_logs", filter_params={"fromBlock": BLOCK}
-        )
+        ChainDiscoveryMixin._chain_rpc(harness, "get_block", block_identifier="latest")
     )
     assert rows == expected
     inputs = harness.context.ledger_api_dialogues.create.call_args.kwargs
     assert inputs["ledger_id"] == "ethereum"
-    assert inputs["callable"] == "get_logs"
+    assert inputs["callable"] == "get_block"
     assert inputs["kwargs"].body == {
-        "filter_params": {"fromBlock": BLOCK},
+        "block_identifier": "latest",
         "chain_id": "gnosis",
     }
     harness.wait_for_message.assert_called_once_with(timeout=5.0)
@@ -382,7 +378,7 @@ def test_rpc_helper_reports_ledger_errors(ledger_harness: Any, timeout: bool) ->
         )
     message = "Ledger response timed out" if timeout else "RPC rejected the request"
     with pytest.raises(ChainRPCError, match=message):
-        run(ChainDiscoveryMixin._chain_rpc(ledger_harness, "get_logs"))
+        run(ChainDiscoveryMixin._chain_rpc(ledger_harness, "get_block"))
 
 
 @pytest.mark.parametrize("rows", [[{"id": "market", "title": "Exact title"}], [], {}])
@@ -455,7 +451,7 @@ def test_invalid_get_logs_result_starts_fallback_interval(tmp_path: Path) -> Non
     assert run(harness.chain_markets(CREATED + 61)) is None
     assert not (tmp_path / "fresh_watch.json").exists()
     state = json.loads((tmp_path / "lightning_chain.json").read_text())
-    assert state["last_block"] < BLOCK
+    assert state["last_block"] is None
     assert state["rpc_error_since"] == CREATED
 
 
@@ -503,3 +499,85 @@ def test_overnight_cursor_gap_scans_only_fresh_blocks(tmp_path: Path) -> None:
     assert filters["toBlock"] == BLOCK
     state = json.loads((tmp_path / "lightning_chain.json").read_text())
     assert state["last_block"] == BLOCK
+
+
+def test_chain_and_preview_share_two_idle_rpc_calls(tmp_path: Path) -> None:
+    """Use one head and one merged event scan for an idle discovery tick."""
+    from packages.valory.skills.fresh_watch_abci.preview import (
+        DELIVERY_TOPIC,
+        PROPOSER,
+        PreviewMixin,
+        REQUEST_TOPIC,
+    )
+
+    class CombinedHarness(Harness, PreviewMixin):
+        """Run both pollers with one saved chain."""
+
+    harness: Any = CombinedHarness(tmp_path)
+    harness.logs = []
+    harness.params.lightning.lightning_preview = True
+    marketplace = "0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB"
+    harness.params.mech_marketplace_config = SimpleNamespace(
+        mech_marketplace_address=marketplace
+    )
+    assert run(harness.chain_markets(CREATED + 8)) == []
+    run(harness.preview_poll(CREATED + 8))
+    assert [method for method, _ in harness.calls] == ["get_block", "get_logs"]
+    filters = harness.calls[1][1]["filter_params"]
+    assert {address.lower() for address in filters["address"]} == {
+        FACTORY.lower(),
+        marketplace.lower(),
+        PROPOSER.lower(),
+    }
+    assert filters["topics"] == [[CREATION_TOPIC, REQUEST_TOPIC, DELIVERY_TOPIC]]
+    assert PreviewMixin.preview_store(harness).last_block == BLOCK
+
+
+def test_log_rpc_uses_contract_state_and_bounded_wait(ledger_harness: Any) -> None:
+    """Dispatch nonempty getLogs through the JSON-safe event reader contract."""
+    from packages.valory.protocols.contract_api import ContractApiMessage
+
+    harness = ledger_harness
+    harness.context.contract_api_dialogues = MagicMock()
+    harness.context.contract_api_dialogues.create.return_value = (
+        MagicMock(),
+        MagicMock(),
+    )
+    harness.wait_for_message = lambda timeout: done(
+        SimpleNamespace(
+            performative=ContractApiMessage.Performative.STATE,
+            state=SimpleNamespace(body={"logs": [CREATION]}),
+        )
+    )
+    assert run(
+        ChainDiscoveryMixin._chain_rpc(
+            harness, "get_logs", filter_params={"fromBlock": BLOCK}
+        )
+    ) == [CREATION]
+    harness.context.ledger_api_dialogues.create.assert_not_called()
+    inputs = harness.context.contract_api_dialogues.create.call_args.kwargs
+    assert inputs["performative"] == ContractApiMessage.Performative.GET_STATE
+    assert inputs["contract_id"] == "valory/omen_event_reader:0.1.0"
+    assert inputs["callable"] == "get_logs"
+    assert inputs["kwargs"].body == {
+        "filter_params": {"fromBlock": BLOCK},
+        "chain_id": "gnosis",
+    }
+
+
+def test_shared_rpc_failure_is_not_retried_in_same_tick(tmp_path: Path) -> None:
+    """Keep a failed head read within the per-tick RPC budget."""
+    from packages.valory.skills.fresh_watch_abci.preview import PreviewMixin
+
+    class CombinedHarness(Harness, PreviewMixin):
+        """Share the real scan helper across both callers."""
+
+    harness: Any = CombinedHarness(tmp_path)
+    harness.params.lightning.lightning_preview = True
+    harness.fail = True
+    assert run(harness.chain_markets(CREATED)) == []
+    with pytest.raises(ChainRPCError, match="ledger unavailable"):
+        run(harness.preview_poll(CREATED))
+    assert harness.calls == [("get_block", {"block_identifier": "latest"})]
+    assert run(harness.chain_markets(CREATED + 61)) is None
+    assert len(harness.calls) == 2

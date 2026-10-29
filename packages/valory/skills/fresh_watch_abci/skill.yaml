@@ -8,30 +8,35 @@ aea_version: '>=2.0.0, <3.0.0'
 fingerprint:
   README.md: bafybeieurwex74dtimmmndedzrhznyfivsuaf27lteomz4cz23upjtv2pq
   __init__.py: bafybeihyphnywie3dyf7f7mmwm7yvcwekkgsa4mq5273ojuzbjsznvorv4
-  behaviours.py: bafybeicgk4t5pdlyxwx2dh7l3nfdn43htqsbxso7rph4pblnzutevt6vea
-  chain_discovery.py: bafybeidht4lvoxfhh3bijluqxsbbtasq6z7aqp2txyigqxx4kcefkrcfki
+  behaviours.py: bafybeifzyox4z7hyjeaojhgiieruqy7mmcacetp2ui7zzxvavniw3oy64e
+  chain_discovery.py: bafybeibicg3ybjhdhr2ii5myc65oitwznktvl3gylmsjbe3w2yh47axnbu
   dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
   fsm_specification.yaml: bafybeifhpatx5365ubtse2g6kqo6cjeuzoruf75dv5r5xg27n4wtyrtrbm
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
-  lightning.py: bafybeihvelosw4dmwdt63b7grgplhyhif4xvarojakzf52s76js4avg55i
-  models.py: bafybeia2nckpf7kw5wd3jt66kfsiqocps63o6dhyxpshueq3hy6iekqkjy
-  preview.py: bafybeiglgjdfffeg4lgjetgjzcofuxetzj3acglgwwncaty577yzkayodi
+  lightning.py: bafybeic63pbsi7qrrvpw4q5jdy7f4yo3ji66v3ivmiekms62xdyownhroy
+  models.py: bafybeiapbotwro4vulr6qixqmzcbydj3mzdlh7cvsiztjsdsphunbupda4
+  preview.py: bafybeien2bb5z4rsep3g2uai2u77zx2msypgroqwfnnhjhqxuuby53s5je
   rounds.py: bafybeiejrgeu5do3gc34sqaf24vyhrzp3hin2ylgp6xgnpj3br4prnvrki
   strategy.py: bafybeie6oxcejzwc4j4utc24bfochyinclyzc3vzldrpw6hvnukd6l6aam
   tests/__init__.py: bafybeiebuokdlpgmmm6orggvfnnm537acc3eogkkrn6jyjaxzqyb7t7yzy
   tests/fixtures/chain_creation.json: bafybeibsvrn4ppzzldhqqy4tziri47oxviicqocyoq7hmcs4hgaom7i5ui
   tests/fixtures/question_preview.json: bafybeie2ouuxhajfkeln7cgcjm3c3ngus64jtdg5rjz4pix5rcgrpj3hzq
   tests/fixtures/question_preview_metadata.json: bafybeihhtgcztco4xdf5zgeny6ldafa7pnshaeun74zppc4ygvuutyro3i
-  tests/test_behaviours.py: bafybeihlalkdgsuycgdt4j45xwo7nu5kvrrznaffqcblmk3xaadv3rrq7a
-  tests/test_chain_discovery.py: bafybeidkiq4qqgahhzwk2cbmivlbhgpr2ovzpugwk7llt3l5nb4lunefsq
-  tests/test_lightning.py: bafybeienwbyfcn6skib77shhvkqezbr3tktblmydjbk26hvfjallrtcvpi
+  tests/test_behaviours.py: bafybeia3mb72ehlmt373dstnc52am5mh6itgl2mtgmjhede76q5xpqmooy
+  tests/test_chain_discovery.py: bafybeiblv4gfjgcatty4gytfgdjcydndekxedco4do6pnvhfz6soqgzype
+  tests/test_event_reader.py: bafybeidwrsgtysgsjxca2zclhc5yoaaid5ycseuo3xyzeyqbzkltxuont4
+  tests/test_lightning.py: bafybeicyyfvb226c4fsfanzzdkjhpdb5o7sz7pu37bj5tzzaztanmf5hee
   tests/test_models.py: bafybeifxvfijkhloejaycjcgvbsqesnyqrojoitnjl3rf5ezgolo57eyrq
-  tests/test_preview.py: bafybeidjtx7hr56ygwprvyhowoktvuojhgdlqatae77c2tfyrwyvkkkazq
+  tests/test_preview.py: bafybeibkckmzmgv5pp3onlb4567smoeczi36qh4ptvoldb4vgymxldafzm
+  tests/test_preview_restart.py: bafybeic6t4uvhruohtdwfokj2bk6fdvrfwkzkm6ukcrodstjzbfq2jvls4
+  tests/test_round3_base_rate.py: bafybeicz23oreyc74uq2dp4qt7cij4uf4prrwtht6kxs4btgsftphslfha
   tests/test_rounds.py: bafybeicqdd6ycrhwzt6bwa5zid44egcxcrpd3dqr2tsx5wr3zl2qwomu4q
+  tests/test_rpc_cadence.py: bafybeibpyh2adnxwpnumljf3glid7ddrs6o5yjbnamxrqa7ukyxhmdmhu4
   tests/test_strategy.py: bafybeidg5u2gfkudquygzlit6svpqxspnfc2zvquo6j6kaugttohtdbw5q
 fingerprint_ignore_patterns: []
 connections: []
 contracts:
+- valory/omen_event_reader:0.1.0:bafybeigwkxu23ob6ac4pbmjkqxlndntrmlslrl56rvuo53uq5uryghiymi
 - valory/gnosis_safe:0.1.0:bafybeiek7zs3r5c4wspwwuvnhunc2ddvccbsuy3xccedbjffju5eywp3ju
 protocols:
 - valory/contract_api:1.0.0:bafybeibld2xb5m7kyluiptkamp4nrt6oeomkohz7a3yppbv2oo7qw2e4la

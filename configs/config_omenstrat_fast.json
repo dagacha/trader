@@ -1,6 +1,6 @@
 {
     "name": "omenstrat_fast",
-    "hash": "bafybeihjrf4fd2c4ablmqu3vypkdlytvroxtxwz2jcxxkbxqh22lk4ebbi",
+    "hash": "bafybeigfxza5toyxcnudloobdnz3uarxr4wl4occ2c5vlcu2hzvn67jiye",
     "description": "Fresh-watch Omen agent with the fixed fast strategy.",
     "image": "https://operate.olas.network/_next/image?url=%2Fimages%2Fprediction-agent.png&w=3840&q=75",
     "service_version": "main",
@@ -390,73 +390,73 @@
         },
         "LIGHTNING_STILL_HOLD": {
             "name": "Lightning still hold",
-            "description": "",
+            "description": "Use the resolved still-hold base rate for direct YES bets.",
             "value": "false",
             "provision_type": "user"
         },
         "LIGHTNING_STILL_HOLD_MAX_PRICE": {
             "name": "Lightning still hold max price",
-            "description": "",
+            "description": "Set the price cap for direct still-hold bets.",
             "value": "0.93",
             "provision_type": "user"
         },
         "LIGHTNING_BASE_RATE_WINDOW_DAYS": {
             "name": "Lightning base rate window days",
-            "description": "",
+            "description": "Set the number of days in the resolved-market sample.",
             "value": "21",
             "provision_type": "user"
         },
         "LIGHTNING_BASE_RATE_MIN_N": {
             "name": "Lightning base rate min n",
-            "description": "",
+            "description": "Set the minimum number of valid resolved markets.",
             "value": "60",
             "provision_type": "user"
         },
         "LIGHTNING_BASE_RATE_FLOOR": {
             "name": "Lightning base rate floor",
-            "description": "",
+            "description": "Disable direct still-hold bets below this YES rate.",
             "value": "0.9",
             "provision_type": "user"
         },
         "STILL_HOLD_PRIOR": {
             "name": "Still hold prior",
-            "description": "",
+            "description": "Set the still-hold prior used to blend mech predictions.",
             "value": "0.85",
             "provision_type": "user"
         },
         "LIGHTNING_CHAIN_DETECT": {
             "name": "Lightning chain detect",
-            "description": "",
+            "description": "Detect new Omen markets from chain events.",
             "value": "false",
             "provision_type": "user"
         },
         "OMEN_FPMM_FACTORY": {
             "name": "Omen fpmm factory",
-            "description": "",
+            "description": "Set the Omen factory address used for creation events.",
             "value": "0x9083A2B699c0a4AD06F63580BDE2635d26a3eeF0",
             "provision_type": "user"
         },
         "LIGHTNING_RPC_FALLBACK_S": {
             "name": "Lightning rpc fallback s",
-            "description": "",
+            "description": "Set the RPC failure delay before subgraph fallback in seconds.",
             "value": "60",
             "provision_type": "user"
         },
         "LIGHTNING_PREVIEW": {
             "name": "Lightning preview",
-            "description": "",
+            "description": "Request predictions for proposed questions before markets exist.",
             "value": "false",
             "provision_type": "user"
         },
         "LIGHTNING_PREVIEW_MAX_PER_NIGHT": {
             "name": "Lightning preview max per night",
-            "description": "",
+            "description": "Set the maximum number of paid preview requests per night.",
             "value": "15",
             "provision_type": "user"
         },
         "LIGHTNING_CREATORS": {
             "name": "Lightning creators",
-            "description": "",
+            "description": "Set the creator addresses allowed for lightning discovery and bets.",
             "value": "[\"0x89c5cc945dd550bcffb72fe42bff002429f46fec\",\"0xffc8029154ecd55abed15bd428ba596e7d23f557\"]",
             "provision_type": "user"
         }

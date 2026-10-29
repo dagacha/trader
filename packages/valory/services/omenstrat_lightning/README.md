@@ -9,26 +9,33 @@ The fast, Pearl, and Polymarket services keep their current defaults.
 
 1. An allowed creator and the case-insensitive phrase `\bstill hold\b` qualify
    for a direct YES decision. The agent computes the YES rate from valid resolved
-   Omen markets created in the last 21 days. It refreshes the local cache at most
-   once per day, outside `ACTIVE_WINDOW_UTC`. Fewer than 60 observations or a rate
-   below 0.90 sends the market to the usual Mech path. This path uses the cached
-   prior, or 0.95 if no rate exists. The direct path never buys NO.
+   Omen markets created in the last 21 days. The normal cache refresh runs once
+   per day, outside `ACTIVE_WINDOW_UTC`. Missing or unusable evidence can refresh
+   during the window, with retries at least 30 minutes apart. Samples remain
+   usable for 48 hours. Fewer than 60 observations or a rate below 0.90 sends
+   the market to the usual Mech path. This path uses the cached prior, or 0.95
+   if no rate exists. The direct path never buys NO.
 2. During `ACTIVE_WINDOW_UTC`, the agent scans factory creation events through
-   its configured ledger RPC. It filters the indexed creator. The creation
+   its configured RPC through the contract API and checks each event's creator.
+   One head read and one shared log read cover market and preview discovery.
+   The creation
    receipt links the condition to its Realitio question and title. The subgraph
    supplies a title only if the receipt cannot supply it. Continuous RPC errors
-   for more than 60 seconds enable the normal subgraph poll.
+   for more than 60 seconds enable the normal 15-second subgraph poll.
 3. The agent watches the creators' `propose-question` requests and the proposer
    Mech's deliveries. It reads the delivery from the configured IPFS gateway.
    Each proposed title outside the still-hold template can start the usual
    prediction request before a market exists. Answers use exact titles. Case,
    punctuation, or whitespace changes do not match. Entries expire after
-   15 minutes. Each night permits at most 15 preview requests. Expired previews
+   15 minutes. A pending request can block its market only while it belongs to
+   this process and is within the Mech timeout, capped at five minutes. Each
+   night permits at most 15 preview requests. Expired previews
    whose market never appeared are logged as a paid request without a market.
 
 All decisions use fresh pool balances before sizing and placement. At a base
-rate of 0.95 and `MIN_EDGE=0.03`, the edge permits a ceiling of 0.92. `MAX_PRICE`,
-`LIGHTNING_STILL_HOLD_MAX_PRICE`, and the usual slip bound can lower it.
+rate of 0.95 and `MIN_EDGE=0.03`, the edge permits a ceiling of 0.92. Direct
+still-hold bets use `LIGHTNING_STILL_HOLD_MAX_PRICE` in place of `MAX_PRICE`.
+The usual slip bound can lower the ceiling.
 `PRICE_MARGIN` leaves room when sizing. Placement reuses the existing GS013
 minimum-output calculation and bounded pre-flight simulation. Direct bets count
 against `MAX_TRADES` in the same way as Mech decisions.
@@ -42,7 +49,7 @@ Other values below are the lightning defaults.
 | Environment name | Lightning default | Purpose |
 | --- | --- | --- |
 | `LIGHTNING_STILL_HOLD` | `true` | Enable direct still-hold YES decisions. |
-| `LIGHTNING_STILL_HOLD_MAX_PRICE` | `0.93` | Extra direct-bet price ceiling. |
+| `LIGHTNING_STILL_HOLD_MAX_PRICE` | `0.93` | Direct still-hold price ceiling. |
 | `LIGHTNING_BASE_RATE_WINDOW_DAYS` | `21` | Creation-time sample window. |
 | `LIGHTNING_BASE_RATE_MIN_N` | `60` | Minimum valid resolved sample. |
 | `LIGHTNING_BASE_RATE_FLOOR` | `0.90` | Minimum rate for direct decisions. |
@@ -56,7 +63,7 @@ Other values below are the lightning defaults.
 
 The creators are `0x89c5cc945dd550bcffb72fe42bff002429f46fec` and
 `0xffc8029154ecd55abed15bd428ba596e7d23f557`. The lightning template sets
-`MAX_PRICE=0.93`; fast keeps `MAX_PRICE=0.90`. All other fast controls apply.
+`MAX_PRICE=0.90`, as fast does. All other fast controls apply.
 
 Before release on operate 0.15.5 hosts, add **all 12 names in this table** to
 olas-scripts `patch_agent_env_passthrough.py` `_NAMED_VARS`. A missing name

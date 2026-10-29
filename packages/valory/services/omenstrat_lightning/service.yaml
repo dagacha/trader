@@ -5,9 +5,9 @@ description: A single-agent Omen service using base rates, chain events, and pre
 aea_version: '>=2.0.0, <3.0.0'
 license: Apache-2.0
 fingerprint:
-  README.md: bafybeielckrex66a4jl55x3l2ujpaqp22hymt5x6dldgyki2jwawo5eara
+  README.md: bafybeies7okuzvigsp6gultwlreq6sjsjv5h4j4ziw73uigwesmigkz7eq
 fingerprint_ignore_patterns: []
-agent: valory/omenstrat_lightning:0.1.0:bafybeib24m6k5fxl36344pfqrtvfxpxokjq5foyfi2dntuqfcjjmhv4jri
+agent: valory/omenstrat_lightning:0.1.0:bafybeifsod5wjp2k3jjj4kz3fbrxeececlkymbepvbx7sde5hrzi7cjhua
 number_of_agents: 1
 deployment:
   agent:
@@ -202,7 +202,7 @@ models:
       prior_weight: ${PRIOR_WEIGHT:float:0.5}
       priors: ${PRIORS:dict:{"still_hold":0.85,"numeric_threshold":0.6,"other_event":0.18}}
       min_edge: ${MIN_EDGE:float:0.03}
-      max_price: ${MAX_PRICE:float:0.93}
+      max_price: ${MAX_PRICE:float:0.9}
       no_min_p: ${NO_MIN_P:float:0.7}
       cap: ${CAP:float:4.0}
       kelly_bankroll: ${KELLY_BANKROLL:float:10.0}

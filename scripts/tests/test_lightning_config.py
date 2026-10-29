@@ -117,7 +117,7 @@ def test_lightning_quickstart_enables_controls():
         raw = env[key.upper()]["value"]
         assert (raw if isinstance(default, str) else json.loads(raw)) == default
     assert env["SERVICE_ID"]["value"] == "omenstrat_lightning"
-    assert float(env["MAX_PRICE"]["value"]) == 0.93
+    assert float(env["MAX_PRICE"]["value"]) == 0.9
     service = yaml.safe_load_all(
         (ROOT / "packages/valory/services/omenstrat_lightning/service.yaml").read_text()
     )
@@ -140,3 +140,12 @@ def test_release_accepts_lightning_without_running_release():
     )
     assert result.returncode == 1
     assert result.stderr.strip() == "ERROR: unknown argument: --lightning-test-stop"
+
+
+def test_lightning_keeps_the_fast_price_default():
+    """Use .9 for normal markets in the lightning agent and service."""
+    for relative in (
+        "agents/omenstrat_lightning/aea-config.yaml",
+        "services/omenstrat_lightning/service.yaml",
+    ):
+        assert params(relative)["max_price"] == "${MAX_PRICE:float:0.9}"

@@ -989,18 +989,9 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
             provenance_changes.append("rename provenance TOOLS -> FAST_TOOLS")
     lightning_provenance = quickstart / "configs/.lightning_defaults_added.json"
     lightning_recorded = []
-    lightning_fast_defaults = {}
     if lightning_provenance.is_file():
         lightning_record = json.loads(lightning_provenance.read_text())
         lightning_recorded = lightning_record["added"]
-        lightning_fast_defaults = lightning_record.get("fast_defaults", {})
-        if not isinstance(lightning_fast_defaults, dict) or any(
-            key != "MAX_PRICE" or not isinstance(value, str)
-            for key, value in lightning_fast_defaults.items()
-        ):
-            raise ValueError(
-                f"Invalid lightning migration provenance: {lightning_provenance}"
-            )
         if not isinstance(lightning_recorded, list) or any(
             key not in LIGHTNING_ENV for key in lightning_recorded
         ):
@@ -1013,10 +1004,6 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
             set(lightning_recorded) | (set(LIGHTNING_ENV) - set(env))
         )
         lightning_data = {"added": lightning_added}
-        if "MAX_PRICE" not in env:
-            lightning_fast_defaults["MAX_PRICE"] = defaults["MAX_PRICE"]["value"]
-        if lightning_fast_defaults:
-            lightning_data["fast_defaults"] = lightning_fast_defaults
         lightning_changes = (
             ["record added lightning defaults: " + ", ".join(lightning_added)]
             if not lightning_provenance.is_file()
@@ -1125,18 +1112,6 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                 changes.append(f"hash -> {selected_cid}")
             if fast_mode:
                 data = json.loads(updated)
-                if service == "omenstrat_fast" and lightning_fast_defaults:
-                    for key, added_value in lightning_fast_defaults.items():
-                        current = data.get("env_variables", {}).get(key, {})
-                        if (
-                            isinstance(current, dict)
-                            and current.get("value") == added_value
-                        ):
-                            current["value"] = defaults[key]["value"]
-                            updated = edit_json(updated, data, current["value"])
-                            changes.append(
-                                f"restore fast default {key}={current['value']}"
-                            )
                 if "env_variables" not in data:
                     data["env_variables"] = {}
                     updated = edit_json(updated, data, addition=("env_variables", {}))
@@ -1214,7 +1189,7 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
             dry_run,
             warn_only,
         )
-    if lightning_rollback and (lightning_recorded or lightning_fast_defaults):
+    if lightning_rollback and lightning_recorded:
         write_changes(
             lightning_provenance,
             json.dumps({"added": []}) + "\n",

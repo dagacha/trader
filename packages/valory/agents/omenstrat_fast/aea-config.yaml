@@ -19,6 +19,7 @@ connections:
 - valory/x402:0.1.0:bafybeifhxkt7kaxfotnqnr6w4hxfjnjxf3uumr6psz3felj6pe5astyily
 - valory/polymarket_client:0.1.0:bafybeiaycpfvuukairdzlbqnw6gvxgbdfaqdhcdxxtoszle5fhe67q6zve
 contracts:
+- valory/omen_event_reader:0.1.0:bafybeigwkxu23ob6ac4pbmjkqxlndntrmlslrl56rvuo53uq5uryghiymi
 - valory/gnosis_safe:0.1.0:bafybeiek7zs3r5c4wspwwuvnhunc2ddvccbsuy3xccedbjffju5eywp3ju
 - valory/gnosis_safe_proxy_factory:0.1.0:bafybeigr6ugkp6bxwnbkecktotekcjihabb6eudh3bgcnjfdorwosygile
 - valory/service_registry:0.1.0:bafybeicbfffywnaaehptzasxsdoyguuurpleirsnor5xf7rqk57isjkury
@@ -65,7 +66,7 @@ protocols:
 - valory/srr:0.1.0:bafybeibfs6osw7guctdpollf4iwt4vhd6yk7ai34tqk5djuxtgowjwdjb4
 skills:
 - valory/trader_abci:0.1.0:bafybeicc343vbjzy3tfkvjwufg6y2ik452rv2w5mnx64xtqlghmage3gyu
-- valory/fresh_watch_abci:0.1.0:bafybeibe2cdakkbgadiloa5u7xjkm6dcp5z6eyuaml72sw4t2esdflloqm
+- valory/fresh_watch_abci:0.1.0:bafybeigh74trszzihhzognu2mljwzk7r27o24x4t2jgqyalocy73jqgyxi
 - valory/abstract_abci:0.1.0:bafybeie5et43th2nta76cd3kpm3fmurd7oyzk3qxim76octvt56m6r2poi
 - valory/abstract_round_abci:0.1.0:bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4
 - valory/registration_abci:0.1.0:bafybeicwfwrzdu5kjcjh4ntzgo7dghy5rs4o6ddbwgo2vz7bomi67gn5wa
@@ -75,7 +76,7 @@ skills:
 - valory/tx_settlement_multiplexer_abci:0.1.0:bafybeifcjkilw5l6ruempgcc2xbjxv3cgwqteomdoqdedlfnqppkh55yme
 - valory/market_manager_abci:0.1.0:bafybeicle4v4hbzfitrndz4iezmpzqft7q26eijmzpqpfs7o4ccv7pkfcu
 - valory/decision_maker_abci:0.1.0:bafybeibmczauoonpt5oxrbxhs6ybpmknwkmqpwc7vciv7atrrjclhc3tuy
-- valory/omenstrat_fast_abci:0.1.0:bafybeiausxqhd2etrqefz7zs7witywjxmsatq67i7zrkr5dvlj2pe46tk4
+- valory/omenstrat_fast_abci:0.1.0:bafybeic45fu265cod24ip3u3lvezhfcs2vngvu2byh5td56adm37rxqdtm
 - valory/staking_abci:0.1.0:bafybeihjsvg6qmpcvca24hlj34ppdgnhx6wnbi56ddcnnfdj2p7bg66mii
 - valory/check_stop_trading_abci:0.1.0:bafybeidwkfafnhkew4ylhqwg5pv3y2sakgkl6d6d2q7hjmfrag4xe6pfxq
 - valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m

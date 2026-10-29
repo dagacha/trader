@@ -206,6 +206,7 @@ def test_chain_delivery_uses_creator_tool_and_gateway(
     request_digest = bytes.fromhex("11" * 32)
     delivery_digest = bytes.fromhex("22" * 32)
     request_log = {
+        "address": marketplace,
         "topics": [
             REQUEST_TOPIC,
             "0x" + PROPOSER[2:].zfill(64),
@@ -218,6 +219,7 @@ def test_chain_delivery_uses_creator_tool_and_gateway(
         "blockNumber": "0xbe",
     }
     delivery_log = {
+        "address": PROPOSER,
         "topics": [DELIVERY_TOPIC],
         "data": "0x"
         + encode(
@@ -227,7 +229,11 @@ def test_chain_delivery_uses_creator_tool_and_gateway(
     }
     mixin = PreviewMixin()
     mixin.params = SimpleNamespace(
-        lightning=SimpleNamespace(lightning_preview=True, lightning_creators=[creator]),
+        lightning=SimpleNamespace(
+            lightning_chain_detect=False,
+            lightning_preview=True,
+            lightning_creators=[creator],
+        ),
         fast=SimpleNamespace(in_window=lambda now: True),
         mech_marketplace_config=SimpleNamespace(mech_marketplace_address=marketplace),
         ipfs_address="https://gateway.autonolas.tech/ipfs/",
@@ -247,12 +253,10 @@ def test_chain_delivery_uses_creator_tool_and_gateway(
         if method == "get_block":
             yield from ()
             return {"number": 200, "timestamp": 1000}
-        validate_address(kwargs["filter_params"]["address"])
-        if kwargs["filter_params"]["address"] == marketplace:
-            yield from ()
-            return [request_log]
+        for address in kwargs["filter_params"]["address"]:
+            validate_address(address)
         yield from ()
-        return [delivery_log]
+        return [request_log, delivery_log]
 
     def http(**kwargs: Any) -> Generator[None, None, Any]:
         urls.append(kwargs["url"])
@@ -270,11 +274,7 @@ def test_chain_delivery_uses_creator_tool_and_gateway(
     store = PreviewStore(tmp_path / "lightning_preview.json")
     assert store.next_title(1010) == expected
     assert store.last_block == 200
-    assert calls[1][1]["filter_params"]["topics"] == [
-        REQUEST_TOPIC,
-        "0x" + PROPOSER[2:].zfill(64),
-        ["0x" + creator[2:].zfill(64)],
-    ]
+    assert calls[1][1]["filter_params"]["topics"] == [[REQUEST_TOPIC, DELIVERY_TOPIC]]
     assert (
         urls[0]
         == "https://gateway.autonolas.tech/ipfs/f01701220"
@@ -327,7 +327,7 @@ def test_malformed_preview_rpc_becomes_recoverable_error(
 
     mixin = PreviewMixin()
     mixin.params = SimpleNamespace(
-        lightning=SimpleNamespace(lightning_preview=True),
+        lightning=SimpleNamespace(lightning_chain_detect=False, lightning_preview=True),
         fast=SimpleNamespace(in_window=lambda now: True),
         store_path=tmp_path,
     )
@@ -349,6 +349,7 @@ def test_malformed_preview_event_becomes_recoverable_error(tmp_path: Path) -> No
 
     creator = "0x89c5cc945dd550bcffb72fe42bff002429f46fec"
     malformed = {
+        "address": "0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB",
         "topics": [
             REQUEST_TOPIC,
             "0x" + PROPOSER[2:].zfill(64),
@@ -356,10 +357,14 @@ def test_malformed_preview_event_becomes_recoverable_error(tmp_path: Path) -> No
         ],
         "data": "0x",
     }
-    replies = iter([{"number": 100}, [malformed], []])
+    replies = iter([{"number": 100}, [malformed]])
     mixin = PreviewMixin()
     mixin.params = SimpleNamespace(
-        lightning=SimpleNamespace(lightning_preview=True, lightning_creators=[creator]),
+        lightning=SimpleNamespace(
+            lightning_chain_detect=False,
+            lightning_preview=True,
+            lightning_creators=[creator],
+        ),
         fast=SimpleNamespace(in_window=lambda now: True),
         mech_marketplace_config=SimpleNamespace(
             mech_marketplace_address="0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB"
@@ -385,6 +390,7 @@ def test_preview_overnight_gap_keeps_recent_scan_window(tmp_path: Path) -> None:
     mixin = PreviewMixin()
     mixin.params = SimpleNamespace(
         lightning=SimpleNamespace(
+            lightning_chain_detect=False,
             lightning_preview=True,
             lightning_creators=["0x89c5cc945dd550bcffb72fe42bff002429f46fec"],
         ),
@@ -406,7 +412,7 @@ def test_preview_overnight_gap_keeps_recent_scan_window(tmp_path: Path) -> None:
 
     mixin._chain_rpc = rpc
     run(mixin.preview_poll(100000))
-    assert len(scans) == 2
+    assert len(scans) == 1
     assert all(scan["fromBlock"] == 13820 for scan in scans)
     assert PreviewStore(store.path).last_block == 14000
 
@@ -446,6 +452,7 @@ def preview_mixin(tmp_path: Path) -> PreviewMixin:
     mixin = PreviewMixin()
     mixin.params = SimpleNamespace(
         lightning=SimpleNamespace(
+            lightning_chain_detect=False,
             lightning_preview=True,
             lightning_creators=["0x89c5cc945dd550bcffb72fe42bff002429f46fec"],
         ),
@@ -505,7 +512,11 @@ def test_unrelated_and_removed_events_are_ignored(preview_mixin: PreviewMixin) -
     """Keep tracked requests unchanged when provider events do not qualify."""
     from eth_abi import encode
 
-    from packages.valory.skills.fresh_watch_abci.preview import PROPOSER, REQUEST_TOPIC
+    from packages.valory.skills.fresh_watch_abci.preview import (
+        DELIVERY_TOPIC,
+        PROPOSER,
+        REQUEST_TOPIC,
+    )
 
     request_id = bytes.fromhex("33" * 32)
     request_key = "0x" + request_id.hex()
@@ -520,7 +531,7 @@ def test_unrelated_and_removed_events_are_ignored(preview_mixin: PreviewMixin) -
         2:
     ].zfill(64)
     topics = [REQUEST_TOPIC, "0x" + PROPOSER[2:].zfill(64), creator_topic]
-    request_logs = [
+    request_logs: list[dict[str, Any]] = [
         {"removed": True},
         {"topics": []},
         {"topics": [REQUEST_TOPIC, "0x" + "00" * 32, creator_topic]},
@@ -533,7 +544,7 @@ def test_unrelated_and_removed_events_are_ignored(preview_mixin: PreviewMixin) -
             ),
         },
     ]
-    delivery_logs = [
+    delivery_logs: list[dict[str, Any]] = [
         {"removed": True},
         {
             "data": encode(
@@ -543,7 +554,17 @@ def test_unrelated_and_removed_events_are_ignored(preview_mixin: PreviewMixin) -
         },
         {"data": encode(["bytes32", "uint256", "bytes"], [request_id, 1, b"short"])},
     ]
-    replies = iter([{"number": 200}, request_logs, delivery_logs])
+    request_logs = [
+        dict(
+            log,
+            address=preview_mixin.params.mech_marketplace_config.mech_marketplace_address,
+        )
+        for log in request_logs
+    ]
+    delivery_logs = [
+        dict(log, address=PROPOSER, topics=[DELIVERY_TOPIC]) for log in delivery_logs
+    ]
+    replies = iter([{"number": 200}, request_logs + delivery_logs])
 
     def rpc(method: str, **kwargs: Any) -> Generator[None, None, Any]:
         yield from ()
@@ -568,7 +589,7 @@ def test_poll_expires_orphans_and_old_requests(preview_mixin: PreviewMixin) -> N
     store.reserve(TITLE, 1000, "night", 1)
     store.requests["old"] = {"created_at": 1000, "tool": None}
     store.save()
-    replies = iter([{"number": 200}, [], [], {"number": 200}])
+    replies = iter([{"number": 200}, [], {"number": 200}])
 
     def rpc(method: str, **kwargs: Any) -> Generator[None, None, Any]:
         yield from ()
@@ -593,7 +614,7 @@ def test_invalid_metadata_retries_before_delivery(preview_mixin: PreviewMixin) -
         "tool": None,
     }
     store.save()
-    replies = iter([{"number": 200}, [], [], {"number": 201}, [], []])
+    replies = iter([{"number": 200}, [], {"number": 201}, []])
     bodies = iter([[], {"tool": "propose-question"}])
     urls = []
 
@@ -636,13 +657,10 @@ def test_failed_delivery_retries_then_processes_once(
         [
             {"number": 200},
             [],
-            [],
             {"number": 201},
-            [],
             [],
             {"timestamp": "0x3e8"},
             {"number": 202},
-            [],
             [],
         ]
     )

@@ -19,6 +19,7 @@
 
 """Parameters and state for the fast Omen strategy."""
 
+import time
 from dataclasses import fields
 from typing import Any, Optional, Tuple, Type
 
@@ -169,3 +170,5 @@ class SharedState(TraderSharedState):
         self.fast_last_poll = 0.0
         self.fast_background_running = False
         self.fast_polling = False
+        self.fast_started_at = time.time()
+        self.fast_chain_fallback = False

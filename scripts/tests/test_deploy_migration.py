@@ -3102,7 +3102,7 @@ def test_lightning_defaults_have_separate_reversible_provenance(
         env = json.loads(path.read_text())["env_variables"]
         assert env["LIGHTNING_CHAIN_DETECT"]["value"] == "true"
         assert env["STILL_HOLD_PRIOR"]["value"] == "0.95"
-        assert env["MAX_PRICE"]["value"] == "0.93"
+        assert env["MAX_PRICE"]["value"] == "0.9"
         assert env["LIGHTNING_RPC_FALLBACK_S"]["value"] == ("75" if explicit else "60")
     all_paths = (*paths, saved, agent, marker, fast_marker)
     after = {path: path.read_bytes() for path in all_paths}
@@ -3138,10 +3138,10 @@ def test_lightning_hash_selects_defaults_without_service(tmp_path, lightning_rep
 
 
 @pytest.mark.parametrize("operator", [None, "0.93", "0.97"])
-def test_lightning_price_default_rolls_back_without_overwriting_operator(
+def test_lightning_keeps_fast_price_default_without_overwriting_operator(
     tmp_path, lightning_repo, operator
 ):
-    """Restore the fast price default only when lightning added the value."""
+    """Keep the shared price default and preserve operator values on rollback."""
     quickstart = tmp_path / "quickstart"
     paths = fixture(quickstart)
     if operator == "0.93":
@@ -3157,3 +3157,14 @@ def test_lightning_price_default_rolls_back_without_overwriting_operator(
     for path in paths:
         env = json.loads(path.read_text())["env_variables"]
         assert env["MAX_PRICE"]["value"] == (operator or "0.9")
+
+
+def test_lightning_provenance_needs_no_special_fast_price_default(
+    tmp_path, lightning_repo
+):
+    """Track lightning controls without a separate normal-price default."""
+    quickstart = tmp_path / "quickstart"
+    fixture(quickstart)
+    run(quickstart, "--service", "omenstrat_lightning")
+    marker = quickstart / "configs/.lightning_defaults_added.json"
+    assert set(json.loads(marker.read_text())) == {"added"}

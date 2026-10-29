@@ -222,7 +222,7 @@ class FreshWatchBehaviour(
                 return rows
 
     def _refresh_base_rate(self, now: float) -> Generator[None, None, None]:
-        """Refresh a complete daily sample outside the trading window."""
+        """Refresh daily or recover unusable evidence during the night."""
         cfg = lightning_controls(self)
         cache = BaseRateCache(self.params.store_path / "lightning_base_rate.json")
         if not cache.refresh_due(now, cfg, self.params.fast):
@@ -261,6 +261,8 @@ class FreshWatchBehaviour(
 
     def _discovery_period(self) -> float:
         """Poll each block only while chain detection is enabled."""
+        if self.context.state.fast_chain_fallback is True:
+            return self.params.fast.poll_s
         return (
             5.0
             if lightning_controls(self).lightning_chain_detect
@@ -277,6 +279,7 @@ class FreshWatchBehaviour(
         chain_rows = None
         if controls.lightning_chain_detect:
             chain_rows = yield from self.chain_markets(now)
+            self.context.state.fast_chain_fallback = chain_rows is None
             if chain_rows:
                 return chain_rows
         if controls.lightning_preview:
@@ -497,13 +500,17 @@ class FreshWatchBehaviour(
         lightning = lightning_controls(self)
         candidate = queue.pending[0]
         rule = still_hold_rule(candidate["title"], candidate["creator"], lightning)
-        probability = (
-            BaseRateCache(self.params.store_path / "lightning_base_rate.json").usable(
-                now, lightning
+        probability = None
+        if lightning.lightning_still_hold and rule:
+            base_rate = BaseRateCache(
+                self.params.store_path / "lightning_base_rate.json"
             )
-            if lightning.lightning_still_hold and rule
-            else None
-        )
+            probability = base_rate.usable(now, lightning)
+            if probability is None:
+                self.context.logger.info(
+                    "[LIGHTNING_BASE_RATE] off reason=%s",
+                    base_rate.off_reason(now, lightning),
+                )
         preview = (
             self.preview_store().match(candidate["title"], now)
             if lightning.lightning_preview
@@ -512,8 +519,20 @@ class FreshWatchBehaviour(
         if preview is not None:
             self.preview_log(preview)
             if preview.get("p_yes") is None:
-                yield from self.sleep(1)
-                return {"lane": "wait"}
+                requested_at = preview["requested_at"]
+                timeout = min(
+                    300.0,
+                    self.params.mech_marketplace_config.offchain_poll_timeout_seconds,
+                )
+                if (
+                    self.context.state.fast_started_at < requested_at <= now
+                    and now - requested_at < timeout
+                ):
+                    yield from self.sleep(1)
+                    return {"lane": "wait"}
+                self.preview_store().answer_failed(candidate["title"], now)
+                self.preview_log(preview, "abandoned_request")
+                preview = None
         tool = self._fast_tool()
         if tool is None and probability is None and preview is None:
             self.context.logger.warning("Neither fast prediction tool is available.")
@@ -675,7 +694,7 @@ class FreshMarketPoller(FreshWatchBehaviour):
                 )
             finally:
                 state.fast_polling = False
-        yield from self.sleep(max(1.0, poll_s - (time.time() - now)))
+        yield from self.sleep(max(1.0, self._discovery_period() - (time.time() - now)))
 
 
 class FastDecisionRequestBehaviour(DecisionRequestBehaviour):
@@ -832,7 +851,7 @@ class FastDecisionBehaviour(PreviewMixin, DecisionMakerBaseBehaviour):
             cfg = replace(
                 cfg,
                 prior_weight=1.0,
-                max_price=min(cfg.max_price, lightning.lightning_still_hold_max_price),
+                max_price=lightning.lightning_still_hold_max_price,
             )
         decision = decide(
             bet.title,
@@ -944,7 +963,7 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
             and db.get("lightning_rule", None) == "still_hold_phrase"
             and isinstance(db.get("lightning_probability", None), (int, float))
         ):
-            maximum = min(maximum, cfg.lightning_still_hold_max_price)
+            maximum = cfg.lightning_still_hold_max_price
         return maximum
 
     def _ceiling_min_out(

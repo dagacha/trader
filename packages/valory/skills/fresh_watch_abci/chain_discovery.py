@@ -20,15 +20,19 @@
 """Discover Omen markets through the agent's own ledger connection."""
 
 import json
-from typing import Any, Dict, Generator, List, Optional, cast
+from typing import Any, Dict, Generator, List, Optional, Tuple, Union, cast
 
 from eth_abi import decode
-from eth_utils import to_checksum_address  # type: ignore[import-not-found]
+from eth_utils import keccak, to_checksum_address  # type: ignore[import-not-found]
 
+from packages.valory.contracts.omen_event_reader.contract import PUBLIC_ID
+from packages.valory.protocols.contract_api import ContractApiMessage
 from packages.valory.protocols.ledger_api import LedgerApiMessage
 from packages.valory.skills.abstract_round_abci.base import LEDGER_API_ADDRESS
 from packages.valory.skills.abstract_round_abci.behaviour_utils import TimeoutException
 from packages.valory.skills.abstract_round_abci.dialogues import (
+    ContractApiDialogue,
+    ContractApiDialogues,
     LedgerApiDialogue,
     LedgerApiDialogues,
 )
@@ -39,6 +43,14 @@ from packages.valory.skills.fresh_watch_abci.strategy import FreshQueue
 CREATION_TOPIC = "0x92e0912d3d7f3192cad5c7ae3b47fb97f9c465c1dd12a5c24fd901ddb3905f43"
 CONDITION_TOPIC = "0xab3760c3bd2bb38b5bcf54dc79802ed67338b4cf29f3054ded67ed24661e4177"
 QUESTION_TOPIC = "0xfe2dac156a3890636ce13f65f4fdf41dcaee11526e4a5374531572d92194796c"
+PROPOSER = "0x601024e27f1c67b28209e24272ced8a31fc8151f"
+REQUEST_TOPIC = (
+    "0x"
+    + keccak(text="MarketplaceRequest(address,address,uint256,bytes32[],bytes[])").hex()
+)
+DELIVERY_TOPIC = (
+    "0x" + keccak(text="Deliver(address,address,bytes32,uint256,bytes)").hex()
+)
 MARKET_FIELDS = """id title collateralToken condition { id } creator fee creationTimestamp
 openingTimestamp outcomeSlotCount outcomeTokenAmounts outcomeTokenMarginalPrices
 outcomes scaledLiquidityMeasure"""
@@ -145,6 +157,73 @@ def receipt_question(
     return None
 
 
+def event_scan(
+    reader: Any, now: float
+) -> Generator[None, None, Tuple[Dict[str, Any], List[Dict[str, Any]]]]:
+    """Share one head and one event filter between both pollers in a tick.
+
+    :param reader: cooperative chain reader.
+    :param now: discovery tick timestamp.
+    :yield: ledger or contract API I/O.
+    :return: head block and merged raw events.
+    :raises ChainRPCError: when the event response is not a list.
+    """
+    cached = getattr(reader.context, "lightning_event_scan", None)
+    if cached is not None and cached["now"] == now:
+        if cached.get("error") is not None:
+            raise ChainRPCError(str(cached["error"])) from cached["error"]
+        return cached["head"], cached["logs"]
+    cached = {"now": now}
+    reader.context.lightning_event_scan = cached
+    try:
+        head = yield from reader._chain_rpc("get_block", block_identifier="latest")
+        height = _number(head["number"])
+        cfg = reader.params.lightning
+        firsts = []
+        addresses = []
+        topics = []
+        if cfg.lightning_chain_detect:
+            addresses.append(to_checksum_address(cfg.omen_fpmm_factory))
+            topics.append(CREATION_TOPIC)
+            path = reader.params.store_path / "lightning_chain.json"
+            last = json.loads(path.read_text())["last_block"] if path.exists() else None
+            earliest = max(0, height - reader.params.fast.fresh_max_age_s // 5 - 1)
+            if last is None or height > last:
+                firsts.append(earliest if last is None else max(earliest, last - 2))
+        if cfg.lightning_preview:
+            addresses.extend(
+                [
+                    to_checksum_address(
+                        reader.params.mech_marketplace_config.mech_marketplace_address
+                    ),
+                    to_checksum_address(PROPOSER),
+                ]
+            )
+            topics.extend([REQUEST_TOPIC, DELIVERY_TOPIC])
+            path = reader.params.store_path / "lightning_preview.json"
+            last = json.loads(path.read_text())["last_block"] if path.exists() else 0
+            if height > last:
+                firsts.append(max(last + 1, height - 180, 0))
+        logs = []
+        if firsts:
+            logs = yield from reader._chain_rpc(
+                "get_logs",
+                filter_params={
+                    "address": addresses,
+                    "fromBlock": min(firsts),
+                    "toBlock": height,
+                    "topics": [topics],
+                },
+            )
+            if not isinstance(logs, list):
+                raise ChainRPCError("Invalid getLogs result")
+        cached.update(head=head, logs=logs)
+        return head, logs
+    except (ChainRPCError, TimeoutException, ValueError, KeyError, TypeError) as exc:
+        cached["error"] = exc
+        raise
+
+
 class ChainDiscoveryMixin:
     """Supply chain reads to both the foreground and background market pollers."""
 
@@ -157,18 +236,28 @@ class ChainDiscoveryMixin:
         :return: normalized method result.
         :raises ChainRPCError: on an RPC failure or timeout.
         """
-        dialogues = cast(LedgerApiDialogues, self.context.ledger_api_dialogues)
+        if method == "get_logs":
+            message_class = ContractApiMessage
+            dialogues = cast(ContractApiDialogues, self.context.contract_api_dialogues)
+            inputs = dict(
+                contract_id=str(PUBLIC_ID),
+                contract_address=self.params.lightning.omen_fpmm_factory,
+            )
+        else:
+            message_class = LedgerApiMessage
+            dialogues = cast(LedgerApiDialogues, self.context.ledger_api_dialogues)
+            inputs = dict(args=tuple())
         message, dialogue = dialogues.create(
             counterparty=LEDGER_API_ADDRESS,
-            performative=LedgerApiMessage.Performative.GET_STATE,
+            performative=message_class.Performative.GET_STATE,
             ledger_id=self.context.default_ledger_id,
             callable=method,
-            kwargs=LedgerApiMessage.Kwargs(
+            kwargs=message_class.Kwargs(
                 dict(kwargs, chain_id=self.params.mech_chain_id)
             ),
-            args=tuple(),
+            **inputs,
         )
-        dialogue = cast(LedgerApiDialogue, dialogue)
+        dialogue = cast(Union[ContractApiDialogue, LedgerApiDialogue], dialogue)
         dialogue.terms = self._get_default_terms()
         nonce = self._get_request_nonce_from_dialogue(dialogue)
         cast(Requests, self.context.requests).request_id_to_callback[
@@ -179,10 +268,12 @@ class ChainDiscoveryMixin:
             response = yield from self.wait_for_message(timeout=5.0)
         except TimeoutException as exc:
             raise ChainRPCError("Ledger response timed out") from exc
-        if response.performative != LedgerApiMessage.Performative.STATE:
+        if response.performative != message_class.Performative.STATE:
             raise ChainRPCError(str(response.message))
         body = response.state.body
-        return body.get(method + "_result", body)
+        return (
+            body["logs"] if method == "get_logs" else body.get(method + "_result", body)
+        )
 
     def _chain_subgraph_market(
         self: Any, market_id: str
@@ -289,7 +380,7 @@ class ChainDiscoveryMixin:
             temporary.replace(path)
 
         try:
-            head = yield from self._chain_rpc("get_block", block_identifier="latest")
+            head, logs = yield from event_scan(self, now)
             number = _number(head["number"])
             blocks = {number: head}
             if state["last_block"] is None:
@@ -302,22 +393,6 @@ class ChainDiscoveryMixin:
                 save()
                 return []
             creators = [creator.lower() for creator in cfg.lightning_creators]
-            filters = {
-                "address": to_checksum_address(cfg.omen_fpmm_factory),
-                "fromBlock": max(
-                    0,
-                    state["last_block"] - 2,
-                    number - self.params.fast.fresh_max_age_s // 5 - 1,
-                ),
-                "toBlock": number,
-                "topics": [
-                    CREATION_TOPIC,
-                    ["0x" + creator[2:].rjust(64, "0") for creator in creators],
-                ],
-            }
-            logs = yield from self._chain_rpc("get_logs", filter_params=filters)
-            if not isinstance(logs, list):
-                raise ChainRPCError("Invalid getLogs result")
             rows = []
             last_block = number
             retry_block = None
@@ -326,13 +401,15 @@ class ChainDiscoveryMixin:
                 logs,
                 key=lambda row: (_number(row["blockNumber"]), _number(row["logIndex"])),
             ):
-                if log.get("removed"):
+                if (
+                    log.get("removed")
+                    or _hex(log["address"]) != cfg.omen_fpmm_factory.lower()
+                    or not log["topics"]
+                    or _hex(log["topics"][0]) != CREATION_TOPIC
+                ):
                     continue
                 market = creation_details(log)
-                if (
-                    _hex(log["address"]) != cfg.omen_fpmm_factory.lower()
-                    or market["creator"] not in creators
-                ):
+                if market["creator"] not in creators:
                     continue
                 number = _number(log["blockNumber"])
                 if number not in blocks:

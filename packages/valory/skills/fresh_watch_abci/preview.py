@@ -28,22 +28,19 @@ from typing import Any, Callable, Dict, Generator, List, Optional
 
 from eth_abi import decode
 from eth_abi.exceptions import DecodingError
-from eth_utils import keccak, to_checksum_address  # type: ignore[import-not-found]
 
 from packages.valory.skills.agent_performance_summary_abci.models import (
     write_json_atomically,
 )
-from packages.valory.skills.fresh_watch_abci.chain_discovery import ChainRPCError
+from packages.valory.skills.fresh_watch_abci.chain_discovery import (
+    ChainRPCError,
+    DELIVERY_TOPIC,
+    PROPOSER,
+    REQUEST_TOPIC,
+    event_scan,
+)
 
-PROPOSER = "0x601024e27f1c67b28209e24272ced8a31fc8151f"
 PREVIEW_TTL = 15 * 60
-REQUEST_TOPIC = (
-    "0x"
-    + keccak(text="MarketplaceRequest(address,address,uint256,bytes32[],bytes[])").hex()
-)
-DELIVERY_TOPIC = (
-    "0x" + keccak(text="Deliver(address,address,bytes32,uint256,bytes)").hex()
-)
 
 
 def preview_questions(payload: Any) -> List[str]:
@@ -351,40 +348,33 @@ class PreviewMixin:
         store = self.preview_store()
         for orphan in store.expire(now):
             self.preview_log(orphan, "orphan_fee_loss")
-        block = yield from self._chain_rpc("get_block", block_identifier="latest")
+        block, logs = yield from event_scan(self, now)
         height = _integer(block["number"])
         if height <= store.last_block:
             return
-        first = max(store.last_block + 1, height - 180, 0)
         creators = [
             "0x" + address.lower().removeprefix("0x").zfill(64)
             for address in cfg.lightning_creators
         ]
-        request_logs = yield from self._chain_rpc(
-            "get_logs",
-            filter_params={
-                "address": to_checksum_address(
-                    self.params.mech_marketplace_config.mech_marketplace_address
-                ),
-                "fromBlock": first,
-                "toBlock": height,
-                "topics": [REQUEST_TOPIC, "0x" + PROPOSER[2:].zfill(64), creators],
-            },
-        )
-        delivery_logs = yield from self._chain_rpc(
-            "get_logs",
-            filter_params={
-                "address": to_checksum_address(PROPOSER),
-                "fromBlock": first,
-                "toBlock": height,
-                "topics": [DELIVERY_TOPIC],
-            },
-        )
+        request_logs = []
+        delivery_logs = []
+        for log in logs:
+            if log.get("removed"):
+                continue
+            address = log["address"].lower()
+            topics = [_hex(value) for value in log["topics"]]
+            if (
+                address
+                == self.params.mech_marketplace_config.mech_marketplace_address.lower()
+                and topics
+                and topics[0] == REQUEST_TOPIC
+            ):
+                request_logs.append(log)
+            elif address == PROPOSER and topics and topics[0] == DELIVERY_TOPIC:
+                delivery_logs.append(log)
         # Reload after I/O so foreground reservations are not overwritten.
         store = self.preview_store()
         for log in request_logs:
-            if log.get("removed"):
-                continue
             topics = [_hex(value).lower() for value in log["topics"]]
             if (
                 len(topics) != 3
@@ -406,8 +396,6 @@ class PreviewMixin:
                         },
                     )
         for log in delivery_logs:
-            if log.get("removed"):
-                continue
             request_id, _, data = decode(
                 ["bytes32", "uint256", "bytes"], _bytes(log["data"])
             )
