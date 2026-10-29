@@ -22,11 +22,23 @@
 import json
 import time
 from dataclasses import asdict
-from typing import Any, Callable, Dict, Generator, List, Optional
+from fractions import Fraction
+from typing import Any, Callable, Dict, Generator, List, Optional, Tuple, cast
 
+from eth_abi import encode
+from eth_utils import to_checksum_address  # type: ignore[import-not-found]
+
+from packages.valory.contracts.gnosis_safe.contract import SafeOperation
 from packages.valory.protocols.contract_api.message import ContractApiMessage
+from packages.valory.protocols.ledger_api import LedgerApiMessage
+from packages.valory.skills.abstract_round_abci.base import LEDGER_API_ADDRESS
 from packages.valory.skills.abstract_round_abci.behaviour_utils import TimeoutException
 from packages.valory.skills.abstract_round_abci.behaviours import AbstractRoundBehaviour
+from packages.valory.skills.abstract_round_abci.dialogues import (
+    LedgerApiDialogue,
+    LedgerApiDialogues,
+)
+from packages.valory.skills.abstract_round_abci.models import Requests
 from packages.valory.skills.agent_performance_summary_abci.activity_goal import (
     read_successful_trade_count_state,
 )
@@ -38,6 +50,7 @@ from packages.valory.skills.check_stop_trading_abci.behaviours import (
 )
 from packages.valory.skills.decision_maker_abci.behaviours.base import (
     DecisionMakerBaseBehaviour,
+    SAFE_GAS,
 )
 from packages.valory.skills.decision_maker_abci.behaviours.bet_placement import (
     BetPlacementBehaviour,
@@ -79,6 +92,11 @@ from packages.valory.skills.staking_abci.rounds import StakingState
 _FIELDS = """id title collateralToken condition { id } creator fee creationTimestamp
 openingTimestamp outcomeSlotCount outcomeTokenAmounts outcomeTokenMarginalPrices
 outcomes scaledLiquidityMeasure"""
+
+# Bounded response deadline for the fast-lane preflight estimate_gas call.
+# Short enough to leave headroom under the placement-round timeout; long
+# enough to cover one healthy RPC round-trip across the configured endpoints.
+_PREFLIGHT_TIMEOUT_S = 5.0
 
 
 def log_decision(behaviour: DecisionMakerBaseBehaviour, result: Dict[str, Any]) -> None:
@@ -524,11 +542,15 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
 
     _placement_failure = "other"
     _executed_price: Optional[float] = None
+    _price_ceiling: Optional[float] = None
+    _min_tokens_out: Optional[int] = None
 
     def async_act(self) -> Generator:
         """Clear quote state before each placement attempt."""
         self._placement_failure = "other"
         self._executed_price = None
+        self._price_ceiling = None
+        self._min_tokens_out = None
         yield from super().async_act()
 
     def _get_decision_prediction(self) -> Optional[PredictionResponse]:
@@ -550,6 +572,8 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
         """
         self._placement_failure = "quote"
         self._executed_price = None
+        self._price_ceiling = None
+        self._min_tokens_out = None
         success = yield from super()._calc_buy_amount()
         if not success or self.quoted_tokens <= 0:
             return False
@@ -566,7 +590,142 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
             self._placement_failure = "max_slip"
             return False
         self._placement_failure = "edge_recheck"
+        prediction = self._get_decision_prediction()
+        if prediction is None:
+            return False
+        p_side = prediction.p_yes if self.outcome_index == 0 else prediction.p_no
+        bounds = self._ceiling_min_out(p_side, requested)
+        if bounds is None:
+            return False
+        self._price_ceiling, self.buy_amount = bounds
+        self._min_tokens_out = self.buy_amount
         return True
+
+    def _ceiling_min_out(
+        self, p_side: float, requested_price: float
+    ) -> Optional[Tuple[float, int]]:
+        """Keep the enforced edge when the pool moves before execution.
+
+        :param p_side: calibrated probability for the chosen outcome.
+        :param requested_price: price when the prediction was requested.
+        :return: price ceiling and minimum tokens, or None if no margin remains.
+        """
+        cfg = self.params.fast
+        ceiling = min(
+            Fraction(str(cfg.max_price)),
+            Fraction(str(requested_price)) + Fraction(str(cfg.max_slip)),
+            Fraction(str(p_side)) - Fraction(str(self.params.placement_min_edge)),
+        )
+        if ceiling <= Fraction(self.investment_amount, self.quoted_tokens):
+            return None
+        numerator = self.investment_amount * ceiling.denominator
+        min_out = (numerator + ceiling.numerator - 1) // ceiling.numerator
+        return float(ceiling), min(min_out, self.quoted_tokens)
+
+    def _preflight_ok(self) -> Generator[None, None, bool]:
+        """Estimate this owner's Safe call before submitting it for settlement.
+
+        :yield: ledger API I/O.
+        :return: False for a revert; True for success or an unrelated RPC error.
+        """
+        owner = self.context.agent_address
+        signature = bytes.fromhex(owner[2:]).rjust(32, b"\0") + bytes(32) + b"\1"
+        zero_address = "0x" + "00" * 20
+        # Encode the Safe execTransaction call with the approved owner signature.
+        data = bytes.fromhex("6a761202") + encode(
+            [
+                "address",
+                "uint256",
+                "bytes",
+                "uint8",
+                "uint256",
+                "uint256",
+                "uint256",
+                "address",
+                "address",
+                "bytes",
+            ],
+            [
+                self.params.multisend_address,
+                self.txs_value,
+                self.multisend_data,
+                SafeOperation.DELEGATE_CALL.value,
+                SAFE_GAS,
+                0,
+                0,
+                zero_address,
+                zero_address,
+                signature,
+            ],
+        )
+        # Web3 rejects a lowercase address with hex letters before issuing the
+        # estimate; checksum here so a valid Safe address never bypasses the check.
+        safe_address = to_checksum_address(self.synchronized_data.safe_contract_address)
+        transaction = {
+            "from": owner,
+            "to": safe_address,
+            "data": "0x" + data.hex(),
+        }
+        # With safeTxGas and gasPrice zero, Safe turns a false execution into GS013.
+        response = yield from self._estimate_gas(transaction, self.params.mech_chain_id)
+        if response is None:
+            error = "preflight deadline expired"
+        elif response.performative == LedgerApiMessage.Performative.STATE:
+            return bool(response.state.body.get("estimate_gas_result"))
+        else:
+            error = response.message or "unknown ledger error"
+        if "revert" in error.lower() or "GS013" in error:
+            return False
+        self.context.logger.warning(
+            "Fast bet preflight RPC error; proceeding: %s", error
+        )
+        return True
+
+    def _estimate_gas(
+        self, transaction: Dict[str, Any], chain_id: str
+    ) -> Generator[None, None, Optional[LedgerApiMessage]]:
+        """Issue estimate_gas and bound the wait for the ledger reply.
+
+        :param transaction: estimate target with from, to and data fields.
+        :param chain_id: ledger chain id.
+        :yield: ledger API I/O.
+        :return: the ledger response, or None once the preflight deadline expires.
+        """
+        dialogues = cast(LedgerApiDialogues, self.context.ledger_api_dialogues)
+        message, dialogue = dialogues.create(
+            counterparty=LEDGER_API_ADDRESS,
+            performative=LedgerApiMessage.Performative.GET_STATE,  # type: ignore[arg-type]
+            ledger_id=self.context.default_ledger_id,
+            callable="estimate_gas",
+            kwargs=LedgerApiMessage.Kwargs(
+                {"transaction": transaction, "chain_id": chain_id}
+            ),
+            args=tuple(),
+        )
+        dialogue = cast(LedgerApiDialogue, dialogue)
+        dialogue.terms = self._get_default_terms()
+        nonce = self._get_request_nonce_from_dialogue(dialogue)
+        cast(Requests, self.context.requests).request_id_to_callback[
+            nonce
+        ] = self.get_callback_request()
+        self.context.outbox.put_message(message=message)
+        try:
+            response = yield from self.wait_for_message(timeout=_PREFLIGHT_TIMEOUT_S)
+        except TimeoutException:
+            return None
+        return response
+
+    def _prepare_safe_tx(self) -> Generator[None, None, Optional[str]]:
+        """Skip a prepared fast bet if the Safe execution would revert.
+
+        :yield: contract and ledger API I/O.
+        :return: settlement payload or None for a failed placement.
+        """
+        tx_hex = yield from super()._prepare_safe_tx()
+        if tx_hex is not None and not (yield from self._preflight_ok()):
+            self._placement_failure = "preflight_revert"
+            return None
+        return tx_hex
 
     def finish_behaviour(self, payload: Any) -> Generator:
         """Log the final bet preparation outcome once.
@@ -588,6 +747,8 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
             "request_prices"
         )[self.outcome_index]
         result["executed_price"] = self._executed_price
+        result["price_ceiling"] = self._price_ceiling
+        result["min_tokens_out"] = self._min_tokens_out
         result["price"] = None
         result["edge"] = None
         if self._executed_price is not None:
