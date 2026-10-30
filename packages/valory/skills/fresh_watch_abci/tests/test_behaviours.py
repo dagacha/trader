@@ -2825,3 +2825,69 @@ def test_direct_execution_uses_direct_cap_and_retains_edge_and_slip(
         values["lightning_probability"] = 0.95
         b.context.params.lightning = LightningConfig()
         assert b._execution_max_price() == 0.9
+
+
+@pytest.mark.parametrize(
+    "background,appears", [(True, True), (True, False), (False, True)]
+)
+def test_idle_watch_wakes_on_queued_market(
+    tmp_path: Any, background: bool, appears: bool
+) -> None:
+    """Wake the idle watch when the background poller queues a market."""
+    b = make(FreshWatchBehaviour, tmp_path)
+    b.context.state.fast_background_running = background
+    b.context.state.fast_polling = False
+    b.context.state.fast_last_poll = 1050
+    b._discovery_period = lambda: FastConfig().poll_s
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    queue.last_housekeeping = 1050
+    queue.save()
+    delays: list[float] = []
+
+    def sleep(delay: float) -> Any:
+        delays.append(delay)
+        if appears and len(delays) == 2:
+            queued = FreshQueue(queue.path)
+            queued.pending = [raw_market()]
+            queued.save()
+        return done(None)
+
+    b.sleep = sleep
+    with patch(
+        "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+        return_value=1050,
+    ):
+        assert run(b.select())["lane"] == "wait"
+    poll_s = FastConfig().poll_s
+    expected = [1, 1] if appears else [1] * poll_s
+    assert delays == (expected if background else [poll_s])
+
+
+@pytest.mark.parametrize(
+    "count,met,reads_expected",
+    [(3, False, 2), (3, True, 1), (1, False, 1)],
+)
+def test_capped_activity_status_refreshes_until_target_met(
+    tmp_path: Any, count: int, met: bool, reads_expected: int
+) -> None:
+    """Recompute a capped unmet target each round; else reuse the cache."""
+    b = make(FreshWatchBehaviour, tmp_path)
+    from packages.valory.skills.abstract_round_abci.base import AbciAppDB
+    from packages.valory.skills.decision_maker_abci.states.base import SynchronizedData
+
+    b.context.state.synchronized_data = SynchronizedData(
+        AbciAppDB(setup_data={"previous_checkpoint": [100]})
+    )
+    (tmp_path / "successful_trade_count.txt").write_text(
+        json.dumps(dict(count=count, placement_keys=[], period_start=100))
+    )
+    b._select = lambda *args: done({"lane": "wait"})
+    reads = MagicMock(side_effect=lambda: done((met, met, 8, 8 if met else 3)))
+    b._compute_activity_status = reads
+    with patch(
+        "packages.valory.skills.fresh_watch_abci.behaviours.time.monotonic",
+        return_value=10,
+    ):
+        run(b.select())
+        run(b.select())
+    assert reads.call_count == reads_expected

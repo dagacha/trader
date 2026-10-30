@@ -358,8 +358,16 @@ class FreshWatchBehaviour(
         cache = self.context.state.fast_activity_status
         now = time.monotonic()
         count = None
+        # Mech requests after the trade cap do not change the trade count, so
+        # recompute the activity target until it is met.
+        capped_unmet = (
+            cache is not None
+            and 0 < self.params.max_trades <= cache[3]
+            and not cache[2][1]
+        )
         if (
             cache is not None
+            and not capped_unmet
             and cache[1] == self.synchronized_data.previous_checkpoint
             and now - cache[0] < self.params.fast.housekeeping_interval_s
         ):
@@ -544,7 +552,14 @@ class FreshWatchBehaviour(
                 queue.last_housekeeping = now
                 queue.save()
                 return {"lane": "housekeeping"}
-            yield from self.sleep(cfg.poll_s)
+            if self.context.state.fast_background_running is not True:
+                yield from self.sleep(cfg.poll_s)
+                return {"lane": "wait"}
+            # Wake as soon as the background poller queues a market.
+            for _ in range(cfg.poll_s):
+                yield from self.sleep(1)
+                if FreshQueue(queue.path).pending:
+                    break
             return {"lane": "wait"}
 
         lightning = lightning_controls(self)
