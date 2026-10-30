@@ -56,6 +56,7 @@ class PolymarketSwapUsdcBehaviour(DecisionMakerBaseBehaviour):
 
     def async_act(self) -> Generator:
         """Implement the act."""
+        yield from self.wait_for_lightning_lane()
         with self.context.benchmark_tool.measure(self.behaviour_id).local():
             agent = self.context.agent_address
             if not self.params.is_running_on_polymarket:

@@ -2891,3 +2891,80 @@ def test_capped_activity_status_refreshes_until_target_met(
         run(b.select())
         run(b.select())
     assert reads.call_count == reads_expected
+
+
+@pytest.mark.parametrize("remembered", ["shared", "durable"])
+def test_lane_mined_market_is_not_selected(tmp_path: Any, remembered: str) -> None:
+    """Do not select a mined lane market again after discovery or restart."""
+    from packages.valory.skills.fresh_watch_abci.lightning import LightningConfig
+
+    b = make(FreshWatchBehaviour, tmp_path)
+    b.context.params.lightning = LightningConfig(lightning_lane=True)
+    b.context.shared_state = (
+        {"lightning_lane_bet_markets": {"market"}} if remembered == "shared" else {}
+    )
+    b.context.state.fast_background_running = True
+    b.context.state.fast_last_poll = 1050
+    b._refresh_base_rate = lambda now: done(None)
+    b._fast_tool = lambda: "superforcaster"
+    b._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
+    raw = raw_market()
+    raw.pop("question")
+    raw.pop("condition")
+    bet = Bet(**raw, market="omen_subgraph")
+    if remembered == "durable":
+        bet.investments["Yes"] = [4 * 10**18]
+        b.bets = [bet]
+        b.store_bets()
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    queue.pending = [raw_market()]
+    queue.save()
+    with patch("time.time", return_value=1050):
+        assert run(b._select(False, True)) == {"lane": "wait"}
+    assert FreshQueue(queue.path).pending == []
+
+
+def test_fast_placement_waits_then_skips_lane_mined_market(tmp_path: Any) -> None:
+    """Re-read the selected bet after the in-flight lane shot finishes."""
+    from packages.valory.skills.decision_maker_abci.behaviours.bet_placement import (
+        BetPlacementBehaviour,
+    )
+    from packages.valory.skills.fresh_watch_abci.lightning import LightningConfig
+
+    b = make(FastBetPlacementBehaviour, tmp_path)
+    b.context.params.lightning = LightningConfig(lightning_lane=True)
+    b.context.shared_state = {}
+    raw = raw_market()
+    raw.pop("question")
+    raw.pop("condition")
+    bet = Bet(**raw, market="omen_subgraph")
+    events: list[Any] = []
+
+    def guard() -> Any:
+        events.append("wait")
+        yield
+        bet.investments["Yes"] = [4 * 10**18]
+
+    b.wait_for_lightning_lane = guard
+
+    def finish(payload: Any) -> Any:
+        events.append(payload)
+        return done(None)
+
+    b.finish_behaviour = finish
+    with (
+        patch.object(
+            type(b), "sampled_bet", new_callable=PropertyMock, return_value=bet
+        ),
+        patch.object(
+            BetPlacementBehaviour,
+            "async_act",
+            side_effect=AssertionError("duplicate FSM buy"),
+        ),
+    ):
+        generator = b.async_act()
+        assert next(generator) is None
+        run(generator)
+    assert events[0] == "wait"
+    assert events[1].tx_hash is None
+    assert b._placement_failure == "lane_already_bet"

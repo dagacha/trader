@@ -19,13 +19,16 @@
 
 """Behaviours for the composed fast Omen agent."""
 
-from typing import List
+from typing import List, Optional
 
 from packages.valory.skills.fresh_watch_abci.behaviours import (
     FastMechRequestBehaviour,
     FastMechResponseBehaviour,
     FreshMarketPoller,
     FreshWatchRoundBehaviour,
+)
+from packages.valory.skills.fresh_watch_abci.lane_behaviour import (
+    LightningLaneBehaviour,
 )
 from packages.valory.skills.mech_interact_abci.behaviours.mech_info import (
     MechInformationBehaviour,
@@ -35,7 +38,10 @@ from packages.valory.skills.omenstrat_fast_abci.composition import (
     OmenstratFastAbciApp,
 )
 from packages.valory.skills.termination_abci.behaviours import TerminationAbciBehaviours
-from packages.valory.skills.trader_abci.behaviours import TraderConsensusBehaviour
+from packages.valory.skills.trader_abci.behaviours import (
+    TraderBackgroundBehaviour,
+    TraderConsensusBehaviour,
+)
 from packages.valory.skills.transaction_settlement_abci.behaviours import (
     ValidateTransactionBehaviour,
 )
@@ -91,6 +97,11 @@ class OmenstratFastConsensusBehaviour(TraderConsensusBehaviour):
     # Termination also supplies the upstream validator; keep the trader's
     # receipt check so a reverted transaction fails fast here too.
     behaviours.discard(ValidateTransactionBehaviour)
+    behaviours = {
+        behaviour
+        for behaviour in behaviours
+        if behaviour.matching_round is not TraderBackgroundBehaviour.matching_round
+    } | {TraderBackgroundBehaviour}
 
     def setup(self) -> None:
         """Set up the foreground FSM and its cooperative market poller."""
@@ -98,17 +109,27 @@ class OmenstratFastConsensusBehaviour(TraderConsensusBehaviour):
         self.discovery = FreshMarketPoller(
             name="fresh_market_poller", skill_context=self.context
         )
+        self.lightning_lane: Optional[LightningLaneBehaviour] = None
+        if self.context.params.lightning.lightning_lane is True:
+            self.lightning_lane = LightningLaneBehaviour(
+                name="lightning_lane", skill_context=self.context
+            )
         self.context.state.fast_background_running = True
 
     def _background_act(self) -> None:
         """Drive discovery even while a Mech request or settlement waits."""
         super()._background_act()
         self.discovery.act_wrapper()
+        if self.lightning_lane is not None:
+            self.lightning_lane.act_wrapper()
 
     def teardown(self) -> None:
         """Stop the poller when the skill stops."""
         discovery = getattr(self, "discovery", None)
         if discovery is not None:
             discovery.stop()
+        lane = getattr(self, "lightning_lane", None)
+        if lane is not None:
+            lane.stop()
         self.context.state.fast_background_running = False
         super().teardown()

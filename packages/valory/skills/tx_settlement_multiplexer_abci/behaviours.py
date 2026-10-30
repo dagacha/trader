@@ -19,6 +19,7 @@
 
 """This package contains the behaviours of the transaction settlement multiplexer."""
 
+import time
 from typing import Generator, Optional, Set, Type, cast
 
 from aea.exceptions import AEAEnforceError
@@ -178,6 +179,13 @@ class PostTxSettlementBehaviour(BaseBehaviour):
 
     def async_act(self) -> Generator:
         """Simply log that a tx is settled and wait for the round end."""
+        config = getattr(self.params, "lightning", None)
+        if getattr(config, "lightning_lane", False) is True:
+            self.context.shared_state["lightning_lane_last_fsm_settlement"] = (
+                time.time()
+            )
+            self.context.shared_state.pop("lightning_lane_fsm_preparing", None)
+            self.context.shared_state.pop("lightning_lane_fsm_preparing_round", None)
         msg = f"The transaction submitted by {self.synchronized_data.tx_submitter} was successfully settled."
         self.context.logger.info(msg)
         self._on_tx_settled()

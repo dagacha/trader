@@ -874,3 +874,28 @@ class TestPostTxSettlementAsyncAct:
             assert isinstance(new_progress, RedeemingProgress)
             assert "id1" in new_progress.claimed_condition_ids
             assert "id2" in new_progress.claimed_condition_ids
+
+
+def test_fsm_settlement_invalidates_lane_nonce() -> None:
+    """Require a new pending nonce read after each FSM settlement."""
+    from types import SimpleNamespace
+
+    behaviour = object.__new__(PostTxSettlementBehaviour)
+    shared = {"lightning_lane_fsm_preparing": True}
+    behaviour._context = SimpleNamespace(
+        shared_state=shared,
+        params=SimpleNamespace(lightning=SimpleNamespace(lightning_lane=True)),
+        logger=MagicMock(),
+    )
+    with (
+        patch.object(
+            type(behaviour), "synchronized_data", new_callable=PropertyMock
+        ) as data,
+        patch.object(behaviour, "_on_tx_settled"),
+        patch.object(behaviour, "wait_until_round_end", return_value=iter([])),
+        patch("time.time", return_value=1234.0),
+    ):
+        data.return_value.tx_submitter = "bet_placement_round"
+        list(behaviour.async_act())
+    assert shared["lightning_lane_last_fsm_settlement"] == 1234.0
+    assert "lightning_lane_fsm_preparing" not in shared

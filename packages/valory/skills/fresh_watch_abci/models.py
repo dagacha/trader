@@ -127,6 +127,11 @@ class FastParams(TraderParams):
         }
         self.fast = FastConfig(**controls)
         defaults = LightningConfig()
+        # AEA resolves a named null string default to None.
+        if kwargs.get("lightning_rpc_url") is None:
+            kwargs["lightning_rpc_url"] = ""
+        if kwargs.get("lightning_lane_max_per_night", -1) == -1:
+            kwargs["lightning_lane_max_per_night"] = kwargs.get("max_trades", 3)
         self.lightning = LightningConfig(
             **{
                 item.name: (

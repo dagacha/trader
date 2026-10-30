@@ -55,6 +55,7 @@ class PolymarketWrapCollateralBehaviour(DecisionMakerBaseBehaviour):
 
     def async_act(self) -> Generator:
         """Check USDC.e balance, build wrap multisend if above dust."""
+        yield from self.wait_for_lightning_lane()
         with self.context.benchmark_tool.measure(self.behaviour_id).local():
             agent = self.context.agent_address
 

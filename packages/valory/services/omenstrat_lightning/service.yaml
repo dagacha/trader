@@ -5,9 +5,9 @@ description: A single-agent Omen service using base rates, chain events, and pre
 aea_version: '>=2.0.0, <3.0.0'
 license: Apache-2.0
 fingerprint:
-  README.md: bafybeigufyq7bzqoyfkgm7crlcvlukhtdvq7orb3p33z4wxfvndrehfwwu
+  README.md: bafybeia2oxd3qgvlr3jpdnd7vzaw7tecwxwwu5wrbsy45okn4warh5il7i
 fingerprint_ignore_patterns: []
-agent: valory/omenstrat_lightning:0.1.0:bafybeifwzrkyiy7ylkmmuwaqi365ewrxim5owqcxppg3zc7xbqpi6luryq
+agent: valory/omenstrat_lightning:0.1.0:bafybeifyei4p43ximwbxqzgwqlyc5z37jrpec7amuzhgguqzy2cmicyviu
 number_of_agents: 1
 deployment:
   agent:
@@ -209,6 +209,16 @@ models:
       price_margin: ${PRICE_MARGIN:float:0.01}
       max_slip: ${MAX_SLIP:float:0.2}
       min_stake: ${MIN_STAKE:float:0.1}
+      lightning_lane: ${LIGHTNING_LANE:bool:false}
+      lightning_rpc_url: ${LIGHTNING_RPC_URL:str:null}
+      lightning_poll_offset_s: ${LIGHTNING_POLL_OFFSET_S:float:0.3}
+      lightning_poll_step_s: ${LIGHTNING_POLL_STEP_S:float:0.25}
+      lightning_lane_max_age_s: ${LIGHTNING_LANE_MAX_AGE_S:int:6}
+      lightning_lane_gas_limit: ${LIGHTNING_LANE_GAS_LIMIT:int:400000}
+      lightning_lane_tip_gwei: ${LIGHTNING_LANE_TIP_GWEI:float:0.0}
+      lightning_lane_tip_cap_gwei: ${LIGHTNING_LANE_TIP_CAP_GWEI:float:1000.0}
+      lightning_lane_inflight_timeout_s: ${LIGHTNING_LANE_INFLIGHT_TIMEOUT_S:int:60}
+      lightning_lane_max_per_night: ${LIGHTNING_LANE_MAX_PER_NIGHT:int:-1}
       lightning_still_hold: ${LIGHTNING_STILL_HOLD:bool:true}
       lightning_still_hold_max_price: ${LIGHTNING_STILL_HOLD_MAX_PRICE:float:0.93}
       lightning_base_rate_window_days: ${LIGHTNING_BASE_RATE_WINDOW_DAYS:int:21}

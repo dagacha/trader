@@ -951,6 +951,7 @@ class RedeemBehaviour(RedeemInfoBehaviour):
 
     def async_act(self) -> Generator:
         """Do the action."""
+        yield from self.wait_for_lightning_lane()
         with self.context.benchmark_tool.measure(self.behaviour_id).local():
             success = yield from self._setup_policy_and_tools()
             if not success:

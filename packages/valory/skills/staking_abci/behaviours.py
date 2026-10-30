@@ -52,6 +52,7 @@ from packages.valory.skills.abstract_round_abci.behaviour_utils import (
     TimeoutException,
 )
 from packages.valory.skills.abstract_round_abci.behaviours import AbstractRoundBehaviour
+from packages.valory.skills.staking_abci.lane_guard import LaneGuardMixin
 from packages.valory.skills.staking_abci.models import StakingParams
 from packages.valory.skills.staking_abci.payloads import CallCheckpointPayload
 from packages.valory.skills.staking_abci.rounds import (
@@ -86,7 +87,7 @@ READ_MODE = "r"
 WRITE_MODE = "w"
 
 
-class StakingInteractBaseBehaviour(BaseBehaviour, ABC):
+class StakingInteractBaseBehaviour(LaneGuardMixin, BaseBehaviour, ABC):
     """Base behaviour that contains methods to interact with the staking contract."""
 
     def __init__(self, **kwargs: Any) -> None:
@@ -721,6 +722,7 @@ class CallCheckpointBehaviour(
 
     def async_act(self) -> Generator:
         """Do the action."""
+        yield from self.wait_for_lightning_lane()
         with self.context.benchmark_tool.measure(self.behaviour_id).local():
             yield from self.wait_for_condition_with_sleep(self._check_service_staked)
             yield from self.wait_for_condition_with_sleep(self._get_agent_ids)
