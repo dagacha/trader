@@ -1,0 +1,2087 @@
+# -*- coding: utf-8 -*-
+# ------------------------------------------------------------------------------
+#
+#   Copyright 2026 Valory AG
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+#
+# ------------------------------------------------------------------------------
+
+"""Check the independent lane against its runtime safety boundaries."""
+
+import json
+from dataclasses import asdict, replace
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import MagicMock, PropertyMock, patch
+
+import pytest
+from eth_abi import encode
+from eth_utils import keccak  # type: ignore[import-not-found]
+
+from packages.valory.skills.fresh_watch_abci.lightning import LightningConfig
+from packages.valory.skills.fresh_watch_abci.strategy import FreshQueue
+from packages.valory.skills.fresh_watch_abci.tests.test_behaviours import (
+    done,
+    make,
+    raw_market,
+    run,
+)
+
+MODULE = "packages.valory.skills.fresh_watch_abci.lane_behaviour"
+OWNER = "0x" + "12" * 20
+SAFE = "0x" + "34" * 20
+MARKET = "0x" + "56" * 20
+TOKEN = "0x" + "78" * 20
+
+
+def lane(tmp_path: Any, **changes: Any) -> Any:
+    """Use real storage and replace only external I/O."""
+    from packages.valory.skills.fresh_watch_abci.lane_behaviour import (
+        LightningLaneBehaviour,
+    )
+
+    settings = dict(
+        asdict(LightningConfig()),
+        lightning_lane=True,
+        lightning_rpc_url="https://rpc.test/private-key",
+        lightning_poll_offset_s=0.3,
+        lightning_poll_step_s=0.25,
+        lightning_lane_tip_gwei=550,
+        lightning_lane_tip_cap_gwei=1000,
+        lightning_lane_gas_limit=400000,
+        lightning_lane_max_age_s=6,
+        lightning_lane_inflight_timeout_s=60,
+        lightning_lane_max_per_night=3,
+    )
+    settings.update(changes)
+
+    def construct(**kwargs: Any) -> Any:
+        kwargs["skill_context"].shared_state = {}
+        kwargs["skill_context"].params.lightning = SimpleNamespace(**settings)
+        return LightningLaneBehaviour(**kwargs)
+
+    b = make(construct, tmp_path)
+    b.context.params.lightning = SimpleNamespace(**settings)
+    b.context.agent_address = OWNER
+    b.context.default_ledger_id = "ethereum"
+    b.context.state.chatui_config.trading_strategy = "kelly_criterion"
+    b.context.params.multisend_address = "0x" + "90" * 20
+    b.context.params.wxdai_contract_address = TOKEN
+    b.context.params.mech_chain_id = "gnosis"
+    saved_shared = b.context.shared_state
+    b.context.shared_state = saved_shared if isinstance(saved_shared, dict) else {}
+    b.context.state.round_sequence.current_round = type("FreshWatchRound", (), {})()
+    b.sleep = MagicMock(side_effect=lambda delay: done(None))
+    return b
+
+
+def reply_on_send(b: Any, response: Any, signing: bool = False) -> Any:
+    """Deliver a connection reply through the real request callback."""
+    dialogue = MagicMock()
+    dialogue.dialogue_label.dialogue_reference = ("reply", "")
+    b.context.requests.request_id_to_callback = {}
+
+    def deliver(_message: Any) -> None:
+        value = response() if callable(response) else response
+        callback = b.context.requests.request_id_to_callback.pop("reply")
+        callback(value, b)
+
+    if signing:
+        b.context.signing_dialogues.create.return_value = (MagicMock(), dialogue)
+        b.context.decision_maker_message_queue.put_nowait.side_effect = deliver
+    else:
+        b.context.outbox.put_message.side_effect = lambda **kwargs: deliver(
+            kwargs["message"]
+        )
+    return dialogue
+
+
+def test_lane_off_has_no_rpc_or_consensus(tmp_path: Any) -> None:
+    """Leave the existing background loop alone with the flag off."""
+    b = lane(tmp_path, lightning_lane=False)
+    b._rpc = MagicMock()
+    b.send_a2a_transaction = MagicMock()
+    run(b.async_act())
+    b._rpc.assert_not_called()
+    b.send_a2a_transaction.assert_not_called()
+
+
+def test_x402_disables_new_shots_and_logs_once(tmp_path: Any) -> None:
+    """Keep the lane off when the funding worker shares the agent nonce."""
+    b = lane(tmp_path)
+    b.context.params.use_x402 = True
+    prepared(b)
+    b._rpc = MagicMock(side_effect=AssertionError("new shot RPC"))
+    b._market = MagicMock(side_effect=AssertionError("new shot"))
+    run(b.async_act())
+    run(b.async_act())
+    b._rpc.assert_not_called()
+    b._market.assert_not_called()
+    b.context.signing_dialogues.create.assert_not_called()
+    b.context.logger.info.assert_called_once_with(
+        "[LIGHTNING_LANE] off reason=%s", "x402_eoa_funding_conflict"
+    )
+    assert not (tmp_path / "lightning_lane_state.json").exists()
+    assert "lightning_lane_inflight" not in b.context.shared_state
+    assert b._shots == 0
+
+
+@pytest.mark.parametrize("saved_receipt", [False, True])
+def test_x402_restart_reconciles_outstanding_journal(
+    tmp_path: Any, saved_receipt: bool
+) -> None:
+    """Complete an outstanding shot before the x402 new-shot guard."""
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+    block = {"timestamp": hex(1005), "number": "0x2"}
+    if saved_receipt:
+        info.update(receipt=receipt, receipt_block=block)
+    b.context.shared_state["lightning_lane_inflight"] = info
+    b._shots = 1
+    b._persist()
+    restarted = lane(tmp_path)
+    restarted.context.params.use_x402 = True
+    restarted._rpc = MagicMock(side_effect=[done(receipt), done(block)])
+    restarted._market = MagicMock(side_effect=AssertionError("new shot"))
+    with patch(MODULE + ".time.time", return_value=1005):
+        run(restarted.async_act())
+        assert "lightning_lane_inflight" not in restarted.context.shared_state
+        assert restarted.durable_trade_count() == 1
+        assert restarted._shots == 1
+        assert restarted._rpc.call_count == (0 if saved_receipt else 2)
+        run(restarted.async_act())
+    assert restarted._rpc.call_count == (0 if saved_receipt else 2)
+    restarted._market.assert_not_called()
+    assert "x402_eoa_funding_conflict" in str(restarted.context.logger.method_calls)
+
+
+@pytest.mark.parametrize("url,tip", [("", 550), ("https://rpc.test", 0)])
+def test_lane_requires_url_and_positive_fixed_tip(
+    tmp_path: Any, url: str, tip: float
+) -> None:
+    """Refuse an incomplete opt-in and log the reason once."""
+    b = lane(tmp_path, lightning_rpc_url=url, lightning_lane_tip_gwei=tip)
+    b._rpc = MagicMock()
+    run(b.async_act())
+    run(b.async_act())
+    b._rpc.assert_not_called()
+    assert b.context.logger.info.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "round_name,offchain,preparing,allowed",
+    [
+        ("FreshWatchRound", True, False, True),
+        ("FastDecisionRound", True, False, True),
+        ("DecisionRequestRound", True, False, True),
+        ("TradeCountRound", True, False, True),
+        ("MechOnlySelectionRound", True, False, True),
+        ("MechRequestRound", True, False, True),
+        ("MechResponseRound", True, False, True),
+        ("MechRequestRound", False, False, False),
+        ("MechResponseRound", False, False, False),
+        ("BetPlacementRound", True, False, False),
+        ("RedeemRound", True, False, False),
+        ("CallCheckpointRound", True, False, False),
+        ("RandomnessTransactionSubmissionRound", True, False, False),
+        ("FreshWatchRound", True, True, False),
+    ],
+)
+def test_lane_round_exclusion(
+    tmp_path: Any,
+    round_name: str,
+    offchain: bool,
+    preparing: bool,
+    allowed: bool,
+) -> None:
+    """Use an explicit whitelist and exclude every Safe preparation."""
+    b = lane(tmp_path)
+    b.context.params.use_offchain = offchain
+    b.context.state.round_sequence.current_round = type(round_name, (), {})()
+    b.context.shared_state["lightning_lane_fsm_preparing"] = preparing
+    assert b._round_allowed() is allowed
+
+
+@pytest.mark.parametrize(
+    "threshold,owner,allowed", [(1, True, True), (2, True, False), (1, False, False)]
+)
+def test_startup_checks_safe_owner_and_threshold(
+    tmp_path: Any, threshold: int, owner: bool, allowed: bool
+) -> None:
+    """Fail closed for a Safe that cannot use this owner's signature."""
+    b = lane(tmp_path)
+    b._rpc = MagicMock(
+        side_effect=[
+            done("0x" + encode(["uint256"], [threshold]).hex()),
+            done("0x" + encode(["bool"], [owner]).hex()),
+        ]
+    )
+    with patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd:
+        sd.return_value.safe_contract_address = SAFE
+        assert run(b._startup()) is allowed
+    assert b._rpc.call_args_list[0].args[0] == "eth_call"
+    assert all(call.args[0] == "eth_call" for call in b._rpc.call_args_list)
+    assert "private-key" not in str(b.context.logger.method_calls)
+
+
+def test_idle_nonce_cache_requires_read_after_last_fsm_settlement(
+    tmp_path: Any,
+) -> None:
+    """Refresh the pending nonce before a later lane transaction can use it."""
+    b = lane(tmp_path)
+    b.context.shared_state["lightning_lane_eoa_nonce"] = {"nonce": 7, "read_at": 1000}
+    b.context.shared_state["lightning_lane_last_fsm_settlement"] = 1001
+    b._rpc = MagicMock(
+        side_effect=[
+            done("0x8"),
+            done(hex(10**20)),
+            done(hex(10**20)),
+            done("0x" + encode(["uint256"], [10**20]).hex()),
+        ]
+    )
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(MODULE + ".time.time", return_value=1002),
+    ):
+        sd.return_value.safe_contract_address = SAFE
+        run(b._refresh_idle(1002))
+        run(b._refresh_idle(1003))
+    assert b.context.shared_state["lightning_lane_eoa_nonce"] == {
+        "nonce": 8,
+        "read_at": 1002,
+    }
+    assert b._rpc.call_count == 4
+    assert b._rpc.call_args_list[0].args == (
+        "eth_getTransactionCount",
+        [OWNER, "pending"],
+    )
+    assert not any("TransactionBy" in call.args[0] for call in b._rpc.call_args_list)
+
+
+def test_rpc_uses_http_client_and_redacts_rpc_errors(tmp_path: Any) -> None:
+    """Send raw JSON-RPC without exposing a keyed endpoint in logs."""
+    b = lane(tmp_path)
+    dialogue = reply_on_send(
+        b, SimpleNamespace(status_code=200, body=json.dumps({"result": "0x9"}).encode())
+    )
+    b._build_http_request_message = MagicMock(return_value=(MagicMock(), dialogue))
+    assert run(b._rpc("eth_blockNumber", [])) == "0x9"
+    request = b._build_http_request_message.call_args.kwargs
+    assert request["url"] == "https://rpc.test/private-key"
+    assert json.loads(request["content"])["method"] == "eth_blockNumber"
+    assert request["method"] == "POST"
+    assert "private-key" not in str(b.context.logger.method_calls)
+
+
+@pytest.mark.parametrize("saved_receipt", [False, True])
+def test_recovery_without_private_url_uses_ledger_request_path(
+    tmp_path: Any, saved_receipt: bool
+) -> None:
+    """Recover receipts and block timestamps through real ledger callbacks."""
+    from packages.valory.protocols.ledger_api import LedgerApiMessage
+
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    receipt = {"status": 1, "blockNumber": 2, "logs": []}
+    block = {"timestamp": 1005, "number": 2}
+    if saved_receipt:
+        info["receipt"] = receipt
+    b.context.shared_state["lightning_lane_inflight"] = info
+    b._persist()
+    b = lane(tmp_path, lightning_lane=False, lightning_rpc_url="")
+    b._build_http_request_message = MagicMock(
+        side_effect=AssertionError("recovery used the empty private URL")
+    )
+    values: list[Any] = [block] if saved_receipt else [None, 7, receipt, block]
+    results = iter(values)
+
+    def response() -> Any:
+        method = b.context.ledger_api_dialogues.create.call_args.kwargs["callable"]
+        result = next(results)
+        if result is None:
+            return SimpleNamespace(
+                performative=LedgerApiMessage.Performative.ERROR,
+                message="Transaction with hash: '0xfeed' not found.",
+            )
+        return SimpleNamespace(
+            performative=LedgerApiMessage.Performative.STATE,
+            state=SimpleNamespace(
+                body=(
+                    result if isinstance(result, dict) else {method + "_result": result}
+                )
+            ),
+        )
+
+    dialogue = reply_on_send(b, response)
+    b.context.ledger_api_dialogues.create.return_value = (MagicMock(), dialogue)
+    with patch(MODULE + ".time.time", return_value=1100):
+        if not saved_receipt:
+            run(b.async_act())
+            assert b.context.shared_state["lightning_lane_inflight"]["tx"] == "0xfeed"
+        run(b.async_act())
+        run(b.async_act())
+    assert "lightning_lane_inflight" not in b.context.shared_state
+    assert run(b.wait_for_lightning_lane()) is None
+    assert b.durable_trade_count() == 1
+    b.read_bets()
+    assert b.bets[0].invested_amount == info["amount"]
+    requests = b.context.ledger_api_dialogues.create.call_args_list
+    assert [call.kwargs["callable"] for call in requests] == (
+        ["get_block"]
+        if saved_receipt
+        else [
+            "get_transaction_receipt",
+            "get_transaction_count",
+            "get_transaction_receipt",
+            "get_block",
+        ]
+    )
+    for call in requests:
+        assert call.kwargs["ledger_id"] == "ethereum"
+        assert call.kwargs["kwargs"].body["chain_id"] == "gnosis"
+    assert requests[-1].kwargs["kwargs"].body["block_identifier"] == 2
+    b._build_http_request_message.assert_not_called()
+    assert not b.context.requests.request_id_to_callback
+
+
+def test_missing_ledger_receipt_is_pending(tmp_path: Any) -> None:
+    """Treat only the ledger's exact missing-transaction error as pending."""
+    from packages.valory.protocols.ledger_api import LedgerApiMessage
+
+    b = lane(tmp_path, lightning_rpc_url="")
+    dialogue = reply_on_send(
+        b,
+        SimpleNamespace(
+            performative=LedgerApiMessage.Performative.ERROR,
+            message="Transaction with hash: '0xfeed' not found.",
+        ),
+    )
+    b.context.ledger_api_dialogues.create.return_value = (MagicMock(), dialogue)
+    assert run(b._lane_guard_rpc("eth_getTransactionReceipt", ["0xfeed"])) is None
+
+
+@pytest.mark.parametrize(
+    "method,message",
+    [
+        ("eth_getTransactionCount", "Transaction with hash: '0xfeed' not found."),
+        ("eth_getTransactionReceipt", "RPC unavailable"),
+        ("eth_getTransactionReceipt", "Transaction with hash: '0xother' not found."),
+    ],
+)
+def test_ledger_recovery_errors_fail_closed(
+    tmp_path: Any, method: str, message: str
+) -> None:
+    """Do not release recovery for an unrelated ledger error."""
+    from packages.valory.protocols.ledger_api import LedgerApiMessage
+    from packages.valory.skills.fresh_watch_abci.lane_behaviour import LaneRPCError
+
+    b = lane(tmp_path, lightning_rpc_url="")
+    dialogue = reply_on_send(
+        b,
+        SimpleNamespace(
+            performative=LedgerApiMessage.Performative.ERROR, message=message
+        ),
+    )
+    b.context.ledger_api_dialogues.create.return_value = (MagicMock(), dialogue)
+    with pytest.raises(LaneRPCError):
+        run(b._rpc(method, ["0xfeed", "latest"]))
+
+
+def test_foreground_guard_without_private_url_uses_ledger_request_path(
+    tmp_path: Any,
+) -> None:
+    """Save a mined receipt through the ledger and let the lane finish it."""
+    from packages.valory.protocols.ledger_api import LedgerApiMessage
+
+    b = lane(tmp_path, lightning_lane=False, lightning_rpc_url="")
+    info = settled(b, tmp_path)
+    b.context.shared_state["lightning_lane_inflight"] = info
+    receipt = {"status": 1, "blockNumber": "0x2", "logs": []}
+    results = iter([8, receipt, {"timestamp": 1005, "number": 2}])
+
+    def response() -> Any:
+        method = b.context.ledger_api_dialogues.create.call_args.kwargs["callable"]
+        return SimpleNamespace(
+            performative=LedgerApiMessage.Performative.STATE,
+            state=SimpleNamespace(body={method + "_result": next(results)}),
+        )
+
+    def sleep(_delay: float) -> Any:
+        yield
+
+    dialogue = reply_on_send(b, response)
+    b.context.ledger_api_dialogues.create.return_value = (MagicMock(), dialogue)
+    b._build_http_request_message = MagicMock(
+        side_effect=AssertionError("guard used the empty private URL")
+    )
+    b.sleep = sleep
+    with patch(MODULE + ".time.time", return_value=1100):
+        waiting = b.wait_for_lightning_lane()
+        assert next(waiting) is None
+        assert info["receipt"] == receipt
+        run(b.async_act())
+        assert run(waiting) is None
+    assert "lightning_lane_inflight" not in b.context.shared_state
+    assert b.durable_trade_count() == 1
+    assert [
+        call.kwargs["callable"]
+        for call in b.context.ledger_api_dialogues.create.call_args_list
+    ] == ["get_transaction_count", "get_transaction_receipt", "get_block"]
+    b._build_http_request_message.assert_not_called()
+
+
+def prepared(b: Any) -> None:
+    """Set the idle caches required for a direct shot."""
+    b.context.shared_state["lightning_lane_eoa_nonce"] = {"nonce": 7, "read_at": 1001}
+    b._balances = {"eoa": 10**20, "native": 10**20, "wrapped": 10**20}
+    b._balance_at = 1001
+    b._shots = 0
+    b._night = "1970-01-01"
+
+
+@pytest.mark.parametrize("failed_write", [1, 2])
+def test_unsent_write_failure_releases_lane_and_foreground(
+    tmp_path: Any, failed_write: int
+) -> None:
+    """Retry an unsent shot with the same nonce after storage recovers."""
+    from aea.helpers.transaction.base import SignedTransaction
+
+    from packages.open_aea.protocols.signing import SigningMessage
+    from packages.valory.skills.agent_performance_summary_abci.models import (
+        write_json_atomically,
+    )
+
+    b = lane(tmp_path)
+    prepared(b)
+    response = SimpleNamespace(
+        performative=SigningMessage.Performative.SIGNED_TRANSACTION,
+        signed_transaction=SignedTransaction(
+            "ethereum", {"raw_transaction": "0xabcdef"}
+        ),
+    )
+    reply_on_send(b, response, signing=True)
+    b._broadcast = MagicMock()
+    market = {**raw_market(), "id": MARKET, "collateralToken": TOKEN}
+    decision = SimpleNamespace(stake=4.0, price=0.6, p_hat=0.95)
+    writes = 0
+
+    def write(path: Any, data: Any) -> None:
+        nonlocal writes
+        writes += 1
+        if writes == failed_write:
+            raise OSError("disk full")
+        write_json_atomically(path, data)
+
+    def send() -> Any:
+        return b._send(
+            market,
+            decision,
+            (0.9, 4444444444444444445),
+            {"baseFeePerGas": "0x1", "number": "0x2", "gasLimit": "0x1000000"},
+            1002,
+        )
+
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(MODULE + ".time.time", return_value=1002),
+        patch(MODULE + ".write_json_atomically", side_effect=write),
+    ):
+        sd.return_value.safe_contract_address = SAFE
+        with pytest.raises(OSError, match="disk full"):
+            run(send())
+        b._broadcast.assert_not_called()
+        assert b.context.decision_maker_message_queue.put_nowait.call_count == (
+            failed_write - 1
+        )
+        assert "lightning_lane_inflight" not in b.context.shared_state
+        assert b._shots == 0
+        assert run(b.wait_for_lightning_lane()) is None
+        assert b.context.shared_state["lightning_lane_eoa_nonce"]["nonce"] == 7
+        assert run(send()) is True
+    b._broadcast.assert_called_once()
+    assert b.context.shared_state["lightning_lane_inflight"]["eoa_nonce"] == 7
+    assert b._shots == 1
+
+
+def test_send_skips_intrinsic_gas_shortfall_without_reservation(tmp_path: Any) -> None:
+    """Keep the foreground free when calldata needs more gas than the limit."""
+    from aea.helpers.transaction.base import SignedTransaction
+
+    from packages.open_aea.protocols.signing import SigningMessage
+
+    b = lane(tmp_path, lightning_lane_gas_limit=21000)
+    prepared(b)
+    reply_on_send(
+        b,
+        SimpleNamespace(
+            performative=SigningMessage.Performative.SIGNED_TRANSACTION,
+            signed_transaction=SignedTransaction(
+                "ethereum", {"raw_transaction": "0xabcdef"}
+            ),
+        ),
+        signing=True,
+    )
+    b._broadcast = MagicMock()
+    market = {**raw_market(), "id": MARKET, "collateralToken": TOKEN}
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(MODULE + ".time.time", return_value=1002),
+        patch(MODULE + ".write_json_atomically") as write,
+    ):
+        sd.return_value.safe_contract_address = SAFE
+        assert (
+            run(
+                b._send(
+                    market,
+                    SimpleNamespace(stake=4.0, price=0.6, p_hat=0.95),
+                    (0.9, 4444444444444444445),
+                    {"baseFeePerGas": "0x1", "number": "0x2", "gasLimit": "0x1000000"},
+                    1002,
+                )
+            )
+            is False
+        )
+        assert "lightning_lane_inflight" not in b.context.shared_state
+        write.assert_not_called()
+        assert not (tmp_path / "lightning_lane_state.json").exists()
+        assert run(b.wait_for_lightning_lane()) is None
+    assert "reason=gas_limit_below_intrinsic" in str(b.context.logger.method_calls)
+    b.context.signing_dialogues.create.assert_not_called()
+    b.context.decision_maker_message_queue.put_nowait.assert_not_called()
+    b._broadcast.assert_not_called()
+
+
+@pytest.mark.parametrize("block_limit", [399999, 400000])
+def test_send_checks_block_gas_limit_before_reservation(
+    tmp_path: Any, block_limit: int
+) -> None:
+    """Reserve only when the transaction gas limit fits the creation block."""
+    from aea.helpers.transaction.base import SignedTransaction
+
+    from packages.open_aea.protocols.signing import SigningMessage
+
+    b = lane(tmp_path)
+    prepared(b)
+    reply_on_send(
+        b,
+        SimpleNamespace(
+            performative=SigningMessage.Performative.SIGNED_TRANSACTION,
+            signed_transaction=SignedTransaction(
+                "ethereum", {"raw_transaction": "0xabcdef"}
+            ),
+        ),
+        signing=True,
+    )
+    b._broadcast = MagicMock()
+    market = {**raw_market(), "id": MARKET, "collateralToken": TOKEN}
+    accepted = block_limit == 400000
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(MODULE + ".time.time", return_value=1002),
+        patch(MODULE + ".write_json_atomically") as write,
+    ):
+        sd.return_value.safe_contract_address = SAFE
+        assert (
+            run(
+                b._send(
+                    market,
+                    SimpleNamespace(stake=4.0, price=0.6, p_hat=0.95),
+                    (0.9, 4444444444444444445),
+                    {
+                        "number": "0x2",
+                        "baseFeePerGas": "0x1",
+                        "gasLimit": hex(block_limit),
+                    },
+                    1002,
+                )
+            )
+            is accepted
+        )
+        if not accepted:
+            assert "lightning_lane_inflight" not in b.context.shared_state
+            write.assert_not_called()
+            assert not (tmp_path / "lightning_lane_state.json").exists()
+            assert run(b.wait_for_lightning_lane()) is None
+            assert b._shots == 0
+            assert b.context.shared_state["lightning_lane_eoa_nonce"]["nonce"] == 7
+            b.context.signing_dialogues.create.assert_not_called()
+            b.context.decision_maker_message_queue.put_nowait.assert_not_called()
+            b._broadcast.assert_not_called()
+            assert "reason=gas_limit_above_block" in str(b.context.logger.method_calls)
+
+
+def test_send_reserves_inflight_before_both_broadcasts(tmp_path: Any) -> None:
+    """Use a fixed tip and fan out without waiting for the ledger result."""
+    from aea.helpers.transaction.base import SignedTransaction
+
+    from packages.open_aea.protocols.signing import SigningMessage
+
+    b = lane(tmp_path)
+    prepared(b)
+    raw = bytes.fromhex("abcdef")
+    tx_hash = "0x" + keccak(raw).hex()
+    response = SimpleNamespace(
+        performative=SigningMessage.Performative.SIGNED_TRANSACTION,
+        signed_transaction=SignedTransaction(
+            "ethereum", {"raw_transaction": "0x" + raw.hex(), "hash": tx_hash}
+        ),
+    )
+    reply_on_send(b, response, signing=True)
+    seen = []
+    b._broadcast = lambda signed, raw_tx: seen.append(
+        dict(b.context.shared_state["lightning_lane_inflight"])
+    )
+    market = raw_market()
+    market.update(id=MARKET, collateralToken=TOKEN)
+    decision = SimpleNamespace(stake=4.0, price=0.6, p_hat=0.95)
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(MODULE + ".time.time", return_value=1002),
+    ):
+        sd.return_value.safe_contract_address = SAFE
+        assert run(
+            b._send(
+                market,
+                decision,
+                (0.9, 4444444444444444445),
+                {"baseFeePerGas": "0x1", "number": "0x2", "gasLimit": "0x1000000"},
+                1002,
+            )
+        )
+    tx = b.context.signing_dialogues.create.call_args.kwargs["raw_transaction"].body
+    assert tx["maxPriorityFeePerGas"] == 550 * 10**9
+    assert tx["maxFeePerGas"] == 550 * 10**9 + 2
+    assert tx["nonce"] == 7
+    assert tx["chainId"] == 100
+    assert seen[0]["tx"] == tx_hash
+    assert seen[0]["market"] == MARKET
+    assert b._shots == 1
+    b.context.decision_maker_message_queue.put_nowait.assert_called_once()
+
+
+def test_broadcast_sends_http_and_ledger_without_response_wait(tmp_path: Any) -> None:
+    """Put both requests in the outbox before any response can block the shot."""
+    b = lane(tmp_path)
+    dialogue = MagicMock()
+    b._build_http_request_message = MagicMock(return_value=("http request", dialogue))
+    b._get_request_nonce_from_dialogue = MagicMock(return_value="direct")
+    b._send_transaction_request = MagicMock()
+    b.context.ledger_api_dialogues.create.return_value = ("ledger request", MagicMock())
+    b.context.requests.request_id_to_callback = {}
+    b._broadcast(SimpleNamespace(signed_transaction="signed"), "0x1234")
+    assert b.context.outbox.put_message.call_count == 2
+    assert (
+        b.context.outbox.put_message.call_args_list[0].kwargs["message"]
+        == "http request"
+    )
+    assert (
+        b.context.outbox.put_message.call_args_list[1].kwargs["message"]
+        == "ledger request"
+    )
+    b.context.ledger_api_dialogues.create.assert_called_once()
+    assert "direct" in b.context.requests.request_id_to_callback
+
+
+def test_nonce_too_low_keeps_inflight_without_counting(tmp_path: Any) -> None:
+    """Keep exclusion until the originating transaction can be reconciled."""
+    b = lane(tmp_path)
+    b.context.shared_state["lightning_lane_inflight"] = {
+        "tx": "0xtx",
+        "market": MARKET,
+        "eoa_nonce": 7,
+        "sent_at": 1000,
+    }
+    b._handle_send_result({"error": {"message": "nonce too low"}}, "0xtx")
+    assert b.context.shared_state["lightning_lane_inflight"]["tx"] == "0xtx"
+    assert b.context.shared_state["lightning_lane_inflight"]["reconcile"] is True
+    assert "lightning_lane_eoa_nonce" not in b.context.shared_state
+    assert b.durable_trade_count() == 0
+
+
+def settled(b: Any, tmp_path: Any) -> dict:
+    """Queue a real Bet row and describe its signed lane transaction."""
+    row = raw_market()
+    row.update(id=MARKET, collateralToken=TOKEN)
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    queue.pending = [row]
+    queue.asked = {MARKET: 1000}
+    queue.save()
+    return dict(
+        tx="0xfeed",
+        market=MARKET,
+        eoa_nonce=7,
+        sent_at=1001,
+        row=row,
+        amount=4 * 10**18,
+        probability=0.95,
+    )
+
+
+def test_mined_receipt_updates_all_bet_bookkeeping_once(tmp_path: Any) -> None:
+    """Store investments, attribution, activity and MAX_TRADES exactly once."""
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    b.context.shared_state["lightning_lane_inflight"] = info
+    receipt = {
+        "status": "0x1",
+        "blockNumber": "0x2",
+        "transactionIndex": "0x0",
+        "gasUsed": "0x3a980",
+        "effectiveGasPrice": hex(550 * 10**9),
+        "logs": [],
+    }
+    with (
+        patch(MODULE + ".time.time", return_value=1005),
+        patch(
+            MODULE + ".buy_result",
+            return_value={"tokens": 7 * 10**18, "amount": 4 * 10**18},
+        ),
+    ):
+        b._complete(info, receipt, {"timestamp": hex(1005)})
+        b._complete(info, receipt, {"timestamp": hex(1005)})
+    b.read_bets()
+    assert len(b.bets) == 1
+    assert b.bets[0].invested_amount == 4 * 10**18
+    assert b.bets[0].strategy_vote == 0
+    assert b.bets[0].processed_timestamp == 1005
+    assert b.bets[0].strategy is not None
+    assert b.durable_trade_count() == 1
+    assert b.read_counted_placement_keys() == {"omen:0xfeed"}
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    assert queue.pending == []
+    assert queue.asked == {}
+    trades = json.loads((tmp_path / "activity_goal_trades.json").read_text())
+    assert len(trades) == 1
+    assert "lightning_lane_inflight" not in b.context.shared_state
+    assert MARKET in b.context.shared_state["lightning_lane_bet_markets"]
+
+
+def test_reverted_receipt_leaves_market_to_fsm(tmp_path: Any) -> None:
+    """Count shots, but never count reverted transactions as trades."""
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    b.context.shared_state["lightning_lane_inflight"] = info
+    receipt = {
+        "status": "0x0",
+        "transactionIndex": "0x1",
+        "gasUsed": hex(100000),
+        "effectiveGasPrice": hex(550 * 10**9),
+        "logs": [],
+    }
+    b._complete(info, receipt, {"timestamp": hex(1005)})
+    assert b.durable_trade_count() == 0
+    assert FreshQueue(tmp_path / "fresh_watch.json").pending[0]["id"] == MARKET
+    assert "lightning_lane_inflight" not in b.context.shared_state
+    assert "status=reverted" in str(b.context.logger.method_calls)
+    assert "0.055" in str(b.context.logger.method_calls)
+
+
+def test_confirmed_replacement_rechecks_receipt_before_clearing(tmp_path: Any) -> None:
+    """Release after a consumed confirmed nonce and a second absent receipt."""
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    b.context.shared_state["lightning_lane_inflight"] = info
+    observed = []
+
+    def rpc(method: str, params: Any) -> Any:
+        observed.append((method, "lightning_lane_inflight" in b.context.shared_state))
+        return done(None if method == "eth_getTransactionReceipt" else "0x8")
+
+    b._rpc = rpc
+    with patch(MODULE + ".time.time", return_value=1062):
+        run(b._watch_receipt({"timestamp": hex(1060)}))
+    assert observed == [
+        ("eth_getTransactionReceipt", True),
+        ("eth_getTransactionCount", True),
+        ("eth_getTransactionReceipt", True),
+    ]
+    assert "lightning_lane_eoa_nonce" not in b.context.shared_state
+    assert "dropped_replaced" in str(b.context.logger.info.call_args)
+    assert "lightning_lane_inflight" not in b.context.shared_state
+
+
+def test_fresh_entry_clears_finished_fsm_preparation(tmp_path: Any) -> None:
+    """A completed FSM cycle must release its background preparation marker."""
+    b = lane(tmp_path)
+    b.context.shared_state["lightning_lane_fsm_preparing"] = True
+    b._rpc = MagicMock(
+        side_effect=[done("0x8"), done("0x10"), done("0x20"), done("0x30")]
+    )
+    with patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd:
+        sd.return_value.safe_contract_address = SAFE
+        run(b._refresh_idle(1002))
+    assert not b.context.shared_state.get("lightning_lane_fsm_preparing")
+    assert b.context.shared_state["lightning_lane_eoa_nonce"]["nonce"] == 8
+
+
+def test_receipt_uses_mined_block_timestamp_after_a_missed_slot(tmp_path: Any) -> None:
+    """Log the transaction's actual age if detection skips a block."""
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    b.context.shared_state["lightning_lane_inflight"] = info
+    receipt = {
+        "status": "0x0",
+        "blockNumber": "0x2",
+        "gasUsed": "0x1",
+        "effectiveGasPrice": "0x1",
+    }
+    b._rpc = MagicMock(
+        side_effect=[done(receipt), done({"timestamp": hex(1005), "number": "0x2"})]
+    )
+    b._complete = MagicMock()
+    run(b._watch_receipt({"timestamp": hex(1010), "number": "0x3"}))
+    assert b._complete.call_args.args[2]["timestamp"] == hex(1005)
+    assert b._rpc.call_args_list[1].args == ("eth_getBlockByNumber", ["0x2", False])
+
+
+def test_restart_restores_pending_lock_and_nightly_shot_count(tmp_path: Any) -> None:
+    """Retain the nonce lock and shot budget across a process restart."""
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    b.context.shared_state["lightning_lane_inflight"] = info
+    b._night, b._shots = "1970-01-01", 3
+    b._persist()
+    restarted = lane(tmp_path)
+    assert restarted.context.shared_state["lightning_lane_inflight"] == info
+    assert (restarted._night, restarted._shots) == ("1970-01-01", 3)
+
+
+def test_receipt_retry_after_bet_store_does_not_repeat_investment(
+    tmp_path: Any,
+) -> None:
+    """Retry a partial durable update after the bet file was written."""
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    b.context.shared_state["lightning_lane_inflight"] = info
+    receipt = {
+        "status": "0x1",
+        "gasUsed": "0x1",
+        "effectiveGasPrice": "0x1",
+        "logs": [],
+    }
+    with (
+        patch(MODULE + ".record_trade", side_effect=OSError("disk unavailable")),
+        pytest.raises(OSError),
+    ):
+        b._complete(info, receipt, {"timestamp": hex(1005)})
+    b._complete(info, receipt, {"timestamp": hex(1005)})
+    b.read_bets()
+    assert b.bets[0].invested_amount == 4 * 10**18
+    assert b.durable_trade_count() == 1
+
+
+def test_flag_off_without_journal_does_not_read_lane_state(tmp_path: Any) -> None:
+    """Keep a disabled lane idle when no journal needs recovery."""
+    with patch(
+        "pathlib.Path.read_text", side_effect=AssertionError("disabled journal read")
+    ):
+        b = lane(tmp_path, lightning_lane=False)
+    assert "lightning_lane_inflight" not in b.context.shared_state
+
+
+def test_disabled_restart_reconciles_broadcast_without_new_shots(tmp_path: Any) -> None:
+    """Keep a rollback guarded until the saved broadcast reaches completion."""
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    b.context.shared_state["lightning_lane_inflight"] = info
+    b._night, b._shots = "1970-01-01", 3
+    b._persist()
+    restarted = lane(tmp_path, lightning_lane=False)
+    assert restarted.context.shared_state["lightning_lane_inflight"] == info
+    restarted._startup = MagicMock(side_effect=AssertionError("new shot startup"))
+    restarted._market = MagicMock(side_effect=AssertionError("new shot"))
+    restarted._refresh_idle = MagicMock(side_effect=AssertionError("idle RPC"))
+    restarted._rpc = MagicMock(return_value=done(None))
+    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+    block = {"timestamp": hex(1005), "number": "0x2"}
+    with patch(MODULE + ".time.time", return_value=1005):
+        run(restarted.async_act())
+        assert restarted.context.shared_state["lightning_lane_inflight"] == info
+        restarted._rpc.assert_called_once_with("eth_getTransactionReceipt", ["0xfeed"])
+        restarted._rpc = MagicMock(side_effect=[done(receipt), done(block)])
+        run(restarted.async_act())
+        assert "lightning_lane_inflight" not in restarted.context.shared_state
+        assert restarted.durable_trade_count() == 1
+        assert restarted._shots == 3
+        run(restarted.async_act())
+    assert restarted._rpc.call_count == 2
+    assert run(restarted.wait_for_lightning_lane(reserve=True)) is None
+    assert "lightning_lane_fsm_preparing" not in restarted.context.shared_state
+
+
+@pytest.mark.parametrize("saved_receipt", [False, True])
+@pytest.mark.parametrize("admission", ["zero_tip", "missing_url"])
+def test_restart_recovers_before_send_admission(
+    tmp_path: Any, saved_receipt: bool, admission: str
+) -> None:
+    """Recover pending and saved receipts with new-shot admission disabled."""
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+    block = {"timestamp": hex(1005), "number": "0x2"}
+    if saved_receipt:
+        info.update(receipt=receipt, receipt_block=block)
+    b.context.shared_state["lightning_lane_inflight"] = info
+    b._persist()
+    settings: dict[str, Any] = (
+        {"lightning_lane_tip_gwei": 0}
+        if admission == "zero_tip"
+        else {"lightning_rpc_url": ""}
+    )
+    restarted = lane(tmp_path, **settings)
+    restarted._rpc = MagicMock(side_effect=[done(receipt), done(block)])
+    restarted._startup = MagicMock(side_effect=AssertionError("send startup"))
+    with patch(MODULE + ".time.time", return_value=1005):
+        run(restarted.async_act())
+    assert "lightning_lane_inflight" not in restarted.context.shared_state
+    assert restarted.durable_trade_count() == 1
+    restarted.read_bets()
+    assert restarted.bets[0].invested_amount == info["amount"]
+    assert restarted._rpc.call_count == (0 if saved_receipt else 2)
+
+
+def test_fresh_entry_keeps_termination_preparation_locked(tmp_path: Any) -> None:
+    """A background termination Safe transaction must retain its lock."""
+    b = lane(tmp_path)
+    b.context.shared_state.update(
+        lightning_lane_fsm_preparing=True,
+        lightning_lane_fsm_preparing_round="background_round",
+    )
+    b._rpc = MagicMock()
+    run(b._refresh_idle(1002))
+    assert b.context.shared_state["lightning_lane_fsm_preparing"]
+    b._rpc.assert_not_called()
+
+
+def test_journal_does_not_rewrite_unchanged_state_each_tick(tmp_path: Any) -> None:
+    """Keep the slot loop free of repeated disk writes while state is idle."""
+    b = lane(tmp_path)
+    with patch(MODULE + ".write_json_atomically") as write:
+        b._persist()
+        b._persist()
+    write.assert_called_once()
+
+
+@pytest.mark.parametrize("funding", [True, False])
+@pytest.mark.parametrize("tick", [False, True])
+def test_creation_receipt_reaches_signed_send_in_one_tick(
+    tmp_path: Any, funding: bool, tick: bool
+) -> None:
+    """Use the chain fixture, local quote and local encoding in one lane step."""
+    from pathlib import Path
+
+    from aea.helpers.transaction.base import SignedTransaction
+
+    from packages.open_aea.protocols.signing import SigningMessage
+    from packages.valory.skills.fresh_watch_abci.chain_discovery import creation_details
+    from packages.valory.skills.fresh_watch_abci.lane import SlotPoller
+
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures" / "chain_creation.json").read_text()
+    )
+    creation = fixture["logs"][-1]
+    market = creation_details(creation)
+    created = fixture["blockTimestamp"]
+    b = lane(tmp_path, lightning_still_hold=True)
+    prepared(b)
+    (tmp_path / "lightning_base_rate.json").write_text(
+        json.dumps(
+            dict(
+                n=100,
+                rate=0.95,
+                template_id=2,
+                creators=sorted(b.params.lightning.lightning_creators),
+                window_days=21,
+                refreshed_at=created,
+            )
+        )
+    )
+    logs = fixture["logs"].copy()
+    if funding:
+        logs.append(
+            dict(
+                address=market["id"],
+                topics=[
+                    "0x"
+                    + keccak(text="FPMMFundingAdded(address,uint256[],uint256)").hex()
+                ],
+                data="0x"
+                + encode(
+                    ["uint256[]", "uint256"], [[7 * 10**18, 7 * 10**18], 7 * 10**18]
+                ).hex(),
+            )
+        )
+    responses = [done({"logs": logs})]
+    if not funding:
+        responses.append(
+            done("0x" + encode(["uint256[]"], [[7 * 10**18, 7 * 10**18]]).hex())
+        )
+    b._rpc = MagicMock(side_effect=responses)
+    reply_on_send(
+        b,
+        SimpleNamespace(
+            performative=SigningMessage.Performative.SIGNED_TRANSACTION,
+            signed_transaction=SignedTransaction(
+                "ethereum", {"raw_transaction": "0xabcdef"}
+            ),
+        ),
+        signing=True,
+    )
+    b._broadcast = MagicMock()
+    block = {
+        "number": hex(creation["blockNumber"]),
+        "hash": "0x" + "ab" * 32,
+        "timestamp": hex(created),
+        "baseFeePerGas": "0x1",
+        "gasLimit": "0x1000000",
+    }
+    if tick:
+        b._checked = b._safe_ok = True
+        b._night, b._shots = "previous-night", 3
+        b._poller = SlotPoller()
+        b._poller.height(block["number"], created + 0.4)
+        b._rpc = MagicMock(
+            side_effect=[
+                done(block),
+                done([{"removed": True}, creation, {}]),
+                *responses,
+            ]
+        )
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(MODULE + ".time.time", return_value=created + 0.4),
+    ):
+        sd.return_value.safe_contract_address = SAFE
+        sd.return_value.previous_checkpoint = None
+        sd.return_value.successful_trade_count = 0
+        run(b.async_act() if tick else b._market(creation, block, created + 0.3))
+        assert (
+            b.context.shared_state["lightning_lane_inflight"]["market"] == market["id"]
+        )
+        assert b._rpc.call_count == 1 + int(not funding) + 2 * int(tick)
+        run(b._market(creation, block, created + 0.3))
+    assert b._rpc.call_count == 1 + int(not funding) + 2 * int(tick)
+    assert b._shots == 1
+    tx = b.context.signing_dialogues.create.call_args.kwargs["raw_transaction"].body
+    assert tx["maxPriorityFeePerGas"] == 550 * 10**9
+    assert tx["data"].startswith("0x6a761202")
+    b._broadcast.assert_called_once()
+
+
+def test_missing_receipt_title_stays_with_fsm(tmp_path: Any) -> None:
+    """Do not perform a subgraph title fallback inside the direct lane."""
+    from pathlib import Path
+
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures" / "chain_creation.json").read_text()
+    )
+    creation = fixture["logs"][-1]
+    b = lane(tmp_path, lightning_still_hold=True)
+    b._rpc = MagicMock(return_value=done({"logs": [creation]}))
+    b._send = MagicMock()
+    run(
+        b._market(
+            creation,
+            {
+                "timestamp": hex(fixture["blockTimestamp"]),
+                "hash": "0xblock",
+                "number": hex(creation["blockNumber"]),
+            },
+            fixture["blockTimestamp"] + 0.3,
+        )
+    )
+    b._send.assert_not_called()
+    assert b._rpc.call_count == 1
+
+
+def test_slot_tick_scans_exact_block_before_any_idle_refresh(tmp_path: Any) -> None:
+    """Run getLogs by hash before idle refresh I/O can consume a new slot."""
+    from packages.valory.skills.fresh_watch_abci.lane import SlotPoller
+
+    b = lane(tmp_path)
+    b._checked = b._safe_ok = True
+    b._poller = SlotPoller()
+    b._poller.height("0x2", 1000)
+    prepared(b)
+    block = {"timestamp": hex(1000), "number": "0x2", "hash": "0xblock"}
+    calls = []
+
+    def rpc(method: str, params: Any) -> Any:
+        calls.append(method)
+        return done(block if method == "eth_getBlockByNumber" else [])
+
+    b._rpc = rpc
+
+    def idle(now: float) -> Any:
+        calls.append("idle_refresh")
+        return done(None)
+
+    b._refresh_idle = idle
+    with patch(MODULE + ".time.time", return_value=1000.3):
+        run(b.async_act())
+    assert calls[:2] == ["eth_getBlockByNumber", "eth_getLogs"]
+    assert b._stats.detections == pytest.approx([0.3])
+
+
+def test_unsigned_restored_shot_times_out_without_receipt_poll(tmp_path: Any) -> None:
+    """Release a restored pre-sign lock after its nonce is confirmed consumed."""
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    info["tx"] = None
+    b.context.shared_state["lightning_lane_inflight"] = info
+    b._rpc = MagicMock(return_value=done("0x8"))
+    with patch(MODULE + ".time.time", return_value=1062):
+        run(b._watch_receipt({"timestamp": hex(1060)}))
+    b._rpc.assert_called_once_with("eth_getTransactionCount", [OWNER, "latest"])
+    assert "lightning_lane_inflight" not in b.context.shared_state
+    assert "lightning_lane_eoa_nonce" not in b.context.shared_state
+
+
+def test_unsigned_restart_releases_lock_with_unchanged_nonce(tmp_path: Any) -> None:
+    """Release abandoned signing state while a live signer keeps exclusion."""
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    info["tx"] = None
+    b.context.shared_state["lightning_lane_inflight"] = info
+    b._persist()
+    b._rpc = MagicMock(return_value=done("0x7"))
+    b.sleep = lambda seconds: iter([None])
+    with patch(MODULE + ".time.time", return_value=1062):
+        run(b._watch_receipt({"timestamp": hex(1060)}))
+        waiting = b.wait_for_lightning_lane()
+        assert next(waiting) is None
+        waiting.close()
+    assert b.context.shared_state["lightning_lane_inflight"] is info
+
+    restarted = lane(tmp_path)
+    restarted._rpc = MagicMock(return_value=done("0x7"))
+    assert "lightning_lane_inflight" not in restarted.context.shared_state
+    assert run(restarted.wait_for_lightning_lane()) is None
+    assert (
+        json.loads((tmp_path / "lightning_lane_state.json").read_text())["inflight"]
+        is None
+    )
+    assert "abandoned_signing" in str(restarted.context.logger.info.call_args)
+    restarted._rpc.assert_not_called()
+
+
+def test_nonce_drop_log_keeps_market_and_required_result_fields(tmp_path: Any) -> None:
+    """Report an unmined drop with the same result fields as a revert."""
+    b = lane(tmp_path)
+    b.context.shared_state["lightning_lane_inflight"] = settled(b, tmp_path)
+    b._rpc = MagicMock(side_effect=[done(None), done("0x8"), done(None)])
+    with patch(MODULE + ".time.time", return_value=1062):
+        run(b._watch_receipt({"timestamp": hex(1060)}))
+    entry = b.context.logger.info.call_args
+    rendered = entry.args[0] % entry.args[1:]
+    for field in (
+        "market=" + MARKET,
+        "tx=0xfeed",
+        "status=dropped",
+        "gas_used=0",
+        "fee_xdai=0",
+        "index=unknown",
+        "block_age=",
+    ):
+        assert field in rendered
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b"upstream unavailable", b'{"error": "invalid"}', b'{"error":{"message":1}}'],
+)
+def test_malformed_send_callback_is_bounded_to_lane(tmp_path: Any, body: bytes) -> None:
+    """A non-JSON RPC response must not raise from the message handler."""
+    b = lane(tmp_path)
+    b.context.shared_state["lightning_lane_inflight"] = settled(b, tmp_path)
+    b._build_http_request_message = MagicMock(return_value=("http", MagicMock()))
+    b._get_request_nonce_from_dialogue = MagicMock(side_effect=["http", "ledger"])
+    b.context.ledger_api_dialogues.create.return_value = ("ledger", MagicMock())
+    b.context.requests.request_id_to_callback = {}
+    b._broadcast(SimpleNamespace(signed_transaction="signed"), "0x1234")
+    callback = b.context.requests.request_id_to_callback["http"]
+    callback(SimpleNamespace(body=body), None)
+    assert b._stats.errors == 1
+
+
+@pytest.mark.parametrize("expires", ["window", "market"])
+def test_signing_wait_cannot_cross_trade_deadline(tmp_path: Any, expires: str) -> None:
+    """Check the active window and market close again after the signing wait."""
+    from aea.helpers.transaction.base import SignedTransaction
+
+    from packages.open_aea.protocols.signing import SigningMessage
+    from packages.valory.skills.fresh_watch_abci.strategy import FastConfig
+
+    b = lane(tmp_path, lightning_lane_max_age_s=60)
+    prepared(b)
+    market = raw_market()
+    market.update(id=MARKET, collateralToken=TOKEN)
+    clock = {"now": 1002}
+    if expires == "window":
+        b.context.params.fast = FastConfig(active_window_utc="00:00-00:17")
+        after_signing = 1021
+    else:
+        market["openingTimestamp"] = 1003
+        after_signing = 1004
+
+    def signed_response() -> Any:
+        clock["now"] = after_signing
+        return SimpleNamespace(
+            performative=SigningMessage.Performative.SIGNED_TRANSACTION,
+            signed_transaction=SignedTransaction(
+                "ethereum", {"raw_transaction": "0xabcdef"}
+            ),
+        )
+
+    reply_on_send(b, signed_response, signing=True)
+    b._broadcast = MagicMock()
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(MODULE + ".time.time", side_effect=lambda: clock["now"]),
+    ):
+        sd.return_value.safe_contract_address = SAFE
+        sent = run(
+            b._send(
+                market,
+                SimpleNamespace(stake=4.0, price=0.6, p_hat=0.95),
+                (0.9, 4444444444444444445),
+                {"baseFeePerGas": "0x1", "number": "0x2", "gasLimit": "0x1000000"},
+                1002,
+            )
+        )
+    assert sent is False
+    assert "lightning_lane_inflight" not in b.context.shared_state
+    b._broadcast.assert_not_called()
+    assert b._shots == 0
+
+
+def test_pending_shot_keeps_lock_after_timeout(tmp_path: Any) -> None:
+    """A pending nonce cannot prove that the signed Safe call has finished."""
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    b.context.shared_state["lightning_lane_inflight"] = info
+    b._rpc = MagicMock(side_effect=[done(None), done("0x7")])
+    with patch(MODULE + ".time.time", return_value=1062):
+        run(b._watch_receipt({"timestamp": hex(1060)}))
+    assert b.context.shared_state.get("lightning_lane_inflight") is info
+    b._rpc.assert_any_call("eth_getTransactionCount", [OWNER, "latest"])
+    assert "status=pending" in str(b.context.logger.info.call_args)
+
+
+def test_consumed_nonce_rechecks_originating_receipt(tmp_path: Any) -> None:
+    """Record a shot mined between the first receipt and latest nonce reads."""
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    b.context.shared_state["lightning_lane_inflight"] = info
+    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+    b._rpc = MagicMock(side_effect=[done(None), done("0x8"), done(receipt)])
+    b._complete = MagicMock()
+    block = {"timestamp": hex(1060), "number": "0x2"}
+    with patch(MODULE + ".time.time", return_value=1062):
+        run(b._watch_receipt(block))
+    b._complete.assert_called_once_with(info, receipt, block)
+    assert b._rpc.call_args_list[2].args == ("eth_getTransactionReceipt", [info["tx"]])
+
+
+def test_pending_timeout_log_is_limited_to_once_per_minute(tmp_path: Any) -> None:
+    """Keep watching each block while keeping the timeout log sparse."""
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    b.context.shared_state["lightning_lane_inflight"] = info
+    b._rpc = MagicMock(
+        side_effect=lambda method, _params: done(
+            None if method == "eth_getTransactionReceipt" else "0x7"
+        )
+    )
+    for now in (1062, 1090, 1122):
+        with patch(MODULE + ".time.time", return_value=now):
+            run(b._watch_receipt({"timestamp": hex(int(now))}))
+    pending = [
+        call
+        for call in b.context.logger.info.call_args_list
+        if "status=pending" in call.args[0]
+    ]
+    assert len(pending) == 2
+    assert b.context.shared_state.get("lightning_lane_inflight") is info
+
+
+@pytest.mark.parametrize("signing", [False, True])
+def test_silent_lane_wait_expires_on_scheduler_ticks(
+    tmp_path: Any, signing: bool
+) -> None:
+    """End raw reads and signing when no message reaches the scheduler."""
+    import datetime
+
+    from packages.valory.skills.abstract_round_abci.behaviour_utils import (
+        AsyncBehaviour,
+    )
+    from packages.valory.skills.fresh_watch_abci.lane_behaviour import LaneRPCError
+
+    b = lane(tmp_path)
+    prepared(b)
+    b.setup = MagicMock()
+    b.sleep = lambda delay: AsyncBehaviour.sleep(b, delay)
+    b.context.requests.request_id_to_callback = {}
+    dialogue = MagicMock()
+    dialogue.dialogue_label.dialogue_reference = ("silent", "")
+    b._build_http_request_message = MagicMock(return_value=(MagicMock(), dialogue))
+    b.context.signing_dialogues.create.return_value = (MagicMock(), dialogue)
+    results = []
+    market = raw_market()
+    market.update(id=MARKET, collateralToken=TOKEN)
+
+    def act() -> Any:
+        try:
+            if signing:
+                result = yield from b._send(
+                    market,
+                    SimpleNamespace(stake=4.0, price=0.6, p_hat=0.95),
+                    (0.9, 4444444444444444445),
+                    {"baseFeePerGas": "0x1", "number": "0x2", "gasLimit": "0x1000000"},
+                    1002,
+                )
+            else:
+                result = yield from b._rpc("eth_blockNumber", [])
+        except LaneRPCError as exc:
+            result = exc
+        results.append(result)
+
+    b.async_act_wrapper = act
+    seconds = [0.0]
+    epoch = datetime.datetime(2026, 1, 1)
+
+    class Clock(datetime.datetime):
+        """Advance local sleeps on ordinary scheduler ticks."""
+
+        @classmethod
+        def now(cls, tz: Any = None) -> "Clock":
+            """Return the current scheduler time."""
+            return cls.fromtimestamp(epoch.timestamp() + seconds[0], tz=tz)
+
+    with (
+        patch(
+            "packages.valory.skills.abstract_round_abci.behaviour_utils.datetime.datetime",
+            Clock,
+        ),
+        patch("time.monotonic", side_effect=lambda: seconds[0]),
+        patch(MODULE + ".time.time", return_value=1002),
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+    ):
+        sd.return_value.safe_contract_address = SAFE
+        b.act()
+        for tick in range(1, 20):
+            seconds[0] = tick * 0.2
+            b.act()
+            if results:
+                break
+    assert results, "The scheduler must expire a wait without a response"
+    assert results == [False] if signing else isinstance(results[0], LaneRPCError)
+    assert "lightning_lane_inflight" not in b.context.shared_state
+    callback = b.context.requests.request_id_to_callback.pop("silent")
+    callback(None, b)
+
+
+@pytest.mark.parametrize("transport", ["http", "ledger"])
+def test_nonce_error_reconciles_the_originating_shot(
+    tmp_path: Any, transport: str
+) -> None:
+    """A duplicate send error must still record a purchase mined by either path."""
+    from packages.valory.protocols.ledger_api import LedgerApiMessage
+
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    b.context.shared_state["lightning_lane_inflight"] = info
+    b.context.requests.request_id_to_callback = {}
+    b._build_http_request_message = MagicMock(return_value=("http", MagicMock()))
+    b.context.ledger_api_dialogues.create.return_value = ("ledger", MagicMock())
+    b._get_request_nonce_from_dialogue = MagicMock(side_effect=["http", "ledger"])
+    b._broadcast(SimpleNamespace(signed_transaction="signed"), "0xabcdef")
+    callback = b.context.requests.request_id_to_callback[transport]
+    if transport == "http":
+        response = SimpleNamespace(body=b'{"error":{"message":"nonce too low"}}')
+    else:
+        response = SimpleNamespace(
+            performative=LedgerApiMessage.Performative.ERROR, message="nonce too low"
+        )
+    callback(response, None)
+    assert b.context.shared_state.get("lightning_lane_inflight") is info
+    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+    b._rpc = MagicMock(
+        side_effect=[done(receipt), done({"timestamp": "0x3ed", "number": "0x2"})]
+    )
+    with patch(MODULE + ".time.time", return_value=1005):
+        run(b.async_act())
+    assert b.durable_trade_count() == 1
+    assert b.read_counted_placement_keys() == {"omen:0xfeed"}
+    assert b._rpc.call_args_list[0].args == ("eth_getTransactionReceipt", ["0xfeed"])
+
+
+@pytest.mark.parametrize("transport", ["http", "ledger"])
+def test_old_broadcast_callback_cannot_change_a_new_shot(
+    tmp_path: Any, transport: str
+) -> None:
+    """A late error for shot A must not release shot B's nonce lock."""
+    from packages.valory.protocols.ledger_api import LedgerApiMessage
+
+    b = lane(tmp_path)
+    old = settled(b, tmp_path)
+    b.context.shared_state["lightning_lane_inflight"] = old
+    b.context.requests.request_id_to_callback = {}
+    b._build_http_request_message = MagicMock(return_value=("http", MagicMock()))
+    b.context.ledger_api_dialogues.create.return_value = ("ledger", MagicMock())
+    b._get_request_nonce_from_dialogue = MagicMock(side_effect=["http", "ledger"])
+    b._broadcast(SimpleNamespace(signed_transaction="signed"), "0xabcdef")
+    response = SimpleNamespace(
+        body=b'{"error":{"message":"nonce too low"}}',
+        performative=LedgerApiMessage.Performative.ERROR,
+        message="nonce too low",
+    )
+    b.context.requests.request_id_to_callback[transport](response, None)
+    assert old.get("reconcile") is True
+    new = dict(old, tx="0xnew", eoa_nonce=8)
+    new.pop("reconcile")
+    b.context.shared_state["lightning_lane_inflight"] = new
+    b.context.shared_state["lightning_lane_eoa_nonce"] = {"nonce": 9, "read_at": 1005}
+    b.context.requests.request_id_to_callback[transport](response, None)
+    assert b.context.shared_state.get("lightning_lane_inflight") == new
+    assert b.context.shared_state.get("lightning_lane_eoa_nonce") == {
+        "nonce": 9,
+        "read_at": 1005,
+    }
+    assert "reconcile" not in new
+
+
+def test_lane_completion_merges_fresh_bets_at_the_store(tmp_path: Any) -> None:
+    """Keep another stored market when settlement updates its strategy data."""
+    from packages.valory.skills.market_manager_abci.bets import Bet
+
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    b.context.shared_state["lightning_lane_inflight"] = info
+    writer = lane(tmp_path)
+    original = b._update_bet_strategy
+
+    def update_strategy(bet: Any) -> None:
+        original(bet)
+        writer.read_bets()
+        row = {
+            key: value
+            for key, value in raw_market().items()
+            if key not in {"condition", "question"}
+        }
+        row.update(id="another-market", collateralToken=TOKEN)
+        row["condition_id"] = "condition"
+        other = Bet(**row, market="omen_subgraph")
+        other.set_investment_amount(1, 2 * 10**18)
+        writer.bets.append(other)
+        writer.store_bets()
+
+    b._update_bet_strategy = update_strategy
+    b._complete(info, {"status": "0x1", "logs": []}, {"timestamp": hex(1005)})
+    b.read_bets()
+    by_id = {bet.id: bet for bet in b.bets}
+    assert set(by_id) == {MARKET, "another-market"}
+    assert by_id["another-market"].invested_amount == 2 * 10**18
+    assert by_id[MARKET].invested_amount == 4 * 10**18
+
+
+def test_old_receipt_recheck_cannot_release_a_new_shot(tmp_path: Any) -> None:
+    """A delayed replacement check must still own the shot it clears."""
+    b = lane(tmp_path)
+    old = settled(b, tmp_path)
+    newer = dict(old, tx="0xnew", eoa_nonce=8)
+    b.context.shared_state["lightning_lane_inflight"] = old
+    calls = []
+
+    def rpc(method: str, params: Any) -> Any:
+        calls.append(method)
+        if len(calls) == 3:
+            b.context.shared_state["lightning_lane_inflight"] = newer
+        return done("0x8" if method == "eth_getTransactionCount" else None)
+
+    b._rpc = rpc
+    with patch(MODULE + ".time.time", return_value=1062):
+        run(b._watch_receipt({"timestamp": hex(1060)}))
+    assert len(calls) == 3
+    assert b.context.shared_state.get("lightning_lane_inflight") is newer
+
+
+@pytest.mark.parametrize("failure", ["counter", "activity"])
+def test_completion_persistence_retries_on_next_tick(
+    tmp_path: Any, failure: str
+) -> None:
+    """Keep recovery data and retry a failed durable write without a new block."""
+    from packages.valory.skills.agent_performance_summary_abci.activity_goal import (
+        record_trade,
+    )
+
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    info["reconcile"] = True
+    b.context.shared_state["lightning_lane_inflight"] = info
+    b._persist()
+    b.setup = MagicMock()
+    b.async_act_wrapper = b.async_act
+    b._checked = b._safe_ok = True
+    b._poller = MagicMock()
+    b._poller.request.return_value = None
+    b._poller.next_at = 1006
+    b._refresh_idle = MagicMock(return_value=done(None))
+    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+    block = {"timestamp": hex(1005), "number": "0x2"}
+    b._rpc = MagicMock(side_effect=[done(receipt), done(block)])
+    original_count = b.record_successful_placement
+    failed: list[bool] = []
+
+    def count(key: str) -> Any:
+        if failure == "counter" and not failed:
+            failed.append(True)
+            return None
+        return original_count(key)
+
+    def activity(*args: Any) -> None:
+        if failure == "activity" and not failed:
+            failed.append(True)
+            raise OSError("disk unavailable")
+        record_trade(*args)
+
+    b.record_successful_placement = count
+    with (
+        patch(MODULE + ".record_trade", side_effect=activity),
+        patch(MODULE + ".time.time", return_value=1005),
+    ):
+        b.act()
+        assert b.context.shared_state.get("lightning_lane_inflight") is info
+        saved = json.loads((tmp_path / "lightning_lane_state.json").read_text())
+        assert saved["inflight"]["receipt"] == receipt
+        assert saved["inflight"]["receipt_block"] == block
+        b.act()
+    assert b.durable_trade_count() == 1
+    assert b.read_counted_placement_keys() == {"omen:0xfeed"}
+    assert "lightning_lane_inflight" not in b.context.shared_state
+    assert (
+        json.loads((tmp_path / "lightning_lane_state.json").read_text())["inflight"]
+        is None
+    )
+    b.read_bets()
+    assert b.bets[0].invested_amount == 4 * 10**18
+    trades = json.loads((tmp_path / "activity_goal_trades.json").read_text())
+    assert len(trades) == 1
+    assert trades[0]["placement_key"] == "omen:0xfeed"
+    assert b._rpc.call_count == 2
+
+
+def test_bets_permission_error_retains_receipt_until_stored(tmp_path: Any) -> None:
+    """Retry a failed investment write before counting or releasing a shot."""
+    import os
+
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+    block = {"timestamp": hex(1005), "number": "0x2"}
+    info.update(receipt=receipt, receipt_block=block)
+    b.context.shared_state["lightning_lane_inflight"] = info
+    b._persist()
+    b._rpc = MagicMock(side_effect=AssertionError("saved receipt needs no RPC"))
+    original_replace = os.replace
+
+    def fail_bets(source: Any, destination: Any) -> None:
+        if destination == b.multi_bets_filepath:
+            raise PermissionError("bets file is read-only")
+        original_replace(source, destination)
+
+    with patch("os.replace", side_effect=fail_bets):
+        run(b.async_act())
+    assert b.context.shared_state.get("lightning_lane_inflight") is info
+    assert b.durable_trade_count() == 0
+    assert b.read_counted_placement_keys() == set()
+    assert FreshQueue(tmp_path / "fresh_watch.json").pending[0]["id"] == MARKET
+    saved = json.loads((tmp_path / "lightning_lane_state.json").read_text())
+    assert saved["inflight"]["receipt"] == receipt
+    assert saved["inflight"]["receipt_block"] == block
+
+    run(b.async_act())
+    b._complete(info, receipt, block)
+    b.read_bets()
+    assert len(b.bets) == 1
+    assert b.bets[0].invested_amount == info["amount"]
+    assert b.durable_trade_count() == 1
+    assert b.read_counted_placement_keys() == {"omen:0xfeed"}
+    assert "lightning_lane_inflight" not in b.context.shared_state
+    assert len(json.loads((tmp_path / "activity_goal_trades.json").read_text())) == 1
+    b._rpc.assert_not_called()
+
+
+def test_interrupted_bets_write_preserves_all_older_positions(tmp_path: Any) -> None:
+    """Keep the saved bets intact when a partial lane write fails."""
+    from packages.valory.skills.fresh_watch_abci.tests.test_foreground_lane_races import (
+        market_bet,
+    )
+
+    b = lane(tmp_path)
+    older = [market_bet("older-one"), market_bet("older-two")]
+    for bet in older:
+        bet.set_investment_amount(0, 2 * 10**18)
+    b.bets = older
+    b.store_bets()
+    original_bets = (tmp_path / "multi_bets.json").read_bytes()
+    info = settled(b, tmp_path)
+    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+    block = {"timestamp": hex(1005), "number": "0x2"}
+    info.update(receipt=receipt, receipt_block=block)
+    b.context.shared_state["lightning_lane_inflight"] = info
+    b._persist()
+    original_dump = json.dump
+    partial: list[bool] = []
+
+    def interrupt(data: Any, target: Any, **kwargs: Any) -> None:
+        if isinstance(data, list) and not partial:
+            target.write("[")
+            target.flush()
+            partial.append(True)
+            raise OSError("disk full during bets write")
+        original_dump(data, target, **kwargs)
+
+    with patch(MODULE + ".json.dump", side_effect=interrupt):
+        run(b.async_act())
+    assert partial == [True]
+    assert b.context.shared_state["lightning_lane_inflight"] is info
+    assert b.durable_trade_count() == 0
+    assert (tmp_path / "multi_bets.json").read_bytes() == original_bets
+    run(b.async_act())
+    b.read_bets()
+    assert {bet.id: bet.invested_amount for bet in b.bets} == {
+        "older-one": 2 * 10**18,
+        "older-two": 2 * 10**18,
+        MARKET: 4 * 10**18,
+    }
+    assert b.durable_trade_count() == 1
+    assert "lightning_lane_inflight" not in b.context.shared_state
+    assert not list(tmp_path.glob("multi_bets.json.*"))
+
+
+def test_overnight_shot_budget_includes_reverts_across_midnight(tmp_path: Any) -> None:
+    """Keep three reverted shots in one 23:00-05:30 active-window budget."""
+    from aea.helpers.transaction.base import SignedTransaction
+
+    from packages.open_aea.protocols.signing import SigningMessage
+    from packages.valory.skills.fresh_watch_abci.strategy import FastConfig
+
+    b = lane(tmp_path)
+    prepared(b)
+    b.context.params.fast = FastConfig(active_window_utc="23:00-05:30")
+    market = raw_market()
+    market.update(id=MARKET, collateralToken=TOKEN, creationTimestamp=86280)
+    response = SimpleNamespace(
+        performative=SigningMessage.Performative.SIGNED_TRANSACTION,
+        signed_transaction=SignedTransaction(
+            "ethereum", {"raw_transaction": "0xabcdef"}
+        ),
+    )
+    reply_on_send(b, response, signing=True)
+    b._broadcast = MagicMock()
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(MODULE + ".time.time", return_value=86280),
+    ):
+        sd.return_value.safe_contract_address = SAFE
+        for nonce in range(7, 10):
+            b.context.shared_state["lightning_lane_eoa_nonce"] = {
+                "nonce": nonce,
+                "read_at": 86280,
+            }
+            assert run(
+                b._send(
+                    market,
+                    SimpleNamespace(stake=4.0, price=0.6, p_hat=0.95),
+                    (0.9, 4444444444444444445),
+                    {"baseFeePerGas": "0x1", "number": "0x2", "gasLimit": "0x1000000"},
+                    86280,
+                )
+            )
+            b._complete(
+                b.context.shared_state["lightning_lane_inflight"],
+                {"status": "0x0"},
+                {"timestamp": hex(86280)},
+            )
+    assert b._shots == 3
+    assert b.durable_trade_count() == 0
+
+    restarted = lane(tmp_path)
+    restarted.context.params.fast = b.context.params.fast
+    restarted._checked = restarted._safe_ok = True
+    restarted._poller = MagicMock()
+    restarted._poller.request.return_value = ("eth_getBlockByNumber", ["latest", False])
+    restarted._refresh_idle = MagicMock(return_value=done(None))
+    for now in (86340, 86460):
+        block = {"timestamp": hex(now), "number": "0x2", "hash": "0xblock"}
+        restarted._poller.block.return_value = block
+        restarted._rpc = MagicMock(
+            side_effect=lambda method, _params, block=block: done(
+                block if method == "eth_getBlockByNumber" else []
+            )
+        )
+        with patch(MODULE + ".time.time", return_value=now):
+            run(restarted.async_act())
+        assert (restarted._night, restarted._shots) == ("1970-01-01", 3)
+        restarted._rpc.assert_called_once_with(
+            "eth_getBlockByNumber", ["latest", False]
+        )
+
+
+def test_invalid_journal_disables_new_shots(tmp_path: Any) -> None:
+    """Keep corrupt recovery data and refuse new RPC work."""
+    path = tmp_path / "lightning_lane_state.json"
+    path.write_text("invalid JSON")
+    b = lane(tmp_path)
+    b._rpc = MagicMock()
+    run(b.async_act())
+    run(b.async_act())
+    b._rpc.assert_not_called()
+    b.context.logger.info.assert_called_once_with(
+        "[LIGHTNING_LANE] off reason=%s", "invalid_lane_state"
+    )
+    assert path.read_text() == "invalid JSON"
+
+
+@pytest.mark.parametrize(
+    "status,body",
+    [(503, b'{"result":null}'), (200, b'{"error":{}}'), (200, b"{}")],
+)
+def test_rpc_failures_pause_reads_without_exposing_endpoint(
+    tmp_path: Any, status: int, body: bytes
+) -> None:
+    """Pause reads for a minute after five unusable RPC replies."""
+    from packages.valory.skills.fresh_watch_abci.lane_behaviour import LaneRPCError
+
+    b = lane(tmp_path)
+    dialogue = reply_on_send(b, SimpleNamespace(status_code=status, body=body))
+    b._build_http_request_message = MagicMock(return_value=(MagicMock(), dialogue))
+    with patch(MODULE + ".time.time", return_value=1002):
+        for _ in range(5):
+            with pytest.raises(LaneRPCError, match="Lane RPC request failed"):
+                run(b._rpc("eth_blockNumber", []))
+    assert (b._stats.calls, b._stats.errors) == (5, 5)
+    assert not b._stats.ready(1061)
+    assert b._stats.ready(1062)
+    b.context.logger.warning.assert_called_once_with(
+        "[LIGHTNING_LANE_RPC] paused_s=60 reason=consecutive_errors"
+    )
+    assert "private-key" not in str(b.context.logger.method_calls)
+
+
+@pytest.mark.parametrize("error", ["", "already known", "insufficient funds"])
+def test_broadcast_result_keeps_nonce_lock(tmp_path: Any, error: str) -> None:
+    """Keep the shot pending for successful, duplicate, and failed sends."""
+    from packages.valory.protocols.ledger_api import LedgerApiMessage
+
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    b.context.shared_state["lightning_lane_inflight"] = info
+    b._receive_ledger_send(
+        SimpleNamespace(performative=LedgerApiMessage.Performative.TRANSACTION_DIGEST),
+        info["tx"],
+    )
+    b._receive_send(
+        SimpleNamespace(body=json.dumps({"error": {"message": error}}).encode()),
+        info["tx"],
+    )
+    assert b.context.shared_state["lightning_lane_inflight"] is info
+    assert b._stats.errors == int(error == "insufficient funds")
+    assert b.context.logger.warning.called is (error == "insufficient funds")
+    assert b.durable_trade_count() == 0
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["inflight", "round", "nonce", "settlement", "age", "funds", "balances", "signing"],
+)
+def test_send_refusal_does_not_spend_shot_budget(tmp_path: Any, reason: str) -> None:
+    """Refuse an unsafe send before broadcast and preserve its budget."""
+    from packages.open_aea.protocols.signing import SigningMessage
+
+    b = lane(tmp_path)
+    prepared(b)
+    market = raw_market()
+    market.update(id=MARKET, collateralToken=TOKEN)
+    shared = b.context.shared_state
+    if reason == "inflight":
+        shared["lightning_lane_inflight"] = {"tx": "0xother"}
+    elif reason == "round":
+        b.context.state.round_sequence.current_round = type("RedeemRound", (), {})()
+    elif reason == "nonce":
+        shared.pop("lightning_lane_eoa_nonce")
+    elif reason == "settlement":
+        shared["lightning_lane_last_fsm_settlement"] = 1001
+    elif reason == "age":
+        market["creationTimestamp"] = 995
+    elif reason == "funds":
+        b._balances["eoa"] = 0
+    elif reason == "balances":
+        b._balances.clear()
+    else:
+        reply_on_send(
+            b,
+            SimpleNamespace(performative=SigningMessage.Performative.ERROR),
+            signing=True,
+        )
+    b._broadcast = MagicMock()
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(MODULE + ".time.time", return_value=1002),
+    ):
+        sd.return_value.safe_contract_address = SAFE
+        assert (
+            run(
+                b._send(
+                    market,
+                    SimpleNamespace(stake=4.0, p_hat=0.95),
+                    (0.9, 1),
+                    {"baseFeePerGas": "0x1", "gasLimit": "0x1000000"},
+                    1002,
+                )
+            )
+            is False
+        )
+    b._broadcast.assert_not_called()
+    assert b._shots == 0
+    assert shared.get("lightning_lane_inflight") == (
+        {"tx": "0xother"} if reason == "inflight" else None
+    )
+    if reason == "signing":
+        assert (
+            json.loads((tmp_path / "lightning_lane_state.json").read_text())["inflight"]
+            is None
+        )
+    else:
+        b.context.signing_dialogues.create.assert_not_called()
+
+
+@pytest.mark.parametrize("read", ["nonce", "block"])
+def test_receipt_read_cannot_complete_a_replaced_shot(tmp_path: Any, read: str) -> None:
+    """Keep a newer shot when the guard changes the lock during a read."""
+    b = lane(tmp_path)
+    old = settled(b, tmp_path)
+    newer = dict(old, tx="0xnew", eoa_nonce=8)
+    b.context.shared_state["lightning_lane_inflight"] = old
+
+    def rpc(method: str, params: Any) -> Any:
+        if method == "eth_getTransactionReceipt":
+            return done(
+                None if read == "nonce" else {"status": "0x1", "blockNumber": "0x2"}
+            )
+        b.context.shared_state["lightning_lane_inflight"] = newer
+        return done("0x8" if read == "nonce" else {"timestamp": hex(1005)})
+
+    b._rpc = rpc
+    with patch(MODULE + ".time.time", return_value=1062):
+        run(b._watch_receipt({}))
+    assert b.context.shared_state["lightning_lane_inflight"] is newer
+    assert b.durable_trade_count() == 0
+    assert not (tmp_path / "activity_goal_trades.json").exists()
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["collateral", "round", "receipt", "reserves", "bought", "stored", "strategy"],
+)
+def test_market_rejection_leaves_foreground_work_available(
+    tmp_path: Any, reason: str
+) -> None:
+    """Skip unusable or already bought markets without signing a shot."""
+    from pathlib import Path
+
+    from packages.valory.skills.fresh_watch_abci.chain_discovery import creation_details
+    from packages.valory.skills.market_manager_abci.bets import Bet
+
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures" / "chain_creation.json").read_text()
+    )
+    creation = fixture["logs"][-1]
+    b = lane(tmp_path, lightning_still_hold=True)
+    market = creation_details(creation)
+    if reason == "collateral":
+        creation["data"] = (
+            "0x"
+            + encode(
+                ["address", "address", "address", "bytes32[]", "uint256"],
+                [
+                    market["id"],
+                    market["conditional_tokens"],
+                    TOKEN,
+                    [bytes.fromhex(market["condition"]["id"][2:])],
+                    0,
+                ],
+            ).hex()
+        )
+    elif reason == "round":
+        b.context.state.round_sequence.current_round = type("RedeemRound", (), {})()
+    elif reason == "bought":
+        b.context.shared_state["lightning_lane_bet_markets"] = {market["id"]}
+    elif reason == "stored":
+        row = {
+            key: value
+            for key, value in raw_market().items()
+            if key not in {"condition", "question"}
+        }
+        row.update(id=market["id"], condition_id=market["condition"]["id"])
+        bet = Bet(**row, market="omen_subgraph")
+        bet.set_investment_amount(0, 4 * 10**18)
+        b.bets.append(bet)
+        b.store_bets()
+    reserves = [0, 7] if reason == "reserves" else [7 * 10**18] * 2
+    b._rpc = MagicMock(
+        side_effect=[
+            done(None if reason == "receipt" else {"logs": fixture["logs"]}),
+            done("0x" + encode(["uint256[]"], [reserves]).hex()),
+        ]
+    )
+    block = {
+        "timestamp": hex(fixture["blockTimestamp"]),
+        "hash": "0xblock",
+        "number": "0x2",
+    }
+    with patch(MODULE + ".time.time", return_value=fixture["blockTimestamp"] + 0.4):
+        run(b._market(creation, block, fixture["blockTimestamp"] + 0.3))
+    assert "lightning_lane_inflight" not in b.context.shared_state
+    b.context.signing_dialogues.create.assert_not_called()
+    assert b.durable_trade_count() == 0
+    assert b._rpc.call_count == (
+        0 if reason in {"collateral", "round"} else 1 if reason == "receipt" else 2
+    )
+    if reason == "strategy":
+        assert b.context.logger.info.call_args.args[-1] == "base_rate"
+
+
+@pytest.mark.parametrize("supported", [False, True])
+def test_tick_checks_safe_and_schedules_idle_reads(
+    tmp_path: Any, supported: bool
+) -> None:
+    """Check the Safe once, then follow slot and idle schedules."""
+    b = lane(tmp_path)
+    prepared(b)
+    b._was_fresh = True
+    b._rpc = MagicMock(
+        side_effect=[
+            done(hex(1 if supported else 2)),
+            done("0x" + encode(["bool"], [True]).hex()),
+            done("0x2"),
+            done(None),
+        ]
+    )
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(MODULE + ".time.time", return_value=1002),
+    ):
+        sd.return_value.safe_contract_address = SAFE
+        run(b.async_act())
+        run(b.async_act())
+        if supported:
+            run(b.async_act())
+    assert b._checked is True
+    assert b._safe_ok is supported
+    assert b._rpc.call_count == (4 if supported else 2)
+    if supported:
+        assert b._poller.wanted == 2
+        assert b._poller.next_at == 1002.25
+        b.sleep.assert_called_once_with(0.25)
+    else:
+        b.sleep.assert_called_once_with(1)
+    assert b._shots == 0
+
+
+def test_tick_reports_rpc_pause_without_new_reads(tmp_path: Any) -> None:
+    """Report RPC counts while the error pause holds new work."""
+    b = lane(tmp_path)
+    b._stats.started_at = 0
+    b._stats.paused_until = 1062
+    b._rpc = MagicMock()
+    with patch(MODULE + ".time.time", return_value=1002):
+        run(b.async_act())
+    assert "[LIGHTNING_LANE_RPC]" in b.context.logger.info.call_args.args[0]
+    b.sleep.assert_called_once_with(0.5)
+    b._rpc.assert_not_called()
+
+
+def test_tick_stops_if_window_closes_during_block_read(tmp_path: Any) -> None:
+    """Do not scan creations after the active window closes during I/O."""
+    from packages.valory.skills.fresh_watch_abci.lane import SlotPoller
+
+    b = lane(tmp_path)
+    b.context.params.fast = replace(b.params.fast, active_window_utc="00:00-05:30")
+    b._checked = b._safe_ok = True
+    b._poller = SlotPoller()
+    b._poller.height("0x2", 1002)
+    clock = [1002]
+
+    def rpc(method: str, params: Any) -> Any:
+        clock[0] = 20000
+        return done({"number": "0x2", "timestamp": hex(1000), "hash": "0xblock"})
+
+    b._rpc = MagicMock(side_effect=rpc)
+    with patch(MODULE + ".time.time", side_effect=lambda: clock[0]):
+        run(b.async_act())
+    b._rpc.assert_called_once_with("eth_getBlockByNumber", ["0x2", False])
+    assert b._shots == 0
+
+
+def test_tick_rpc_failure_retries_after_short_sleep(tmp_path: Any) -> None:
+    """Keep a failed RPC read inside the lane tick."""
+    b = lane(tmp_path)
+    b._checked = b._safe_ok = True
+    b._build_http_request_message = MagicMock(side_effect=ValueError("unavailable"))
+    with patch(MODULE + ".time.time", return_value=1002):
+        run(b.async_act())
+    b.context.logger.warning.assert_called_once_with(
+        "[LIGHTNING_LANE] tick_failed=true"
+    )
+    b.sleep.assert_called_once_with(0.25)
+    assert b._stats.errors == 1
+    assert "lightning_lane_inflight" not in b.context.shared_state
+
+
+def test_tick_scans_all_creations_without_receipts(tmp_path: Any) -> None:
+    """Continue the block scan when a creation has no receipt yet."""
+    from pathlib import Path
+
+    from packages.valory.skills.fresh_watch_abci.lane import SlotPoller
+
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures" / "chain_creation.json").read_text()
+    )
+    b = lane(tmp_path)
+    prepared(b)
+    b._checked = b._safe_ok = b._was_fresh = True
+    b._poller = SlotPoller()
+    b._poller.height("0x2", 1002)
+    block = {"timestamp": hex(1000), "number": "0x2", "hash": "0xblock"}
+    b._rpc = MagicMock(
+        side_effect=[
+            done(block),
+            done([fixture["logs"][-1]] * 2),
+            done(None),
+            done(None),
+        ]
+    )
+    with patch(MODULE + ".time.time", return_value=1002):
+        run(b.async_act())
+    assert [call.args[0] for call in b._rpc.call_args_list] == [
+        "eth_getBlockByNumber",
+        "eth_getLogs",
+        "eth_getTransactionReceipt",
+        "eth_getTransactionReceipt",
+    ]
+    b.context.signing_dialogues.create.assert_not_called()
+    assert "lightning_lane_inflight" not in b.context.shared_state

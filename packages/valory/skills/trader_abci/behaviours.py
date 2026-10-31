@@ -49,12 +49,14 @@ from packages.valory.skills.reset_pause_abci.behaviours import (
     ResetPauseABCIConsensusBehaviour,
 )
 from packages.valory.skills.staking_abci.behaviours import StakingRoundBehaviour
+from packages.valory.skills.staking_abci.lane_guard import LaneGuardMixin
 from packages.valory.skills.termination_abci.behaviours import (
     BackgroundBehaviour,
     TerminationAbciBehaviours,
 )
 from packages.valory.skills.trader_abci.composition import TraderAbciApp
 from packages.valory.skills.trader_abci.mech_latency import (
+    TraderMechPurchaseSubscriptionBehaviour,
     TraderMechRequestBehaviour,
     TraderMechResponseBehaviour,
     TraderPostTxSettlementBehaviour,
@@ -69,6 +71,12 @@ from packages.valory.skills.transaction_settlement_abci.behaviours import (
 from packages.valory.skills.tx_settlement_multiplexer_abci.behaviours import (
     PostTxSettlementFullBehaviour,
 )
+
+
+class TraderBackgroundBehaviour(LaneGuardMixin, BackgroundBehaviour):
+    """Guard the Safe before preparing the termination transaction."""
+
+    behaviour_id = BackgroundBehaviour.auto_behaviour_id()
 
 
 class TraderConsensusBehaviour(AbstractRoundBehaviour):
@@ -98,13 +106,17 @@ class TraderConsensusBehaviour(AbstractRoundBehaviour):
         for b in behaviours
         if b.matching_round
         not in {
+            TraderBackgroundBehaviour.matching_round,
             TraderMechRequestBehaviour.matching_round,
+            TraderMechPurchaseSubscriptionBehaviour.matching_round,
             TraderMechResponseBehaviour.matching_round,
             TraderPostTxSettlementBehaviour.matching_round,
         }
     } | {
+        TraderBackgroundBehaviour,
         TraderMechRequestBehaviour,
+        TraderMechPurchaseSubscriptionBehaviour,
         TraderMechResponseBehaviour,
         TraderPostTxSettlementBehaviour,
     }
-    background_behaviours_cls = {BackgroundBehaviour}  # type: ignore
+    background_behaviours_cls = {TraderBackgroundBehaviour}  # type: ignore

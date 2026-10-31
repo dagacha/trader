@@ -1,6 +1,6 @@
 {
     "name": "omenstrat_fast",
-    "hash": "bafybeihrlwceiiw3f3jqpgw7orrckl6h3txuni56xnqvkk7athz4cpn5yu",
+    "hash": "bafybeiag7h75v6es2xbxfqjvrmdt2vybwayt74rbymy7p2hz5f4ladsage",
     "description": "Fresh-watch Omen agent with the fixed fast strategy.",
     "image": "https://operate.olas.network/_next/image?url=%2Fimages%2Fprediction-agent.png&w=3840&q=75",
     "service_version": "main",
@@ -458,6 +458,67 @@
             "name": "Lightning creators",
             "description": "Set the creator addresses allowed for lightning discovery and bets.",
             "value": "[\"0x89c5cc945dd550bcffb72fe42bff002429f46fec\",\"0xffc8029154ecd55abed15bd428ba596e7d23f557\"]",
+            "provision_type": "user"
+        },
+        "LIGHTNING_LANE": {
+            "name": "Lightning lane",
+            "description": "Enable direct still-hold bets from this agent.",
+            "value": "false",
+            "provision_type": "user"
+        },
+        "LIGHTNING_RPC_URL": {
+            "name": "Lightning rpc url",
+            "description": "Set the private lane RPC endpoint. Keep its key secret.",
+            "value": "",
+            "provision_type": "user",
+            "is_secret": true
+        },
+        "LIGHTNING_POLL_OFFSET_S": {
+            "name": "Lightning poll offset s",
+            "description": "Poll this many seconds after the next slot starts.",
+            "value": "0.3",
+            "provision_type": "user"
+        },
+        "LIGHTNING_POLL_STEP_S": {
+            "name": "Lightning poll step s",
+            "description": "Set the delay between polls for the next block.",
+            "value": "0.25",
+            "provision_type": "user"
+        },
+        "LIGHTNING_LANE_MAX_AGE_S": {
+            "name": "Lightning lane max age s",
+            "description": "Skip direct bets older than this many seconds.",
+            "value": "6",
+            "provision_type": "user"
+        },
+        "LIGHTNING_LANE_GAS_LIMIT": {
+            "name": "Lightning lane gas limit",
+            "description": "Set the fixed gas limit for each lane transaction.",
+            "value": "400000",
+            "provision_type": "user"
+        },
+        "LIGHTNING_LANE_TIP_GWEI": {
+            "name": "Lightning lane tip gwei",
+            "description": "Set a fixed tip for the night. Zero disables lane sends.",
+            "value": "0.0",
+            "provision_type": "user"
+        },
+        "LIGHTNING_LANE_TIP_CAP_GWEI": {
+            "name": "Lightning lane tip cap gwei",
+            "description": "Reject a fixed tip above this limit in gwei.",
+            "value": "1000.0",
+            "provision_type": "user"
+        },
+        "LIGHTNING_LANE_INFLIGHT_TIMEOUT_S": {
+            "name": "Lightning lane inflight timeout s",
+            "description": "Wait this many seconds for a lane receipt before nonce refresh.",
+            "value": "60",
+            "provision_type": "user"
+        },
+        "LIGHTNING_LANE_MAX_PER_NIGHT": {
+            "name": "Lightning lane max per night",
+            "description": "Limit lane shots per night, including reverts. Minus one uses MAX_TRADES.",
+            "value": "-1",
             "provision_type": "user"
         }
     }

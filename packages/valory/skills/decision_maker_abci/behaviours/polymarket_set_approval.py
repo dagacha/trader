@@ -62,6 +62,7 @@ class PolymarketSetApprovalBehaviour(PolymarketDepositWalletBehaviour):
 
     def async_act(self) -> Generator:
         """Do the action."""
+        yield from self.wait_for_lightning_lane()
 
         with self.context.benchmark_tool.measure(self.behaviour_id).local():
             # CLOB v2: provision the DepositWallet and set its trading approvals

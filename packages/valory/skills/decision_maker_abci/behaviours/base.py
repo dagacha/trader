@@ -79,6 +79,7 @@ from packages.valory.skills.market_manager_abci.bets import (
     P_YES_FIELD,
     PredictionResponse,
 )
+from packages.valory.skills.staking_abci.lane_guard import LaneGuardMixin
 from packages.valory.skills.transaction_settlement_abci.payload_tools import (
     hash_payload_to_hex,
 )
@@ -119,7 +120,7 @@ def remove_fraction_wei(amount: int, fraction: float) -> int:
     raise ValueError(f"The given fraction {fraction!r} is not in the range [0, 1].")
 
 
-class DecisionMakerBaseBehaviour(BetsManagerBehaviour, ABC):
+class DecisionMakerBaseBehaviour(LaneGuardMixin, BetsManagerBehaviour, ABC):
     """Represents the base class for the decision-making FSM behaviour."""
 
     def __init__(self, **kwargs: Any) -> None:

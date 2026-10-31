@@ -20,6 +20,7 @@
 """Optional lightning controls and the local still-hold evidence cache."""
 
 import json
+import math
 import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -44,9 +45,37 @@ class LightningConfig:
     lightning_preview: bool = False
     lightning_preview_max_per_night: int = 15
     lightning_creators: List[str] = field(default_factory=lambda: FastConfig().creators)
+    lightning_lane: bool = False
+    lightning_rpc_url: str = field(default="", repr=False)
+    lightning_poll_offset_s: float = 0.3
+    lightning_poll_step_s: float = 0.25
+    lightning_lane_max_age_s: int = 6
+    lightning_lane_gas_limit: int = 400000
+    lightning_lane_tip_gwei: float = 0.0
+    lightning_lane_tip_cap_gwei: float = 1000.0
+    lightning_lane_inflight_timeout_s: int = 60
+    # -1 selects MAX_TRADES when FastParams loads the deployment controls.
+    lightning_lane_max_per_night: int = 3
 
     def __post_init__(self) -> None:
         """Reject controls that cannot give a bounded probability or budget."""
+        if not (
+            math.isfinite(self.lightning_lane_tip_gwei)
+            and math.isfinite(self.lightning_lane_tip_cap_gwei)
+            and 0
+            <= self.lightning_lane_tip_gwei
+            <= self.lightning_lane_tip_cap_gwei
+            <= 2000
+            and math.isfinite(self.lightning_poll_offset_s)
+            and math.isfinite(self.lightning_poll_step_s)
+            and self.lightning_poll_offset_s >= 0
+            and self.lightning_poll_step_s > 0
+            and self.lightning_lane_max_age_s > 0
+            and 100000 <= self.lightning_lane_gas_limit <= 2000000
+            and self.lightning_lane_inflight_timeout_s > 0
+            and self.lightning_lane_max_per_night >= -1
+        ):
+            raise ValueError("Lane fee, polling, and budget controls are invalid.")
         if not self.lightning_creators or any(
             re.fullmatch(r"0x[0-9a-fA-F]{40}", value) is None
             for value in [self.omen_fpmm_factory, *self.lightning_creators]

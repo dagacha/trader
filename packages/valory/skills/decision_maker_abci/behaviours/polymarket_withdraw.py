@@ -104,6 +104,7 @@ class PolymarketWithdrawBehaviour(PolymarketDepositWalletBehaviour):
 
     def async_act(self) -> Generator:
         """Run the sell-off."""
+        yield from self.wait_for_lightning_lane()
         self._set_state(WITHDRAWAL_STATE_SELLING)
         # Reset per-session records so the GET endpoint and end-of-sweep
         # state reflect THIS sweep only. Without this, an automatic

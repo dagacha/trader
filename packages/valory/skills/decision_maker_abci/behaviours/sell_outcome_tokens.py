@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # ------------------------------------------------------------------------------
 #
-#   Copyright 2025 Valory AG
+#   Copyright 2025-2026 Valory AG
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -83,6 +83,7 @@ class SellOutcomeTokensBehaviour(DecisionMakerBaseBehaviour, QueryingBehaviour):
 
     def async_act(self) -> Generator:
         """Do the action."""
+        yield from self.wait_for_lightning_lane()
 
         agent = self.context.agent_address
         tx_submitter = tx_hex = mocking_mode = sell_amount = outcome_index = None

@@ -8,13 +8,15 @@ aea_version: '>=2.0.0, <3.0.0'
 fingerprint:
   README.md: bafybeifrpl36fddmgvniwvghqtxdzc44ry6l2zvqy37vu3y2xvwyd23ugy
   __init__.py: bafybeieklhap7bydof2ugmbyzjrjcrikehbmbqhjyovp7sp4tbdlfa2sgi
-  behaviours.py: bafybeiesvcuktnimnzzjzh7od5od7oxlbh554vtcx6kb7a2ioa4maxrm2u
+  behaviours.py: bafybeigekkpbsv7sva5nubfdqgdczozclfuemvmmqkfqt2vwxusqqkln4i
   dialogues.py: bafybeibjyeuiqonquqx4hnovbkippxk3rng4q42t5n4rb77b642h6wa72y
   fsm_specification.yaml: bafybeicuoejmaks3ndwhbflp64kkfdkrdyn74a2fplarg4l3gxlonfmeoq
   handlers.py: bafybeidg4plq4x7hrk5vxihtphfd5uf26kh5yukb4m3wta4b4lkw7rchku
+  lane_guard.py: bafybeideiv4ef5ablin2ghtrgl2bq4eqagbviwq5ixd22jsy4677wpumrq
   models.py: bafybeihwrtmgur7swvwz327r5lotkddria36hnaf42dl6u2pg4xuvludq4
   payloads.py: bafybeigncopqpz3a2nd6hgpsbqjqff2hsoa73abjck4ic5tnxpkzmfmkwu
   rounds.py: bafybeiavfso2rano7hnqsqgh7pzctgooto4atc6xutwtchwoe73lpxsoxq
+  rpc.py: bafybeiguomxbj7aqxfjkjnu4rspnq3micb5sc3kzaprfvan7aioyu5eafy
   tests/__init__.py: bafybeid7m6ynosqeb4mvsss2hqg75aly5o2d47r7yfg2xtgwzkkilv2d2m
   tests/test_behaviours.py: bafybeigjjxczsfiqeddcynl5km2z45n3puzvi4efgwfexcisfj6solhjze
   tests/test_dialogues.py: bafybeidwjk52mufwvkj4cr3xgqycbdzxc6gvosmqyuqdjarnrgwth6wcai
@@ -31,6 +33,7 @@ contracts:
 - valory/mech_activity:0.1.0:bafybeibsvqydfecckfxdd267fo6ebow6skdnub6axt3tuwiye6qo3avna4
 protocols:
 - valory/contract_api:1.0.0:bafybeibld2xb5m7kyluiptkamp4nrt6oeomkohz7a3yppbv2oo7qw2e4la
+- valory/ledger_api:1.0.0:bafybeiecq56phjfws36rgrefw6niyo4ezesloodsfis647mpm5ygqo4ysi
 skills:
 - valory/abstract_round_abci:0.1.0:bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4
 - valory/transaction_settlement_abci:0.1.0:bafybeidmmhjcgp7chozxovensq3zplkufvaityd2w3zladtssu4ijvqbzm

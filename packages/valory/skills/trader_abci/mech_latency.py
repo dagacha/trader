@@ -31,7 +31,12 @@ from packages.valory.skills.mech_interact_abci.behaviours.offchain_request impor
     OffchainAttemptResult,
     OffchainCycleResult,
     OffchainRequestExecutor,
+    PaymentChallenge,
     PendingRequest,
+    _DepositBuildResult,
+)
+from packages.valory.skills.mech_interact_abci.behaviours.purchase_subcription import (
+    MechPurchaseSubscriptionBehaviour,
 )
 from packages.valory.skills.mech_interact_abci.behaviours.request import (
     MechRequestBehaviour,
@@ -40,6 +45,7 @@ from packages.valory.skills.mech_interact_abci.behaviours.response import (
     MechResponseBehaviour,
 )
 from packages.valory.skills.mech_interact_abci.states.base import Event
+from packages.valory.skills.staking_abci.lane_guard import LaneGuardMixin
 from packages.valory.skills.tx_settlement_multiplexer_abci.behaviours import (
     PostTxSettlementBehaviour,
 )
@@ -65,6 +71,29 @@ def request_timing(
 
 class TimedOffchainRequestExecutor(OffchainRequestExecutor):
     """Record each POST time, including the retry after a deposit."""
+
+    def _build_deposit_tx(
+        self,
+        challenge: PaymentChallenge,
+        payment_type: bytes,
+        delivery_rate: int,
+        tracker_balance: int,
+    ) -> Generator[None, None, _DepositBuildResult]:
+        """Reserve the Safe before an off-chain request prepares a deposit.
+
+        :param challenge: validated payment challenge.
+        :param payment_type: payment selector.
+        :param delivery_rate: current Mech fee.
+        :param tracker_balance: current tracker balance.
+        :yield: control while the lane settles and the deposit is prepared.
+        :return: prepared deposit or its failure reason.
+        """
+        yield from self._b.wait_for_lightning_lane(reserve=True)
+        return (
+            yield from super()._build_deposit_tx(
+                challenge, payment_type, delivery_rate, tracker_balance
+            )
+        )
 
     def run(self) -> Generator[None, None, OffchainCycleResult]:
         """Release the last fast target when a request cycle fails."""
@@ -232,7 +261,15 @@ class TimedOffchainRequestExecutor(OffchainRequestExecutor):
         return selected.address, selected.http_url
 
 
-class TraderMechRequestBehaviour(MechRequestBehaviour):
+class TraderMechPurchaseSubscriptionBehaviour(
+    LaneGuardMixin, MechPurchaseSubscriptionBehaviour
+):
+    """Guard the Safe before preparing an on-chain Mech subscription."""
+
+    behaviour_id = MechPurchaseSubscriptionBehaviour.auto_behaviour_id()
+
+
+class TraderMechRequestBehaviour(LaneGuardMixin, MechRequestBehaviour):
     """Use the shared request code with local timing records."""
 
     def setup(self) -> None:

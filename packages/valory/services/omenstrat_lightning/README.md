@@ -43,6 +43,72 @@ The usual slip bound can lower the ceiling.
 minimum-output calculation and bounded pre-flight simulation. Direct bets count
 against `MAX_TRADES` in the same way as Mech decisions.
 
+## Optional next-block lane
+
+`LIGHTNING_LANE` defaults to `false` in every skill, agent, service, and template.
+With an explicit opt-in, a private `LIGHTNING_RPC_URL`, and a positive fixed tip,
+the background lane polls the next five-second slot at timestamp + 5 + offset.
+It retries a missing block at the configured step, then resyncs after six seconds.
+One log request uses the new block hash and the allowed creators. Five consecutive
+RPC errors pause only this lane for 60 seconds. Logs expose the RPC host only.
+
+The lane requires the title in the creation receipt, usable base-rate evidence,
+and a free trade slot. It reuses fast sizing and the exact placement ceiling.
+It sends a locally encoded Safe batch with an exact approval and a minimum YES
+output of `ceil(stake / ceiling)`. It wraps only a collateral shortfall. The
+next-block shot has no preflight or gas estimate. Markets older than six seconds
+remain on the existing FSM path.
+
+The Safe must have threshold one and the sending EOA as an owner. Only fresh-watch,
+decision, selection, and off-chain Mech rounds can admit a shot. A prepared Safe
+transaction excludes the lane. Safe preparation waits for the lane receipt or a
+timeout followed by a pending-nonce read. FSM settlement invalidates the cached
+EOA nonce. A local journal retains the shot budget and pending lock across restart.
+Successful receipts update the bets store, strategy, activity ledger, and durable
+trade counter with `omen:<tx>`. Queue removal prevents a second FSM bet.
+
+| Environment name | Default | Purpose |
+| --- | --- | --- |
+| `LIGHTNING_LANE` | `false` | Enable the optional lane. |
+| `LIGHTNING_RPC_URL` | empty | Private raw JSON-RPC endpoint; secret. |
+| `LIGHTNING_POLL_OFFSET_S` | `0.3` | Delay after the next slot starts. |
+| `LIGHTNING_POLL_STEP_S` | `0.25` | Retry interval for a missing block. |
+| `LIGHTNING_LANE_MAX_AGE_S` | `6` | Maximum creation age at send. |
+| `LIGHTNING_LANE_GAS_LIMIT` | `400000` | Fixed external transaction gas limit. |
+| `LIGHTNING_LANE_TIP_GWEI` | `0` | Fixed nightly tip; zero blocks sends. |
+| `LIGHTNING_LANE_TIP_CAP_GWEI` | `1000` | Tip limit; caps above 2000 are invalid. |
+| `LIGHTNING_LANE_INFLIGHT_TIMEOUT_S` | `60` | Receipt deadline before nonce refresh. |
+| `LIGHTNING_LANE_MAX_PER_NIGHT` | `MAX_TRADES` | Shot budget, including reverts; `-1` selects `MAX_TRADES`. |
+
+Add all ten names above to olas-scripts `patch_agent_env_passthrough.py`
+`_NAMED_VARS`, in addition to the existing names below. Keep the endpoint secret.
+The fixed tip never uses another trader's transaction or tip. The EOA must cover
+three shots at the configured gas limit and maximum fee.
+
+The planning budget is about 2–4 light reads and one log read per five-second
+block: about 4,300 blocks and 15,000 calls per agent per six-hour night. Idle
+balance/nonce refreshes, receipt reads, startup, and retries add calls. Check the
+ten-minute `[LIGHTNING_LANE_RPC]` reports before a wider rollout.
+
+The local Anvil Gnosis fork at block 48997577 measured a 4 xDAI Safe buy at
+271,315 gas and a forced minimum-output revert at 151,073 gas. At 550 gwei,
+the fees were 0.14922325 and 0.08309015 xDAI. Both batches wrapped a 4 xDAI
+shortfall. The revert left Safe collateral, native balance, and approval unchanged.
+Run [the fork script](../../../../scripts/lightning_lane_fork.py) on a fresh fork
+to reproduce the checks. Live next-block inclusion and the sub-300 ms send target
+require the canary; this fork checks execution and gas.
+
+```sh
+grep '\[LIGHTNING_LANE_RPC\]' agent.log
+grep '\[LIGHTNING_LANE\]' agent.log
+grep '\[LIGHTNING_LANE_RESULT\]' agent.log
+```
+
+After merge, DG selects at most two lightning traders on different hosts, a
+private endpoint for each host, and the fixed nightly tip. Compare against the
+31 October #39 baseline. Roll back the lane by setting `LIGHTNING_LANE=false`
+and running `release_service.sh --quickstart N`.
+
 ## Parameters
 
 The Boolean defaults are OFF in the shared skills and the fast agent/service.

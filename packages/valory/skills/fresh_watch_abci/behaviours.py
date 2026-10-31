@@ -24,7 +24,6 @@ import json
 import time
 from abc import ABC
 from dataclasses import asdict, replace
-from fractions import Fraction
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple, cast
 
 from eth_abi import encode
@@ -73,11 +72,13 @@ from packages.valory.skills.decision_maker_abci.behaviours.trade_count import (
     TradeCountBehaviour,
 )
 from packages.valory.skills.decision_maker_abci.models import RedeemingProgress
+from packages.valory.skills.decision_maker_abci.payloads import BetPlacementPayload
 from packages.valory.skills.decision_maker_abci.policy import EGreedyPolicy
 from packages.valory.skills.fresh_watch_abci.chain_discovery import (
     ChainDiscoveryMixin,
     ChainRPCError,
 )
+from packages.valory.skills.fresh_watch_abci.lane import execution_ceiling
 from packages.valory.skills.fresh_watch_abci.lightning import (
     BaseRateCache,
     LightningConfig,
@@ -564,6 +565,15 @@ class FreshWatchBehaviour(
 
         lightning = lightning_controls(self)
         candidate = queue.pending[0]
+        if lightning.lightning_lane:
+            self.read_bets()
+            mined = self.context.shared_state.get("lightning_lane_bet_markets", set())
+            if candidate["id"] in mined or any(
+                bet.id == candidate["id"] and bet.has_investments for bet in self.bets
+            ):
+                queue.pending.pop(0)
+                queue.save()
+                return {"lane": "wait"}
         if "block_hash" in candidate and (
             float(candidate["scaledLiquidityMeasure"]) <= 0
             or min(map(int, candidate["outcomeTokenAmounts"])) <= 0
@@ -642,6 +652,13 @@ class FreshWatchBehaviour(
         )
         balances = yield from pool_read(bet.id, bet.collateralToken, bet.condition_id)
         requested_at = time.time()
+        # The lane can buy this market while the pool read yields.
+        self.read_bets()
+        mined = self.context.shared_state.get("lightning_lane_bet_markets", set())
+        if bet.id in mined or any(
+            stored.id == bet.id and stored.has_investments for stored in self.bets
+        ):
+            return {"lane": "wait"}
         if (
             balances is None
             or ("block_hash" in raw and (not balances or min(balances) <= 0))
@@ -660,7 +677,7 @@ class FreshWatchBehaviour(
                 queue.pending.sort(
                     key=lambda row: (int(row["creationTimestamp"]), row["id"])
                 )
-                del queue.asked[bet.id]
+                queue.asked.pop(bet.id, None)
                 queue.save()
             elif "block_hash" in raw and balances and min(balances) <= 0:
                 queue = FreshQueue(queue.path)
@@ -727,7 +744,7 @@ class FreshWatchBehaviour(
             queue.pending.sort(
                 key=lambda row: (int(row["creationTimestamp"]), row["id"])
             )
-            del queue.asked[bet.id]
+            queue.asked.pop(bet.id, None)
             queue.save()
             yield from self.sleep(cfg.poll_s)
             return {"lane": "wait"}
@@ -1100,6 +1117,16 @@ class FastDecisionBehaviour(PreviewMixin, DecisionMakerBaseBehaviour):
         result["request_price"] = db.get_strict("request_prices")[decision.side]
         result["executed_price"] = decision.price
         if decision.stake > 0:
+            try:
+                self.read_bets(strict=True)
+            except (OSError, json.JSONDecodeError, TypeError):
+                result.update(stake=0.0, reason="bets_read_failed")
+                return result
+            stored_bet = next((item for item in self.bets if item.id == bet.id), None)
+            if stored_bet is None:
+                self.bets.append(bet)
+            else:
+                bet = stored_bet
             bet.strategy_vote = decision.side
             bet.prediction_response = PredictionResponse(
                 p_yes=decision.p_hat,
@@ -1131,10 +1158,27 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
 
     def async_act(self) -> Generator:
         """Clear quote state before each placement attempt."""
+        yield from self.wait_for_lightning_lane()
         self._placement_failure = "other"
         self._executed_price = None
         self._price_ceiling = None
         self._min_tokens_out = None
+        if 0 < self.params.max_trades <= self.durable_trade_count():
+            self._placement_failure = "trade_cap"
+        else:
+            bet = self.sampled_bet
+            mined = self.context.shared_state.get("lightning_lane_bet_markets", set())
+            if bet.id in mined or bet.has_investments:
+                self._placement_failure = "lane_already_bet"
+        if self._placement_failure != "other":
+            yield from self.finish_behaviour(
+                BetPlacementPayload(
+                    self.context.agent_address,
+                    tx_submitter=self.matching_round.auto_round_id(),
+                    tx_hash=None,
+                )
+            )
+            return
         yield from super().async_act()
 
     def _get_decision_prediction(self) -> Optional[PredictionResponse]:
@@ -1215,16 +1259,15 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
         :return: price ceiling and minimum tokens, or None if no margin remains.
         """
         cfg = self.params.fast
-        ceiling = min(
-            Fraction(str(self._execution_max_price())),
-            Fraction(str(requested_price)) + Fraction(str(cfg.max_slip)),
-            Fraction(str(p_side)) - Fraction(str(self.params.placement_min_edge)),
+        return execution_ceiling(
+            self.investment_amount,
+            self.quoted_tokens,
+            p_side,
+            requested_price,
+            self._execution_max_price(),
+            cfg.max_slip,
+            self.params.placement_min_edge,
         )
-        if ceiling <= Fraction(self.investment_amount, self.quoted_tokens):
-            return None
-        numerator = self.investment_amount * ceiling.denominator
-        min_out = (numerator + ceiling.numerator - 1) // ceiling.numerator
-        return float(ceiling), min(min_out, self.quoted_tokens)
 
     def _preflight_ok(self) -> Generator[None, None, bool]:
         """Estimate this owner's Safe call before submitting it for settlement.

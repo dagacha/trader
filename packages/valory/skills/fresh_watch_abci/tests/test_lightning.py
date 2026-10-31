@@ -230,6 +230,45 @@ def test_invalid_lightning_limits(kwargs: Any) -> None:
         LightningConfig(**kwargs)
 
 
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"lightning_poll_step_s": 0},
+        {"lightning_poll_offset_s": -0.1},
+        {"lightning_lane_tip_gwei": -1},
+        {"lightning_lane_tip_cap_gwei": 2001},
+        {"lightning_lane_max_age_s": 0},
+        {"lightning_lane_gas_limit": 0},
+        {"lightning_lane_inflight_timeout_s": 0},
+        {"lightning_lane_max_per_night": -2},
+    ],
+)
+def test_invalid_lane_controls(kwargs: Any) -> None:
+    """Reject invalid polling, fee, age, gas, and budget controls."""
+    with pytest.raises(ValueError, match="Lane fee, polling, and budget"):
+        LightningConfig(**kwargs)
+
+
+def test_lane_gas_limit_requires_at_least_100000() -> None:
+    """Reject gas below the minimum and accept the minimum itself."""
+    with pytest.raises(ValueError, match="Lane fee, polling, and budget"):
+        LightningConfig(lightning_lane_gas_limit=99999)
+    assert (
+        LightningConfig(lightning_lane_gas_limit=100000).lightning_lane_gas_limit
+        == 100000
+    )
+
+
+def test_lane_gas_limit_rejects_above_2000000() -> None:
+    """Accept the gas ceiling and reject one gas unit above it."""
+    with pytest.raises(ValueError, match="Lane fee, polling, and budget"):
+        LightningConfig(lightning_lane_gas_limit=2000001)
+    assert (
+        LightningConfig(lightning_lane_gas_limit=2000000).lightning_lane_gas_limit
+        == 2000000
+    )
+
+
 def test_base_rate_ignores_duplicate_and_invalid_resolutions(tmp_path: Any) -> None:
     """Count each market once and accept only a valid binary resolution."""
     cfg = LightningConfig(lightning_base_rate_min_n=2)

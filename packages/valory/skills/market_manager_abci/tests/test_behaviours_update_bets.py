@@ -588,7 +588,7 @@ class TestSetup:
         # read_bets populates some bets
         bet = _make_bet(id="b1", openingTimestamp=1000)
 
-        def fake_read_bets() -> None:
+        def fake_read_bets(strict: bool = False) -> None:
             behaviour.bets = [bet]  # type: ignore[assignment, method-assign]
 
         behaviour.read_bets = fake_read_bets  # type: ignore[method-assign]
@@ -616,7 +616,7 @@ class TestSetup:
         type(behaviour).synced_time = property(lambda self: 0)  # type: ignore[assignment, method-assign]
 
         # type: ignore[assignment, method-assign]
-        def fake_read_bets() -> None:
+        def fake_read_bets(strict: bool = False) -> None:
             behaviour.bets = [bet]
 
         behaviour.read_bets = fake_read_bets  # type: ignore[method-assign]
@@ -644,7 +644,7 @@ class TestSetup:
         type(behaviour).synced_time = property(lambda self: 0)  # type: ignore[assignment, method-assign]
 
         # type: ignore[assignment, method-assign]
-        def fake_read_bets() -> None:
+        def fake_read_bets(strict: bool = False) -> None:
             behaviour.bets = [bet]
 
         behaviour.read_bets = fake_read_bets  # type: ignore[method-assign]
@@ -666,7 +666,7 @@ class TestSetup:
 
         type(behaviour).synced_time = property(lambda self: 999999)  # type: ignore[assignment, method-assign]
         # type: ignore[assignment, method-assign]
-        behaviour.read_bets = lambda: None  # type: ignore[method-assign]
+        behaviour.read_bets = lambda strict=False: None  # type: ignore[method-assign]
 
         behaviour.setup()
         assert behaviour.bets == []
@@ -689,7 +689,7 @@ class TestSetup:
         type(behaviour).synced_time = property(lambda self: 0)  # type: ignore[assignment, method-assign]
 
         # type: ignore[assignment, method-assign]
-        def fake_read_bets() -> None:
+        def fake_read_bets(strict: bool = False) -> None:
             behaviour.bets = [bet]
 
         behaviour.read_bets = fake_read_bets  # type: ignore[method-assign]
