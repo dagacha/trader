@@ -14,7 +14,7 @@ fingerprint:
   fsm_specification.yaml: bafybeifhpatx5365ubtse2g6kqo6cjeuzoruf75dv5r5xg27n4wtyrtrbm
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
   lane.py: bafybeihsgjhy6cnbv6e5qw2i2ci2crojshvclae5nk722snovuqfhbjs6e
-  lane_behaviour.py: bafybeibdyvecb7aany2b4fc7p5iymssw2jxif3x4633c33bin6u53yht54
+  lane_behaviour.py: bafybeick3tlfq4zezbngvetnnhtru34zqbe5xug4zyvs2vwnxgtfyxbrui
   lightning.py: bafybeihn4cvdjajhnmrroc2svwlqy5e7ketxawnrpwu4o5gwms3gwqahoa
   models.py: bafybeiaeoeei6ve23oquny7jku6uz2ryk7aamitgxiv74iyvwlpbvhlrlm
   preview.py: bafybeic6uo6lpsva2dqly5omyzhhw5a7hzyvltz23z47q7lyhmvsjj3l4u
@@ -35,7 +35,7 @@ fingerprint:
   tests/test_foreground_lane_races.py: bafybeigbvfol2tz6atvspbpyg666flh2brxkfsh3hrmywu52zsxmlvl5ly
   tests/test_lane.py: bafybeial5gbqkihffjybsk5tp445whvds62bpzowwshor7sllsaiye4cqi
   tests/test_lane_behaviour.py: bafybeievrz753vmqq5jrfpoairxko5x75ae467aavunzcxzscoq6ddktde
-  tests/test_lane_bets_read.py: bafybeianeozpibwayhrelbytkehwtx3zmsrvr5ckx2jctbozpoymuvthce
+  tests/test_lane_bets_read.py: bafybeig5iyfttxit7vq7kuvsvu7m5pxilb7pumjqiepgxwjnrsri44rp7i
   tests/test_lane_journal_recovery.py: bafybeifkwuhnvqnh6cjxmmeoxthrcl6s3a3auej3mp6oiuxkbybhnol2ai
   tests/test_lane_limits.py: bafybeidjfi55egsiolcea6b2a4mdbmw5o6ntq3zfzgvfufsc6mdk5qsbta
   tests/test_lane_rpc_backoff.py: bafybeig7qnjqomaoeymsos73ehwkhnrdyio76zdmwmf2dlfmhyg573e5ve

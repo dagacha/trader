@@ -822,7 +822,13 @@ class LightningLaneBehaviour(FreshMarketPoller):
             ],
             scaledLiquidityMeasure=min(balances) / 10**18,
         )
-        self.read_bets()
+        try:
+            self.read_bets(strict=True)
+        except (OSError, ValueError, TypeError):
+            self.context.logger.info(
+                "[LIGHTNING_LANE] market=%s reason=bets_read_failed", market["id"]
+            )
+            return
         if market["id"] in self.context.shared_state.get(
             "lightning_lane_bet_markets", set()
         ) or any(b.id == market["id"] and b.invested_amount > 0 for b in self.bets):

@@ -21,15 +21,15 @@
         "skill/valory/chatui_abci/0.1.0": "bafybeihj5y6cecuw4iz2gshicoygghrgi5b6rzynnofx25ycsv56ehgdvq",
         "skill/valory/abstract_round_abci/0.1.0": "bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4",
         "skill/valory/funds_manager/0.1.0": "bafybeia3ercbrdugw36ji2d5cl46ed5y623ju7qztek3eqzvtsueos5nu4",
-        "skill/valory/fresh_watch_abci/0.1.0": "bafybeib73oyiaem2rf5nvsa7zsom677s3ullhxjh2iqn3bwef6cxy33jwa",
-        "skill/valory/omenstrat_fast_abci/0.1.0": "bafybeiejfk4pscojidopinudx3rxjiux4jrjijgtdz4cia2vphocvviv6y",
+        "skill/valory/fresh_watch_abci/0.1.0": "bafybeia4k5sv6m2ici3fltoswp6a6s32eidtucwcnxdf3eumciva527yxe",
+        "skill/valory/omenstrat_fast_abci/0.1.0": "bafybeieo57ecr5qg4pf7pyjzmbp52thvz2safh3o3jzxzqnxvtrn54e3qm",
         "agent/valory/trader/0.1.0": "bafybeiakzsinb3bncpq235krgj72x2zjts7lixcx5k5gymnbu35pxhgbo4",
-        "agent/valory/omenstrat_fast/0.1.0": "bafybeif6okfxwq7eqygjnscdpkxlbgux6zyhp5znvcfoe4e6a3thzejt24",
-        "agent/valory/omenstrat_lightning/0.1.0": "bafybeidpo6526bfus242sbx2farojlneoc5u4euwnkomn2z6t3o47omnce",
+        "agent/valory/omenstrat_fast/0.1.0": "bafybeibjkijizhh2j6ofohguudel6iu2hitw4ja3iksopoam7sitatznxi",
+        "agent/valory/omenstrat_lightning/0.1.0": "bafybeic4bmpyqhyhi7vvfj7tnzj5afb35zjprg5xt6s3sjmfeopko4tz3a",
         "service/valory/trader_pearl/0.1.0": "bafybeiggukeiwx2vttx5kud63facxf2oboamp76kzpw4m5su7rh5c3hrvy",
         "service/valory/polymarket_trader/0.1.0": "bafybeiclya5w46wbcculjvwfvod7hbtsx3rs776ehoxn66mpzzwefcdena",
-        "service/valory/omenstrat_fast/0.1.0": "bafybeieeisntrb5ky2wl34axlu45m24zyjdt62vzkaamkytaavrr3llat4",
-        "service/valory/omenstrat_lightning/0.1.0": "bafybeib76l7rirwiupormy2h663rcmiibns3miva2o7ua2ekw44tsldidm"
+        "service/valory/omenstrat_fast/0.1.0": "bafybeiag7h75v6es2xbxfqjvrmdt2vybwayt74rbymy7p2hz5f4ladsage",
+        "service/valory/omenstrat_lightning/0.1.0": "bafybeiffsvzmcn5vwerhzzzhwfifyhrdvau7d5d5g3giig4whbwyxn5oj4"
     },
     "third_party": {
         "protocol/valory/acn_data_share/0.1.0": "bafybeieqisfr6lhaaesq37lk7vyaxza2h6nucshksgyo2djqfyf2saqo4i",
