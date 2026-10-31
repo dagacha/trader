@@ -43,7 +43,11 @@ class LaneGuardMixin:
         :yield: control during the response wait.
         :return: decoded RPC result.
         :raises ValueError: when the response or receipt result is invalid.
+        :raises TimeoutException: when endpoint reads are paused.
         """
+        stats = self.context.shared_state.get("lightning_lane_rpc_stats")
+        if stats is not None and not stats.ready(time.time()):
+            raise TimeoutException()
         if not self.params.lightning.lightning_rpc_url:
             ledger_method, arguments = {
                 "eth_getTransactionReceipt": (

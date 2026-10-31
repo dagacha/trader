@@ -84,7 +84,9 @@ class LightningLaneBehaviour(FreshMarketPoller):
         """
         super().__init__(**kwargs)
         self._poller: Optional[SlotPoller] = None
-        self._stats = RPCStats(started_at=time.time())
+        self._stats = self.context.shared_state.setdefault(
+            "lightning_lane_rpc_stats", RPCStats(started_at=time.time())
+        )
         self._checked = False
         self._safe_ok = False
         self._off_logged = False
@@ -207,6 +209,8 @@ class LightningLaneBehaviour(FreshMarketPoller):
         :return: JSON-RPC result, including a legitimate null result.
         :raises LaneRPCError: when the response is absent or unusable.
         """
+        if not self._stats.ready(time.time()):
+            raise LaneRPCError("Lane RPC reads paused")
         try:
             if not self.params.lightning.lightning_rpc_url:
                 return (yield from self._lane_guard_rpc(method, params))
