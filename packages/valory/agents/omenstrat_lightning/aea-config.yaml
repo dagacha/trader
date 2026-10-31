@@ -66,7 +66,7 @@ protocols:
 - valory/srr:0.1.0:bafybeibfs6osw7guctdpollf4iwt4vhd6yk7ai34tqk5djuxtgowjwdjb4
 skills:
 - valory/trader_abci:0.1.0:bafybeigsye7gghqna2hnrvbtxunm4zde4cuomfi2j4e6jrw3idj2fafetq
-- valory/fresh_watch_abci:0.1.0:bafybeibv3so2q5zkzto3b4uvlztxogu3ouujwlgnasjtxmzbocu22gsjrq
+- valory/fresh_watch_abci:0.1.0:bafybeihmvxsj6wbook24wtdh2dgad2ybefrtumxyyhmsxvqkx5jsd73ms4
 - valory/abstract_abci:0.1.0:bafybeie5et43th2nta76cd3kpm3fmurd7oyzk3qxim76octvt56m6r2poi
 - valory/abstract_round_abci:0.1.0:bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4
 - valory/registration_abci:0.1.0:bafybeicwfwrzdu5kjcjh4ntzgo7dghy5rs4o6ddbwgo2vz7bomi67gn5wa
@@ -76,7 +76,7 @@ skills:
 - valory/tx_settlement_multiplexer_abci:0.1.0:bafybeieskmd62dwai2opadynronxeuda5wa3xbrwemojy4abwee6mlywji
 - valory/market_manager_abci:0.1.0:bafybeidsapj2dqxjcndhhtn5my7gjoq66oyhmty4zl6mg4trkjkewnss3e
 - valory/decision_maker_abci:0.1.0:bafybeigspkvlel2p7x6phovberhsjkiap77hidrx232s7rroddq4p7frba
-- valory/omenstrat_fast_abci:0.1.0:bafybeicpmv5gj2mdt4cpsydqcq3aoint3tmxvgksm36cunxbn2cyl2psgm
+- valory/omenstrat_fast_abci:0.1.0:bafybeieovqp5gomgehrjudxt2cffsglb5apu3qfb56zi6f3hokt4epv4le
 - valory/staking_abci:0.1.0:bafybeiexw3uia2ybvedv6qctphagh3kus4vrqqhaxrzytvncsgp5zk2jnu
 - valory/check_stop_trading_abci:0.1.0:bafybeieorb67ryownnirdr5ba4xrlp3mv6gy6qaczgqjlpdazyv4vpj3by
 - valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m

@@ -465,6 +465,54 @@ def test_unsent_write_failure_releases_lane_and_foreground(
     assert b._shots == 1
 
 
+def test_send_skips_intrinsic_gas_shortfall_without_reservation(tmp_path: Any) -> None:
+    """Keep the foreground free when calldata needs more gas than the limit."""
+    from aea.helpers.transaction.base import SignedTransaction
+
+    from packages.open_aea.protocols.signing import SigningMessage
+
+    b = lane(tmp_path, lightning_lane_gas_limit=21000)
+    prepared(b)
+    reply_on_send(
+        b,
+        SimpleNamespace(
+            performative=SigningMessage.Performative.SIGNED_TRANSACTION,
+            signed_transaction=SignedTransaction(
+                "ethereum", {"raw_transaction": "0xabcdef"}
+            ),
+        ),
+        signing=True,
+    )
+    b._broadcast = MagicMock()
+    market = {**raw_market(), "id": MARKET, "collateralToken": TOKEN}
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(MODULE + ".time.time", return_value=1002),
+        patch(MODULE + ".write_json_atomically") as write,
+    ):
+        sd.return_value.safe_contract_address = SAFE
+        assert (
+            run(
+                b._send(
+                    market,
+                    SimpleNamespace(stake=4.0, price=0.6, p_hat=0.95),
+                    (0.9, 4444444444444444445),
+                    {"baseFeePerGas": "0x1", "number": "0x2"},
+                    1002,
+                )
+            )
+            is False
+        )
+        assert "lightning_lane_inflight" not in b.context.shared_state
+        write.assert_not_called()
+        assert not (tmp_path / "lightning_lane_state.json").exists()
+        assert run(b.wait_for_lightning_lane()) is None
+    assert "reason=gas_limit_below_intrinsic" in str(b.context.logger.method_calls)
+    b.context.signing_dialogues.create.assert_not_called()
+    b.context.decision_maker_message_queue.put_nowait.assert_not_called()
+    b._broadcast.assert_not_called()
+
+
 def test_send_reserves_inflight_before_both_broadcasts(tmp_path: Any) -> None:
     """Use a fixed tip and fan out without waiting for the ledger result."""
     from aea.helpers.transaction.base import SignedTransaction

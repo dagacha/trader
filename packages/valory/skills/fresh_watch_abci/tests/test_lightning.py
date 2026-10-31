@@ -249,6 +249,16 @@ def test_invalid_lane_controls(kwargs: Any) -> None:
         LightningConfig(**kwargs)
 
 
+def test_lane_gas_limit_requires_at_least_100000() -> None:
+    """Reject gas below the minimum and accept the minimum itself."""
+    with pytest.raises(ValueError, match="Lane fee, polling, and budget"):
+        LightningConfig(lightning_lane_gas_limit=99999)
+    assert (
+        LightningConfig(lightning_lane_gas_limit=100000).lightning_lane_gas_limit
+        == 100000
+    )
+
+
 def test_base_rate_ignores_duplicate_and_invalid_resolutions(tmp_path: Any) -> None:
     """Count each market once and accept only a valid binary resolution."""
     cfg = LightningConfig(lightning_base_rate_min_n=2)

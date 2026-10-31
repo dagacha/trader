@@ -71,7 +71,7 @@ class LightningConfig:
             and self.lightning_poll_offset_s >= 0
             and self.lightning_poll_step_s > 0
             and self.lightning_lane_max_age_s > 0
-            and self.lightning_lane_gas_limit > 0
+            and self.lightning_lane_gas_limit >= 100000
             and self.lightning_lane_inflight_timeout_s > 0
             and self.lightning_lane_max_per_night >= -1
         ):

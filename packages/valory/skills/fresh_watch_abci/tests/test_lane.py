@@ -37,6 +37,7 @@ from packages.valory.skills.fresh_watch_abci.lane import (
     execution_ceiling,
     fixed_transaction,
     funding_balances,
+    intrinsic_gas,
     lane_decision,
     pool_balances_call,
 )
@@ -330,6 +331,11 @@ def test_safe_calldata_refuses_insufficient_collateral() -> None:
             40,
             59,
         )
+
+
+def test_intrinsic_gas_counts_zero_and_nonzero_calldata_bytes() -> None:
+    """Use 21000 base gas, four per zero byte, and sixteen per nonzero byte."""
+    assert intrinsic_gas(b"\x00\x01\x00\x7f\xff") == 21056
 
 
 def test_fixed_transaction_uses_only_configured_tip() -> None:

@@ -370,6 +370,15 @@ def build_safe_calldata(
     return data, shortfall
 
 
+def intrinsic_gas(data: bytes) -> int:
+    """Compute the base gas and calldata gas for a transaction.
+
+    :param data: encoded transaction calldata.
+    :return: minimum gas required before transaction execution.
+    """
+    return 21000 + sum(4 if value == 0 else 16 for value in data)
+
+
 def fixed_transaction(
     owner: str,
     safe: str,

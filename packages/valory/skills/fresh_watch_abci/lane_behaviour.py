@@ -53,6 +53,7 @@ from packages.valory.skills.fresh_watch_abci.lane import (
     creation_filter,
     fixed_transaction,
     funding_balances,
+    intrinsic_gas,
     lane_decision,
     number,
     pool_balances_call,
@@ -464,6 +465,12 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 self._balances["wrapped"],
                 self._balances["native"],
             )
+            if cfg.lightning_lane_gas_limit < intrinsic_gas(data):
+                self.context.logger.info(
+                    "[LIGHTNING_LANE] market=%s reason=gas_limit_below_intrinsic",
+                    market["id"],
+                )
+                return False
             tx = fixed_transaction(
                 self.context.agent_address,
                 self.synchronized_data.safe_contract_address,
