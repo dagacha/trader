@@ -68,8 +68,8 @@ skills:
 - valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
 - valory/abstract_round_abci:0.1.0:bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4
 - valory/market_manager_abci:0.1.0:bafybeicle4v4hbzfitrndz4iezmpzqft7q26eijmzpqpfs7o4ccv7pkfcu
-- valory/decision_maker_abci:0.1.0:bafybeidcvjda4jra4f56bdwacwlepf4yxxikm3eephbv4kjaci7kscnw64
-- valory/trader_abci:0.1.0:bafybeihffmjqm2f7epiyg4njgk2jf5oveeb4spwgdfv66bhjrnjj4dmpsi
+- valory/decision_maker_abci:0.1.0:bafybeiewzw472go6wevp26u6q544jlz6y2jc2kc7kvnetxqv5goeb5y4va
+- valory/trader_abci:0.1.0:bafybeidgug5q4p5pakkswppx34vl7ygk6crhttyubhud5cwxbq5h2ml7em
 behaviours:
   main:
     args: {}

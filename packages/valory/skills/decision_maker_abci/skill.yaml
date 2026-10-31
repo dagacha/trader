@@ -41,7 +41,7 @@ fingerprint:
   behaviours/reedem.py: bafybeie6a5p5b5turn73a46tr7sqiz6b65suamlaybnzypwyrgdloswacm
   behaviours/round_behaviour.py: bafybeiaqtvgzxsxs557cpjbdfio4eeykjlgcfjyvfz3lkzgw3k4bmrcveq
   behaviours/sampling.py: bafybeiduwhifofaq3zzp2drrbxezxarrbeb45zwoszcrzhxtpin5a7syy4
-  behaviours/sell_outcome_tokens.py: bafybeihv3dhhvbot2qbhdfxbpno5ri362lc6y6yn2qbrkqvzg72dqdlbvm
+  behaviours/sell_outcome_tokens.py: bafybeigcltegfe2phhjvpb5dts4nu6lilqguwhpywewrxuxkk3mvhtamx4
   behaviours/storage_manager.py: bafybeib3ehbggqfbznsophicui7bq3p77styrj2y5wtqkqwqsvpog6tmf4
   behaviours/tool_selection.py: bafybeib7azpyqho6ynyfsgql5ublly6wgtxcgkwogz2lwmyymtp536flgm
   behaviours/trade_cap.py: bafybeic7ae3hvgxbo7e3mwjmhslumq5fstf6xduc7356w6zglq72vbavuq
