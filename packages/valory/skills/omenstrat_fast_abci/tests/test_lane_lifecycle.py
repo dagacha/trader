@@ -52,7 +52,7 @@ def test_background_lane_lifecycle(tmp_path: Any) -> None:
     cast(Any, b.lightning_lane.stop).assert_called_once()
 
 
-def test_background_lane_is_absent_when_disabled() -> None:
+def test_background_lane_is_absent_when_disabled(tmp_path: Any) -> None:
     """Keep the existing background loop unchanged with the lane flag off."""
     from packages.valory.skills.omenstrat_fast_abci.behaviours import (
         OmenstratFastConsensusBehaviour,
@@ -61,6 +61,7 @@ def test_background_lane_is_absent_when_disabled() -> None:
 
     context = MagicMock()
     context.params.lightning.lightning_lane = False
+    context.params.store_path = tmp_path
     b = OmenstratFastConsensusBehaviour(name="test", skill_context=context)
     with (
         patch.object(TraderConsensusBehaviour, "setup"),
@@ -78,6 +79,36 @@ def test_background_lane_is_absent_when_disabled() -> None:
         b._background_act()
     with patch.object(TraderConsensusBehaviour, "teardown"):
         b.teardown()
+
+
+def test_disabled_background_restores_outstanding_lane(tmp_path: Any) -> None:
+    """Schedule receipt recovery when rollback leaves a broadcast journal."""
+    from packages.valory.skills.omenstrat_fast_abci.behaviours import (
+        OmenstratFastConsensusBehaviour,
+    )
+    from packages.valory.skills.trader_abci.behaviours import TraderConsensusBehaviour
+
+    (tmp_path / "lightning_lane_state.json").write_text(
+        '{"night":"1970-01-01","shots":1,"inflight":{"tx":"0xshot"}}'
+    )
+    context = MagicMock()
+    context.params.lightning.lightning_lane = False
+    context.params.store_path = tmp_path
+    b = OmenstratFastConsensusBehaviour(name="test", skill_context=context)
+    with (
+        patch.object(TraderConsensusBehaviour, "setup"),
+        patch(
+            "packages.valory.skills.omenstrat_fast_abci.behaviours.FreshMarketPoller"
+        ),
+        patch(
+            "packages.valory.skills.omenstrat_fast_abci.behaviours.LightningLaneBehaviour"
+        ) as cls,
+    ):
+        b.setup()
+    cls.assert_called_once_with(name="lightning_lane", skill_context=context)
+    with patch.object(TraderConsensusBehaviour, "_background_act"):
+        b._background_act()
+    cast(Any, b.lightning_lane).act_wrapper.assert_called_once()
 
 
 def test_fast_service_uses_guarded_upstream_wrappers() -> None:

@@ -448,3 +448,62 @@ def test_lane_decision_rejects_closed_or_missing_deadline(
     assert decision is None
     assert bounds is None
     assert reason == "market_closed"
+
+
+def test_lane_decision_keeps_strategy_rejection(tmp_path: Any) -> None:
+    """Keep the strategy's reason when YES costs more than its limit."""
+    inputs = decision_inputs(tmp_path)
+    inputs["balances"] = [10**18, 99 * 10**18]
+    decision, bounds, reason = lane_decision(**inputs)
+    assert decision is not None
+    assert decision.stake == 0
+    assert bounds is None
+    assert reason == "max_price"
+
+
+@pytest.mark.parametrize("amounts", [[7], [7, 7, 7], [0, 7]])
+def test_funding_requires_two_positive_reserves(amounts: Any) -> None:
+    """Leave unusable funding events to the reserve read fallback."""
+    market = "0x" + "11" * 20
+    log = dict(
+        address=market,
+        topics=[
+            "0x" + keccak(text="FPMMFundingAdded(address,uint256[],uint256)").hex()
+        ],
+        data="0x" + encode(["uint256[]", "uint256"], [amounts, 7]).hex(),
+    )
+    assert funding_balances([log], market) is None
+
+
+def test_buy_without_tokens_has_no_fill_price() -> None:
+    """Reject a buy event with no tokens instead of dividing by zero."""
+    market = "0x" + "11" * 20
+    log = dict(
+        address=market,
+        topics=[
+            "0x"
+            + keccak(text="FPMMBuy(address,uint256,uint256,uint256,uint256)").hex(),
+            "0x" + "00" * 32,
+            "0x" + "00" * 32,
+        ],
+        data="0x" + encode(["uint256", "uint256", "uint256"], [4, 0, 0]).hex(),
+    )
+    assert buy_result([log], market) is None
+
+
+def test_pool_balance_call_retries_non_residue() -> None:
+    """Derive position IDs when the first curve candidate has no square root."""
+    market, conditional, collateral = [
+        "0x" + value * 20 for value in ("11", "22", "33")
+    ]
+    # Condition 3 needs two curve candidates for index set 2.
+    target, data = pool_balances_call(
+        market, conditional, collateral, "0x" + "00" * 31 + "03"
+    )
+    assert target == conditional
+    owners, positions = decode(["address[]", "uint256[]"], bytes.fromhex(data[10:]))
+    assert owners == (market, market)
+    assert positions == (
+        18836107302434001775683108182129277647488155787062377388152193028635158947911,
+        100368091131051703796743362756066818936532217385031010946847646001836210833633,
+    )

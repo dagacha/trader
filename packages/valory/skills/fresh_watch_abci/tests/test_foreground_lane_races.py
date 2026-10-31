@@ -30,14 +30,20 @@ from packages.valory.skills.decision_maker_abci.behaviours.bet_placement import 
 from packages.valory.skills.fresh_watch_abci.behaviours import (
     FastBetPlacementBehaviour,
     FastDecisionBehaviour,
+    FreshWatchBehaviour,
 )
-from packages.valory.skills.fresh_watch_abci.lightning import LightningConfig
+from packages.valory.skills.fresh_watch_abci.lightning import (
+    BaseRateCache,
+    LightningConfig,
+)
+from packages.valory.skills.fresh_watch_abci.strategy import FreshQueue
 from packages.valory.skills.fresh_watch_abci.tests.test_behaviours import (
     done,
     make,
     raw_market,
     run,
 )
+from packages.valory.skills.fresh_watch_abci.tests.test_lane_behaviour import lane
 from packages.valory.skills.market_manager_abci.bets import Bet, QueueStatus
 
 
@@ -47,6 +53,77 @@ def market_bet(market_id: str) -> Bet:
     row.pop("question")
     row.pop("condition")
     return Bet(**{**row, "id": market_id}, market="omen_subgraph")
+
+
+@pytest.mark.parametrize("restore_path", ["quote_failure", "no_tool"])
+@pytest.mark.parametrize("remembered", ["shared", "stored"])
+@pytest.mark.parametrize("enabled", [True, False])
+def test_selection_does_not_restore_lane_purchase_during_quote(
+    tmp_path: Any, restore_path: str, remembered: str, enabled: bool
+) -> None:
+    """Keep a completed lane purchase out of both foreground retry paths."""
+    b = make(FreshWatchBehaviour, tmp_path)
+    b.context.shared_state = {}
+    b.context.state.fast_background_running = True
+    b.context.params.lightning = LightningConfig(
+        lightning_lane=enabled,
+        lightning_still_hold=restore_path == "no_tool",
+        lightning_base_rate_min_n=1,
+    )
+    b._fast_tool = lambda: None if restore_path == "no_tool" else "superforcaster"
+    b.sleep = lambda _delay: done(None)
+    row = {**raw_market(), "creationTimestamp": 199950, "openingTimestamp": 300000}
+    another = {**row, "id": "new-market", "creationTimestamp": 200001}
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    queue.pending = [row]
+    queue.save()
+    cache = BaseRateCache(tmp_path / "lightning_base_rate.json")
+    cache.update(
+        [{**raw_market(), "creationTimestamp": 27000, "payouts": [1, 0]}],
+        27200,
+        b.context.params.lightning,
+    )
+    assert cache.usable(200000, b.context.params.lightning) == 1
+    assert cache.usable(200001, b.context.params.lightning) is None
+
+    def quote(*_args: Any) -> Any:
+        yield
+        return None if restore_path == "quote_failure" else [100 * 10**18] * 2
+
+    b._get_pool_balances = quote
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch("time.time", return_value=200000) as clock,
+    ):
+        sd.return_value.previous_checkpoint = None
+        sd.return_value.successful_trade_count = 0
+        generator = b.select()
+        assert next(generator) is None
+        assert FreshQueue(queue.path).asked == {row["id"]: 199950}
+        lane_writer = lane(tmp_path, lightning_lane=enabled)
+        lane_writer.context.shared_state = b.context.shared_state
+        info = dict(
+            tx="0xfeed",
+            market=row["id"],
+            row=row,
+            amount=4 * 10**18,
+            probability=0.95,
+        )
+        lane_writer._complete(info, {"status": "0x1"}, {"timestamp": hex(200001)})
+        assert FreshQueue(queue.path).asked == {}
+        lane_writer.read_bets()
+        assert lane_writer.bets[0].has_investments
+        if remembered == "stored":
+            b.context.shared_state.pop("lightning_lane_bet_markets")
+        discovered = FreshQueue(queue.path)
+        discovered.ingest([another], 200001, b.context.params.fast.creators, 600)
+        discovered.save()
+        clock.return_value = 200001
+        assert run(generator)["lane"] == "wait"
+
+    reloaded = FreshQueue(queue.path)
+    assert reloaded.asked == {}
+    assert reloaded.pending == [another]
 
 
 @pytest.mark.parametrize("lane_market", ["market", "new-market"])

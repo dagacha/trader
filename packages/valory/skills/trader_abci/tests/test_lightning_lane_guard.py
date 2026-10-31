@@ -76,9 +76,27 @@ def test_guard_off_has_no_io(enabled: Any) -> None:
     guard = make_guard(enabled)
     if enabled is None:
         guard.context.params = SimpleNamespace()
+    else:
+        guard.context.shared_state.clear()
     guard.sleep = MagicMock(side_effect=AssertionError("unexpected sleep"))
     assert list(LaneGuardMixin.wait_for_lightning_lane(guard)) == []
-    assert "lightning_lane_inflight" in guard.context.shared_state
+    if enabled is False:
+        assert not guard.context.shared_state
+    else:
+        assert "lightning_lane_inflight" in guard.context.shared_state
+
+
+def test_disabled_guard_keeps_pending_broadcast_excluded() -> None:
+    """Wait for rollback recovery before preparing another Safe transaction."""
+    guard = make_guard(False)
+    guard.sleep = lambda seconds: iter([None])
+    with patch("time.time", return_value=101):
+        waiting = guard.wait_for_lightning_lane(reserve=True)
+        assert next(waiting) is None
+        assert "lightning_lane_inflight" in guard.context.shared_state
+        guard.context.shared_state.pop("lightning_lane_inflight")
+        assert list(waiting) == []
+    assert "lightning_lane_fsm_preparing" not in guard.context.shared_state
 
 
 def test_guard_resumes_after_receipt_clears_inflight() -> None:
@@ -171,12 +189,20 @@ def test_guard_pending_nonce_keeps_safe_blocked_and_logs_once_per_minute(
     assert "pending" in str(guard.context.logger.info.call_args)
 
 
+@pytest.mark.parametrize(
+    "receipt",
+    [
+        {"status": "0x1", "blockNumber": "0x2"},
+        {"status": "0x1"},
+        {"blockNumber": "0x2"},
+    ],
+)
 def test_guard_mined_receipt_waits_for_lane_bookkeeping(
     monkeypatch: pytest.MonkeyPatch,
+    receipt: Any,
 ) -> None:
-    """Pass a terminal receipt to the watcher before it releases recovery state."""
+    """Keep the lock and pass only complete receipts to the watcher."""
     guard = make_guard()
-    receipt = {"status": "0x1", "blockNumber": "0x2"}
     responses = iter(["0x9", receipt])
     guard._build_http_request_message = lambda **kwargs: ("message", "dialogue")
 
@@ -193,10 +219,12 @@ def test_guard_mined_receipt_waits_for_lane_bookkeeping(
     with patch("time.time", return_value=161):
         generator = LaneGuardMixin.wait_for_lightning_lane(guard)
         assert next(generator) is None
-        assert (
-            guard.context.shared_state["lightning_lane_inflight"]["receipt"] == receipt
-        )
-        assert next(generator) is None
+        inflight = guard.context.shared_state["lightning_lane_inflight"]
+        if "status" in receipt and "blockNumber" in receipt:
+            assert inflight["receipt"] == receipt
+            assert next(generator) is None
+        else:
+            assert "receipt" not in inflight
         generator.close()
     guard.context.logger.info.assert_not_called()
 
@@ -322,6 +350,7 @@ def test_guard_reserves_safe_for_preparation_in_whitelisted_round() -> None:
 def test_scheduler_guard_off_does_not_inspect_matching_round() -> None:
     """Keep custom and management behaviours unchanged when the lane is off."""
     guard = make_guard(False)
+    guard.context.shared_state.clear()
     guard.matching_round = object()
     guard._is_started = True
     guard._is_done = False
@@ -333,8 +362,33 @@ def test_scheduler_guard_off_does_not_inspect_matching_round() -> None:
     assert list(LaneGuardMixin.async_act_wrapper(guard)) == [sentinel]
 
 
-def test_failed_safe_hash_read_releases_preparation_reservation() -> None:
-    """Keep a failed preparation from blocking shots until another settlement."""
+def test_disabled_scheduler_guard_waits_for_pending_broadcast() -> None:
+    """Guard Safe preparation wrappers during rollback recovery."""
+    guard = make_guard(False)
+    guard.matching_round = SimpleNamespace(auto_round_id=lambda: "background_round")
+    guard._is_started = True
+    guard._is_done = False
+    guard.context.state = SimpleNamespace(
+        round_sequence=SimpleNamespace(syncing_up=False)
+    )
+    guard.sleep = lambda seconds: iter([None])
+    sentinel = object()
+    guard.async_act = lambda: iter([sentinel])
+    with patch("time.time", return_value=101):
+        wrapper = guard.async_act_wrapper()
+        assert next(wrapper) is None
+        guard.context.shared_state.pop("lightning_lane_inflight")
+        assert list(wrapper) == [sentinel]
+
+
+@pytest.mark.parametrize(
+    "safe_hash,success", [(True, False), (True, True), (False, True)]
+)
+def test_contract_read_reserves_only_successful_safe_hash(
+    safe_hash: bool,
+    success: bool,
+) -> None:
+    """Reserve preparation for a Safe hash and release it if the read fails."""
     from packages.valory.protocols.contract_api import ContractApiMessage
 
     guard = make_guard()
@@ -352,11 +406,20 @@ def test_failed_safe_hash_read_releases_preparation_reservation() -> None:
     guard._get_default_terms = lambda: None
     guard._get_request_nonce_from_dialogue = lambda value: "nonce"
     guard.get_callback_request = lambda: None
-    response = SimpleNamespace(performative=ContractApiMessage.Performative.ERROR)
+    response = SimpleNamespace(
+        performative=(
+            ContractApiMessage.Performative.STATE
+            if success
+            else ContractApiMessage.Performative.ERROR
+        )
+    )
 
     def wait() -> Any:
         yield from ()
-        assert guard.context.shared_state["lightning_lane_fsm_preparing"] is True
+        assert (
+            guard.context.shared_state.get("lightning_lane_fsm_preparing", False)
+            is safe_hash
+        )
         return response
 
     guard.wait_for_message = wait
@@ -370,9 +433,36 @@ def test_failed_safe_hash_read_releases_preparation_reservation() -> None:
                 ),
                 "safe",
                 "valory/gnosis_safe:0.1.0",
-                "get_raw_safe_transaction_hash",
+                "get_raw_safe_transaction_hash" if safe_hash else "get_balance",
             )
         )
         == []
     )
-    assert "lightning_lane_fsm_preparing" not in guard.context.shared_state
+    assert guard.context.shared_state.get("lightning_lane_fsm_preparing", False) is (
+        safe_hash and success
+    )
+
+
+@pytest.mark.parametrize("phase", ["nonce", "receipt"])
+def test_guard_discards_reads_for_replaced_shot(phase: str) -> None:
+    """Keep a newer lock when the watcher replaces a shot during guard I/O."""
+    guard = make_guard()
+    old = guard.context.shared_state["lightning_lane_inflight"]
+    newer = dict(old, tx="0xnew", sent_at=161)
+
+    def rpc(method: str, params: Any) -> Any:
+        if (phase == "nonce") == (method == "eth_getTransactionCount"):
+            yield
+        return "0x9" if method == "eth_getTransactionCount" else None
+
+    guard._lane_guard_rpc = rpc
+    guard.sleep = lambda seconds: iter([None])
+    with patch("time.time", return_value=161):
+        waiting = guard.wait_for_lightning_lane()
+        assert next(waiting) is None
+        guard.context.shared_state["lightning_lane_inflight"] = newer
+        assert next(waiting) is None
+        waiting.close()
+    assert guard.context.shared_state["lightning_lane_inflight"] is newer
+    guard.context.logger.info.assert_not_called()
+    guard.context.logger.warning.assert_not_called()

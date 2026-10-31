@@ -3217,8 +3217,9 @@ class TestSetupPolicyAndTools:
 class TestBenchmarkingAct:
     """Tests for _benchmarking_act."""
 
-    def test_benchmarking_act(self) -> None:
-        """Should update policy with mech tool and return payload."""
+    @pytest.mark.parametrize("tool", [None, "tool1"])
+    def test_benchmarking_act(self, tool: str | None) -> None:
+        """Return a payload and update accuracy only for a selected tool."""
         behaviour = _make_redeem_behaviour()
         behaviour._policy = _make_policy()
         behaviour._mech_tools = {"tool1"}  # type: ignore[no-untyped-def]
@@ -3227,6 +3228,8 @@ class TestBenchmarkingAct:
 
         mock_synced = MagicMock()
         mock_synced.mech_tool = "tool1"
+        mock_synced.mech_tool_key = tool
+        before = behaviour.policy.serialize()
         # type: ignore[no-untyped-def]
         mock_data = MagicMock()
         mock_data.is_winning = True
@@ -3249,6 +3252,7 @@ class TestBenchmarkingAct:
             result = behaviour._benchmarking_act()
 
         assert isinstance(result, RedeemPayload)
+        assert (behaviour.policy.serialize() != before) is (tool is not None)
 
 
 class TestNormalAct:

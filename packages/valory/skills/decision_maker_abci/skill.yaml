@@ -121,7 +121,7 @@ fingerprint:
   tests/behaviours/test_polymarket_wrap_collateral.py: bafybeigeekby762zs4ru72ylnlnyibaa7pg6642xxscr7rq63rya4g5xiu
   tests/behaviours/test_post_bet_update.py: bafybeidxkfmrqa2nobfkmbyhlxyn2x2abk7n53riro3a5iz7fb7z5mzosa
   tests/behaviours/test_redeem_router.py: bafybeifttfb4ik5hpyc6rivp6gcseih3dtcnw2437u4j2teshfr6tejlvm
-  tests/behaviours/test_reedem.py: bafybeicogm6qti4pzjhhumfivvfy4qut5ob6o5gsrcdvryllgapz4n672u
+  tests/behaviours/test_reedem.py: bafybeigzpzdnfjgq53vywch37e6ixhobuvy7hgmwo4qrz74jqy5e7bnadi
   tests/behaviours/test_sampling.py: bafybeicopnx3osqr6xfy7id743mmhudyk65twcwpzfde6n7jboowzlc7pq
   tests/behaviours/test_sampling_fresh.py: bafybeih7p2eaibiu3vgmfkbcyw32vo453j74kfyfhdkfcjd4aytkqmaq7y
   tests/behaviours/test_sell_outcome_tokens.py: bafybeiej3ci4irissz45kk5ooy4notxcjl2dtbxioljqlzqtwex3elrqqq
@@ -197,7 +197,7 @@ skills:
 - valory/market_manager_abci:0.1.0:bafybeicle4v4hbzfitrndz4iezmpzqft7q26eijmzpqpfs7o4ccv7pkfcu
 - valory/transaction_settlement_abci:0.1.0:bafybeidmmhjcgp7chozxovensq3zplkufvaityd2w3zladtssu4ijvqbzm
 - valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m
-- valory/staking_abci:0.1.0:bafybeied4t4w7galbqtnegr4vdrzvh4pl7sq2cmuym45qu7arxqolrkx6i
+- valory/staking_abci:0.1.0:bafybeigm6i7jhd2wrymiszffbgo4l3k46dggcs3dto7ekjig2l3eyg4qgi
 - valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
 - valory/chatui_abci:0.1.0:bafybeihj5y6cecuw4iz2gshicoygghrgi5b6rzynnofx25ycsv56ehgdvq
 behaviours:

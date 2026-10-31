@@ -75,9 +75,10 @@ class LaneGuardMixin:
         :yield: control during the half-second poll or nonce read.
         """
         config: Any = getattr(self.params, "lightning", None)
-        if getattr(config, "lightning_lane", False) is not True:
-            return
         shared = self.context.shared_state
+        enabled = getattr(config, "lightning_lane", False) is True
+        if config is None or (not enabled and "lightning_lane_inflight" not in shared):
+            return
         while shared.get("lightning_lane_inflight"):
             inflight = shared["lightning_lane_inflight"]
             if (
@@ -128,7 +129,7 @@ class LaneGuardMixin:
                     "[LIGHTNING_LANE] timeout nonce refresh failed; Safe remains blocked"
                 )
                 yield from self.sleep(0.5)
-        if reserve:
+        if reserve and enabled:
             shared["lightning_lane_fsm_preparing"] = True
             matching_round = getattr(self, "matching_round", None)
             shared["lightning_lane_fsm_preparing_round"] = (
@@ -141,9 +142,10 @@ class LaneGuardMixin:
         :yield: control during the guard and normal behaviour.
         """
         config: Any = getattr(self.params, "lightning", None)
-        if getattr(
-            config, "lightning_lane", False
-        ) is True and self.matching_round.auto_round_id() in {
+        if (
+            getattr(config, "lightning_lane", False) is True
+            or "lightning_lane_inflight" in self.context.shared_state
+        ) and self.matching_round.auto_round_id() in {
             "mech_request_round",
             "mech_purchase_subscription_round",
             "background_round",

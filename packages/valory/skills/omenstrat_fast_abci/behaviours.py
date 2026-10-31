@@ -110,7 +110,10 @@ class OmenstratFastConsensusBehaviour(TraderConsensusBehaviour):
             name="fresh_market_poller", skill_context=self.context
         )
         self.lightning_lane: Optional[LightningLaneBehaviour] = None
-        if self.context.params.lightning.lightning_lane is True:
+        if (
+            self.context.params.lightning.lightning_lane is True
+            or (self.context.params.store_path / "lightning_lane_state.json").exists()
+        ):
             self.lightning_lane = LightningLaneBehaviour(
                 name="lightning_lane", skill_context=self.context
             )

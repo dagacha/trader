@@ -2969,3 +2969,32 @@ def test_fast_placement_waits_then_skips_lane_mined_market(tmp_path: Any) -> Non
     assert events[0] == "wait"
     assert events[1].tx_hash is None
     assert b._placement_failure == "lane_already_bet"
+
+
+def test_fast_placement_with_lane_on_buys_an_unbought_market(tmp_path: Any) -> None:
+    """Continue to the normal buy when the lane did not buy the market."""
+    from packages.valory.skills.decision_maker_abci.behaviours.bet_placement import (
+        BetPlacementBehaviour,
+    )
+    from packages.valory.skills.fresh_watch_abci.lightning import LightningConfig
+
+    b = make(FastBetPlacementBehaviour, tmp_path)
+    b.context.params.lightning = LightningConfig(lightning_lane=True)
+    b.context.shared_state = {"lightning_lane_bet_markets": {"0xother"}}
+    raw = raw_market()
+    raw.pop("question")
+    raw.pop("condition")
+    bet = Bet(**raw, market="omen_subgraph")
+    b.wait_for_lightning_lane = lambda: done(None)
+    b.finish_behaviour = MagicMock(side_effect=AssertionError("skipped the buy"))
+    with (
+        patch.object(
+            type(b), "sampled_bet", new_callable=PropertyMock, return_value=bet
+        ),
+        patch.object(
+            BetPlacementBehaviour, "async_act", return_value=done(None)
+        ) as buy,
+    ):
+        run(b.async_act())
+    buy.assert_called_once()
+    assert b._placement_failure == "other"

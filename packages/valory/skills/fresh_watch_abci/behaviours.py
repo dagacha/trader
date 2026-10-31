@@ -652,6 +652,13 @@ class FreshWatchBehaviour(
         )
         balances = yield from pool_read(bet.id, bet.collateralToken, bet.condition_id)
         requested_at = time.time()
+        # The lane can buy this market while the pool read yields.
+        self.read_bets()
+        mined = self.context.shared_state.get("lightning_lane_bet_markets", set())
+        if bet.id in mined or any(
+            stored.id == bet.id and stored.has_investments for stored in self.bets
+        ):
+            return {"lane": "wait"}
         if (
             balances is None
             or ("block_hash" in raw and (not balances or min(balances) <= 0))
@@ -670,7 +677,7 @@ class FreshWatchBehaviour(
                 queue.pending.sort(
                     key=lambda row: (int(row["creationTimestamp"]), row["id"])
                 )
-                del queue.asked[bet.id]
+                queue.asked.pop(bet.id, None)
                 queue.save()
             elif "block_hash" in raw and balances and min(balances) <= 0:
                 queue = FreshQueue(queue.path)
@@ -737,7 +744,7 @@ class FreshWatchBehaviour(
             queue.pending.sort(
                 key=lambda row: (int(row["creationTimestamp"]), row["id"])
             )
-            del queue.asked[bet.id]
+            queue.asked.pop(bet.id, None)
             queue.save()
             yield from self.sleep(cfg.poll_s)
             return {"lane": "wait"}

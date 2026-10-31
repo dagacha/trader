@@ -21,7 +21,6 @@
 
 import json
 import time
-from datetime import datetime, timezone
 from typing import Any, Dict, Generator, Optional
 from urllib.parse import urlparse
 
@@ -58,10 +57,12 @@ from packages.valory.skills.fresh_watch_abci.lane import (
     pool_balances_call,
 )
 from packages.valory.skills.fresh_watch_abci.lightning import BaseRateCache
+from packages.valory.skills.fresh_watch_abci.preview import preview_night
 from packages.valory.skills.fresh_watch_abci.rpc import request_with_timeout
 from packages.valory.skills.fresh_watch_abci.strategy import FreshQueue
 from packages.valory.skills.market_manager_abci.bets import (
     Bet,
+    BetsEncoder,
     PredictionResponse,
     QueueStatus,
 )
@@ -93,17 +94,19 @@ class LightningLaneBehaviour(FreshMarketPoller):
         self._rpc_id = 0
         self._journal_ok = True
         self._saved_state = ""
-        if getattr(self.params.lightning, "lightning_lane", False) is not True:
-            return
         path = self.params.store_path / "lightning_lane_state.json"
         if path.exists():
             try:
                 saved = json.loads(path.read_text())
                 self._night, self._shots = saved["night"], saved["shots"]
                 if saved.get("inflight"):
-                    self.context.shared_state["lightning_lane_inflight"] = saved[
-                        "inflight"
-                    ]
+                    if saved["inflight"].get("tx") is None:
+                        self._log_drop(saved["inflight"], "abandoned_signing")
+                        self._persist()
+                    else:
+                        self.context.shared_state["lightning_lane_inflight"] = saved[
+                            "inflight"
+                        ]
             except (OSError, ValueError, KeyError, TypeError):
                 self._journal_ok = False
 
@@ -590,7 +593,9 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 bet.queue_status = QueueStatus.PROCESSED
                 bet.set_investment_amount(0, info["amount"])
                 bet.strategy = strategy
-                self.store_bets()
+                # Keep the saved receipt if the investment write fails.
+                with open(self.multi_bets_filepath, "w") as bets_file:
+                    json.dump(self.bets, bets_file, cls=BetsEncoder)
             record_trade(
                 self.params.store_path, number(block["timestamp"]), info["market"], key
             )
@@ -774,14 +779,8 @@ class LightningLaneBehaviour(FreshMarketPoller):
         """Drive one slot-aligned step without a consensus payload."""
         now = time.time()
         cfg = self.params.lightning
-        if not self._enabled() or (
-            not self.params.fast.in_window(now)
-            and not self.context.shared_state.get("lightning_lane_inflight")
-        ):
-            yield from self.sleep(1)
-            return
         info = self.context.shared_state.get("lightning_lane_inflight")
-        if info and (info.get("reconcile") or info.get("receipt")):
+        if info:
             try:
                 if info.get("receipt") and info.get("receipt_block"):
                     self._complete(info, info["receipt"], info["receipt_block"])
@@ -789,6 +788,11 @@ class LightningLaneBehaviour(FreshMarketPoller):
                     yield from self._watch_receipt({})
             except (LaneRPCError, OSError, ValueError, KeyError, TypeError):
                 self.context.logger.warning("[LIGHTNING_LANE] tick_failed=true")
+            if self.context.shared_state.get("lightning_lane_inflight"):
+                yield from self.sleep(0.5)
+            return
+        if not self._enabled() or not self.params.fast.in_window(now):
+            yield from self.sleep(1)
             return
         report = self._stats.report(now)
         if report:
@@ -830,9 +834,7 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 "lightning_lane_inflight"
             ) or not self.params.fast.in_window(time.time()):
                 return
-            night = datetime.fromtimestamp(time.time(), timezone.utc).strftime(
-                "%Y-%m-%d"
-            )
+            night = preview_night(time.time(), self.params.fast.active_window_utc)
             if night != self._night:
                 self._night, self._shots = night, 0
                 self._persist()
