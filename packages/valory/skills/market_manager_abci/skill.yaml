@@ -9,7 +9,7 @@ fingerprint:
   README.md: bafybeie6miwn67uin3bphukmf7qgiifh4xtm42i5v3nuyqxzxtehxsqvcq
   __init__.py: bafybeihg4mgwbrmci7qk27pbcqjrhnvp26qccsvtfsyx5ahy6twq7j35k4
   behaviours/__init__.py: bafybeiemmuvhbsh2laur3ide7v5jsdwk2zkd3srvfnd35473fgbocwaknq
-  behaviours/base.py: bafybeidwmjyb7avzddbrehnvphd5ndvglvjmhsmke6x57z2v4swpjawzy4
+  behaviours/base.py: bafybeihbhi4h43azduv3f6coxgxd5umfvtivzet3vlf5sm6wtrfij4iby4
   behaviours/fetch_markets_router.py: bafybeiezt27o6u5tstmopzyyc5g7goyzsremai36ldxn7n2qjvhimbiyha
   behaviours/polymarket_fetch_market.py: bafybeihqapglyxgf7mfj5v37glgfporzlnqwubwlf4zafafejyvanokgyq
   behaviours/round_behaviour.py: bafybeidghxxavn66grhratnfv3thkkunebdaixsxuhrrxsexg35477qxre
@@ -40,7 +40,7 @@ fingerprint:
   tests/conftest.py: bafybeigeij2lqzbimqcf6c4maudbuiwloq3lz7fjthfrtm3fioqf2tzsyy
   tests/test_behaviours_base.py: bafybeifavo7imigpfonl7ujmofmrnozklthqfmyinduxs7wavjsu7abyca
   tests/test_behaviours_polymarket.py: bafybeibnawbec32y5xjoyasb5kp3imrpgsghj2a27m63ievpaa2j476tj4
-  tests/test_behaviours_update_bets.py: bafybeic2mw7nsll7qabgo32yvw7xnvnz7amasvovqc5n6cwxu3qykbx7ge
+  tests/test_behaviours_update_bets.py: bafybeickxqhvmcf7oplxc4dn4uasfqoa43lib2arnfgmplenk2hbxtcozu
   tests/test_bets.py: bafybeiagwgevhcxyarold53iqvgm6zus3calnhrwi4q2iqougfldxnbyii
   tests/test_dialogues.py: bafybeiet646su5nsjmvruahuwg6un4uvwzyj2lnn2jvkye6cxooz22f3ja
   tests/test_disabled_tags_invariant.py: bafybeihw2elbgoitd6cpnwzs5odj6l5otdatdsjknjnpdjj3jsivp54fba

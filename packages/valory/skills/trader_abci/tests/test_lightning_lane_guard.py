@@ -26,7 +26,12 @@ from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
+from aea_ledger_ethereum import EthereumApi
+from web3 import Web3
+from web3.exceptions import TransactionNotFound
+from web3.providers import BaseProvider
 
+from packages.valory.protocols.ledger_api import LedgerApiMessage
 from packages.valory.skills.abstract_round_abci.base import AbstractRound
 from packages.valory.skills.abstract_round_abci.behaviour_utils import (
     AsyncBehaviour,
@@ -68,6 +73,100 @@ def make_guard(enabled: bool = True, sent_at: float = 100.0) -> Any:
     guard = object.__new__(GuardedBehaviour)
     guard._context = context
     return guard
+
+
+def ledger_guard() -> Any:
+    """Route guard requests through the real adapter and a recording provider."""
+    guard = make_guard()
+    guard.params.lightning.lightning_rpc_url = ""
+    guard.params.mech_chain_id = "gnosis"
+    guard.context.default_ledger_id = "ethereum"
+    guard.context.agent_address = "0x" + "12" * 20
+    guard.context.shared_state["lightning_lane_inflight"]["tx"] = "0x" + "ab" * 32
+    guard.context.requests = SimpleNamespace(request_id_to_callback={})
+    guard._get_default_terms = lambda: None
+    guard._get_request_nonce_from_dialogue = lambda dialogue: "nonce"
+    guard.sleep = lambda seconds: iter([None])
+    calls = []
+
+    class RecordingProvider(BaseProvider):
+        """Return a consumed nonce and no receipt for the original hash."""
+
+        def make_request(self, method: Any, params: Any) -> Any:
+            """Record the Web3 call and return its RPC response."""
+            calls.append((method, params))
+            return {
+                "jsonrpc": "2.0",
+                "id": len(calls),
+                "result": "0x9" if method == "eth_getTransactionCount" else None,
+            }
+
+    ledger = object.__new__(EthereumApi)
+    ledger._api = Web3(RecordingProvider(), middleware=[])
+
+    def create(**kwargs: Any) -> Any:
+        kwargs.pop("counterparty")
+        return (
+            LedgerApiMessage(
+                dialogue_reference=("nonce", ""), message_id=1, target=0, **kwargs
+            ),
+            SimpleNamespace(),
+        )
+
+    def send(message: Any) -> None:
+        kwargs = dict(message.kwargs.body)
+        assert kwargs.pop("chain_id") == "gnosis"
+        try:
+            body = ledger.get_state(
+                message.callable, *message.args, raise_on_try=True, **kwargs
+            )
+            response = SimpleNamespace(
+                performative=LedgerApiMessage.Performative.STATE,
+                state=SimpleNamespace(body=body),
+            )
+        except TransactionNotFound as exc:
+            response = SimpleNamespace(
+                performative=LedgerApiMessage.Performative.ERROR, message=str(exc)
+            )
+        guard.context.requests.request_id_to_callback["nonce"](response, guard)
+
+    guard.context.ledger_api_dialogues = SimpleNamespace(create=create)
+    guard.context.outbox = SimpleNamespace(put_message=send)
+    return guard, calls
+
+
+def test_guard_nonce_binds_to_real_ledger_adapter() -> None:
+    """Use Web3's account keyword before the provider reads the confirmed nonce."""
+    guard, calls = ledger_guard()
+    request = guard._lane_guard_rpc(
+        "eth_getTransactionCount", [guard.context.agent_address, "latest"]
+    )
+    with pytest.raises(StopIteration) as result:
+        next(request)
+    assert result.value.value == 9
+    assert calls == [
+        ("eth_getTransactionCount", (guard.context.agent_address, "latest"))
+    ]
+
+
+def test_guard_replaced_shot_clears_lock_through_real_ledger_adapter() -> None:
+    """Release a replaced shot after the adapter confirms its nonce was consumed."""
+    guard, calls = ledger_guard()
+    shared = guard.context.shared_state
+    shot = shared["lightning_lane_inflight"]["tx"]
+    shared["lightning_lane_eoa_nonce"] = {"nonce": 8}
+    with patch("time.time", return_value=161):
+        waiting = guard.wait_for_lightning_lane()
+        assert next(waiting, "done") == "done"
+        waiting.close()
+    assert "lightning_lane_inflight" not in shared
+    assert "lightning_lane_eoa_nonce" not in shared
+    assert calls == [
+        ("eth_getTransactionCount", (guard.context.agent_address, "latest")),
+        ("eth_getTransactionReceipt", (shot,)),
+    ]
+    assert "dropped_replaced" in str(guard.context.logger.info.call_args)
+    guard.context.logger.warning.assert_not_called()
 
 
 @pytest.mark.parametrize("enabled", [False, None])

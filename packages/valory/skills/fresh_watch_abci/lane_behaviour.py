@@ -586,7 +586,7 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 bet = Bet(**row, market="omen_subgraph")
                 self._update_bet_strategy(bet)
                 strategy = bet.strategy
-                self.read_bets()
+                self.read_bets(strict=True)
                 existing = next(
                     (stored for stored in self.bets if stored.id == bet.id), None
                 )
@@ -806,6 +806,7 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 yield from self.sleep(0.5)
             return
         if not self._enabled() or not self.params.fast.in_window(now):
+            self._poller = None
             yield from self.sleep(1)
             return
         report = self._stats.report(now)

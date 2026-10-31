@@ -73,6 +73,8 @@ class SlotPoller:
         """
         if now < self.next_at:
             return None
+        if now - self.next_at > 10:
+            self.wanted = None
         if self.wanted is None:
             return "eth_blockNumber", []
         return "eth_getBlockByNumber", [hex(self.wanted), False]

@@ -53,7 +53,7 @@ class LaneGuardMixin:
                 "eth_getBlockByNumber": ("get_block", ("block_identifier",)),
                 "eth_getTransactionCount": (
                     "get_transaction_count",
-                    ("address", "block_identifier"),
+                    ("account", "block_identifier"),
                 ),
             }[method]
             kwargs = dict(zip(arguments, params))

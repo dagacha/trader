@@ -147,8 +147,24 @@ class BetsManagerBehaviour(BaseBehaviour, ABC):
 
         self.context.logger.error(err)
 
-    def read_bets(self) -> None:
-        """Read the bets from the agent's data dir as JSON."""
+    def read_bets(self, strict: bool = False) -> None:
+        """Read the bets from the agent's data dir as JSON.
+
+        :param strict: raise read and decode errors; accept only absent files as empty.
+        """
+        if strict:
+            for read_path in (self.multi_bets_filepath, self.bets_filepath):
+                try:
+                    with open(read_path, READ_MODE) as bets_file:
+                        bets = json.load(bets_file, cls=BetsDecoder)
+                except FileNotFoundError:
+                    continue
+                self.bets = bets
+                self._normalize_polymarket_collateral()
+                return
+            self.bets = []
+            return
+
         self.bets = []
         read_path = self.multi_bets_filepath
 
