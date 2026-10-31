@@ -259,6 +259,16 @@ def test_lane_gas_limit_requires_at_least_100000() -> None:
     )
 
 
+def test_lane_gas_limit_rejects_above_2000000() -> None:
+    """Accept the gas ceiling and reject one gas unit above it."""
+    with pytest.raises(ValueError, match="Lane fee, polling, and budget"):
+        LightningConfig(lightning_lane_gas_limit=2000001)
+    assert (
+        LightningConfig(lightning_lane_gas_limit=2000000).lightning_lane_gas_limit
+        == 2000000
+    )
+
+
 def test_base_rate_ignores_duplicate_and_invalid_resolutions(tmp_path: Any) -> None:
     """Count each market once and accept only a valid binary resolution."""
     cfg = LightningConfig(lightning_base_rate_min_n=2)

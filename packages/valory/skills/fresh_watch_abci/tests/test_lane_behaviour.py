@@ -117,6 +117,56 @@ def test_lane_off_has_no_rpc_or_consensus(tmp_path: Any) -> None:
     b.send_a2a_transaction.assert_not_called()
 
 
+def test_x402_disables_new_shots_and_logs_once(tmp_path: Any) -> None:
+    """Keep the lane off when the funding worker shares the agent nonce."""
+    b = lane(tmp_path)
+    b.context.params.use_x402 = True
+    prepared(b)
+    b._rpc = MagicMock(side_effect=AssertionError("new shot RPC"))
+    b._market = MagicMock(side_effect=AssertionError("new shot"))
+    run(b.async_act())
+    run(b.async_act())
+    b._rpc.assert_not_called()
+    b._market.assert_not_called()
+    b.context.signing_dialogues.create.assert_not_called()
+    b.context.logger.info.assert_called_once_with(
+        "[LIGHTNING_LANE] off reason=%s", "x402_eoa_funding_conflict"
+    )
+    assert not (tmp_path / "lightning_lane_state.json").exists()
+    assert "lightning_lane_inflight" not in b.context.shared_state
+    assert b._shots == 0
+
+
+@pytest.mark.parametrize("saved_receipt", [False, True])
+def test_x402_restart_reconciles_outstanding_journal(
+    tmp_path: Any, saved_receipt: bool
+) -> None:
+    """Complete an outstanding shot before the x402 new-shot guard."""
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+    block = {"timestamp": hex(1005), "number": "0x2"}
+    if saved_receipt:
+        info.update(receipt=receipt, receipt_block=block)
+    b.context.shared_state["lightning_lane_inflight"] = info
+    b._shots = 1
+    b._persist()
+    restarted = lane(tmp_path)
+    restarted.context.params.use_x402 = True
+    restarted._rpc = MagicMock(side_effect=[done(receipt), done(block)])
+    restarted._market = MagicMock(side_effect=AssertionError("new shot"))
+    with patch(MODULE + ".time.time", return_value=1005):
+        run(restarted.async_act())
+        assert "lightning_lane_inflight" not in restarted.context.shared_state
+        assert restarted.durable_trade_count() == 1
+        assert restarted._shots == 1
+        assert restarted._rpc.call_count == (0 if saved_receipt else 2)
+        run(restarted.async_act())
+    assert restarted._rpc.call_count == (0 if saved_receipt else 2)
+    restarted._market.assert_not_called()
+    assert "x402_eoa_funding_conflict" in str(restarted.context.logger.method_calls)
+
+
 @pytest.mark.parametrize("url,tip", [("", 550), ("https://rpc.test", 0)])
 def test_lane_requires_url_and_positive_fixed_tip(
     tmp_path: Any, url: str, tip: float
@@ -439,7 +489,7 @@ def test_unsent_write_failure_releases_lane_and_foreground(
             market,
             decision,
             (0.9, 4444444444444444445),
-            {"baseFeePerGas": "0x1", "number": "0x2"},
+            {"baseFeePerGas": "0x1", "number": "0x2", "gasLimit": "0x1000000"},
             1002,
         )
 
@@ -497,7 +547,7 @@ def test_send_skips_intrinsic_gas_shortfall_without_reservation(tmp_path: Any) -
                     market,
                     SimpleNamespace(stake=4.0, price=0.6, p_hat=0.95),
                     (0.9, 4444444444444444445),
-                    {"baseFeePerGas": "0x1", "number": "0x2"},
+                    {"baseFeePerGas": "0x1", "number": "0x2", "gasLimit": "0x1000000"},
                     1002,
                 )
             )
@@ -511,6 +561,65 @@ def test_send_skips_intrinsic_gas_shortfall_without_reservation(tmp_path: Any) -
     b.context.signing_dialogues.create.assert_not_called()
     b.context.decision_maker_message_queue.put_nowait.assert_not_called()
     b._broadcast.assert_not_called()
+
+
+@pytest.mark.parametrize("block_limit", [399999, 400000])
+def test_send_checks_block_gas_limit_before_reservation(
+    tmp_path: Any, block_limit: int
+) -> None:
+    """Reserve only when the transaction gas limit fits the creation block."""
+    from aea.helpers.transaction.base import SignedTransaction
+
+    from packages.open_aea.protocols.signing import SigningMessage
+
+    b = lane(tmp_path)
+    prepared(b)
+    reply_on_send(
+        b,
+        SimpleNamespace(
+            performative=SigningMessage.Performative.SIGNED_TRANSACTION,
+            signed_transaction=SignedTransaction(
+                "ethereum", {"raw_transaction": "0xabcdef"}
+            ),
+        ),
+        signing=True,
+    )
+    b._broadcast = MagicMock()
+    market = {**raw_market(), "id": MARKET, "collateralToken": TOKEN}
+    accepted = block_limit == 400000
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(MODULE + ".time.time", return_value=1002),
+        patch(MODULE + ".write_json_atomically") as write,
+    ):
+        sd.return_value.safe_contract_address = SAFE
+        assert (
+            run(
+                b._send(
+                    market,
+                    SimpleNamespace(stake=4.0, price=0.6, p_hat=0.95),
+                    (0.9, 4444444444444444445),
+                    {
+                        "number": "0x2",
+                        "baseFeePerGas": "0x1",
+                        "gasLimit": hex(block_limit),
+                    },
+                    1002,
+                )
+            )
+            is accepted
+        )
+        if not accepted:
+            assert "lightning_lane_inflight" not in b.context.shared_state
+            write.assert_not_called()
+            assert not (tmp_path / "lightning_lane_state.json").exists()
+            assert run(b.wait_for_lightning_lane()) is None
+            assert b._shots == 0
+            assert b.context.shared_state["lightning_lane_eoa_nonce"]["nonce"] == 7
+            b.context.signing_dialogues.create.assert_not_called()
+            b.context.decision_maker_message_queue.put_nowait.assert_not_called()
+            b._broadcast.assert_not_called()
+            assert "reason=gas_limit_above_block" in str(b.context.logger.method_calls)
 
 
 def test_send_reserves_inflight_before_both_broadcasts(tmp_path: Any) -> None:
@@ -547,7 +656,7 @@ def test_send_reserves_inflight_before_both_broadcasts(tmp_path: Any) -> None:
                 market,
                 decision,
                 (0.9, 4444444444444444445),
-                {"baseFeePerGas": "0x1", "number": "0x2"},
+                {"baseFeePerGas": "0x1", "number": "0x2", "gasLimit": "0x1000000"},
                 1002,
             )
         )
@@ -936,6 +1045,7 @@ def test_creation_receipt_reaches_signed_send_in_one_tick(
         "hash": "0x" + "ab" * 32,
         "timestamp": hex(created),
         "baseFeePerGas": "0x1",
+        "gasLimit": "0x1000000",
     }
     if tick:
         b._checked = b._safe_ok = True
@@ -1147,7 +1257,7 @@ def test_signing_wait_cannot_cross_trade_deadline(tmp_path: Any, expires: str) -
                 market,
                 SimpleNamespace(stake=4.0, price=0.6, p_hat=0.95),
                 (0.9, 4444444444444444445),
-                {"baseFeePerGas": "0x1", "number": "0x2"},
+                {"baseFeePerGas": "0x1", "number": "0x2", "gasLimit": "0x1000000"},
                 1002,
             )
         )
@@ -1239,7 +1349,7 @@ def test_silent_lane_wait_expires_on_scheduler_ticks(
                     market,
                     SimpleNamespace(stake=4.0, price=0.6, p_hat=0.95),
                     (0.9, 4444444444444444445),
-                    {"baseFeePerGas": "0x1", "number": "0x2"},
+                    {"baseFeePerGas": "0x1", "number": "0x2", "gasLimit": "0x1000000"},
                     1002,
                 )
             else:
@@ -1597,7 +1707,7 @@ def test_overnight_shot_budget_includes_reverts_across_midnight(tmp_path: Any) -
                     market,
                     SimpleNamespace(stake=4.0, price=0.6, p_hat=0.95),
                     (0.9, 4444444444444444445),
-                    {"baseFeePerGas": "0x1", "number": "0x2"},
+                    {"baseFeePerGas": "0x1", "number": "0x2", "gasLimit": "0x1000000"},
                     86280,
                 )
             )
@@ -1739,7 +1849,7 @@ def test_send_refusal_does_not_spend_shot_budget(tmp_path: Any, reason: str) -> 
                     market,
                     SimpleNamespace(stake=4.0, p_hat=0.95),
                     (0.9, 1),
-                    {"baseFeePerGas": "0x1"},
+                    {"baseFeePerGas": "0x1", "gasLimit": "0x1000000"},
                     1002,
                 )
             )

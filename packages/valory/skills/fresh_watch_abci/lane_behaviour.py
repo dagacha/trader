@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Dict, Generator, Optional
 from urllib.parse import urlparse
 
-from aea.helpers.transaction.base import RawTransaction, Terms
+from aea.helpers.transaction.base import RawTransaction, SignedTransaction, Terms
 from eth_abi import decode, encode
 from eth_utils import keccak  # type: ignore[import-not-found]
 
@@ -98,6 +98,7 @@ class LightningLaneBehaviour(FreshMarketPoller):
         self._rpc_id = 0
         self._journal_ok = True
         self._saved_state = ""
+        self._rebroadcast_tx: Optional[str] = None
         if (self.params.store_path / "lightning_lane_state.json").exists():
             self._load_journal()
 
@@ -116,6 +117,8 @@ class LightningLaneBehaviour(FreshMarketPoller):
                     self._persist()
                 else:
                     shared["lightning_lane_inflight"] = saved["inflight"]
+                    if saved["inflight"].get("signed_transaction"):
+                        self._rebroadcast_tx = saved["inflight"]["tx"]
             self._journal_ok = True
         except (OSError, ValueError, KeyError, TypeError):
             self._journal_ok = False
@@ -148,6 +151,8 @@ class LightningLaneBehaviour(FreshMarketPoller):
             reason = "invalid_lane_state"
         if cfg.lightning_lane_tip_gwei <= 0:
             reason = "zero_tip"
+        if self.params.use_x402 is True:
+            reason = "x402_eoa_funding_conflict"
         if reason and not self._off_logged:
             self.context.logger.info("[LIGHTNING_LANE] off reason=%s", reason)
             self._off_logged = True
@@ -457,6 +462,12 @@ class LightningLaneBehaviour(FreshMarketPoller):
             > cfg.lightning_lane_max_age_s
         ):
             return False
+        if cfg.lightning_lane_gas_limit > number(block["gasLimit"]):
+            self.context.logger.info(
+                "[LIGHTNING_LANE] market=%s reason=gas_limit_above_block",
+                market["id"],
+            )
+            return False
         amount = int(decision.stake * 10**18)
         try:
             data, _ = build_safe_calldata(
@@ -534,6 +545,7 @@ class LightningLaneBehaviour(FreshMarketPoller):
             body = response.signed_transaction.body
             raw = body["raw_transaction"]
             info["tx"] = "0x" + keccak(bytes.fromhex(raw[2:])).hex()
+            info["signed_transaction"] = body
             signed_at = time.time()
             if (
                 signed_at - number(market["creationTimestamp"])
@@ -685,6 +697,9 @@ class LightningLaneBehaviour(FreshMarketPoller):
         if not info:
             return
         reconcile = info.pop("reconcile", False)
+        recover = (
+            self._rebroadcast_tx is not None and info.get("tx") == self._rebroadcast_tx
+        )
         receipt = info.get("receipt")
         if receipt is None and info.get("tx"):
             receipt = yield from self._rpc("eth_getTransactionReceipt", [info["tx"]])
@@ -692,12 +707,35 @@ class LightningLaneBehaviour(FreshMarketPoller):
             time.time() - info["sent_at"]
             >= self.params.lightning.lightning_lane_inflight_timeout_s
             or reconcile
+            or recover
         ):
             nonce = yield from self._rpc(
                 "eth_getTransactionCount", [self.context.agent_address, "latest"]
             )
             if shared.get("lightning_lane_inflight") is not info:
                 return
+            if recover and number(nonce) == info["eoa_nonce"]:
+                self._rebroadcast_tx = None
+                if (
+                    time.time() - number(info["row"]["creationTimestamp"])
+                    > self.params.lightning.lightning_lane_max_age_s
+                ):
+                    self.context.logger.info(
+                        "[LIGHTNING_LANE] market=%s tx=%s status=late reason=recovery_rebroadcast",
+                        info["market"],
+                        info["tx"],
+                    )
+                body = info["signed_transaction"]
+                raw = body["raw_transaction"]
+                signed = SigningMessage(
+                    performative=SigningMessage.Performative(
+                        SigningMessage.Performative.SIGNED_TRANSACTION
+                    ),
+                    signed_transaction=SignedTransaction(
+                        self.context.default_ledger_id, body
+                    ),
+                )
+                self._broadcast(signed, raw)
             if number(nonce) > info["eoa_nonce"]:
                 if info.get("tx"):
                     receipt = yield from self._rpc(
