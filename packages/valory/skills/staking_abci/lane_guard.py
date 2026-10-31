@@ -24,6 +24,8 @@ import time
 from typing import Any, Generator, Optional, cast
 
 from packages.valory.protocols.contract_api import ContractApiMessage
+from packages.valory.protocols.ledger_api import LedgerApiMessage
+from packages.valory.skills.abstract_round_abci.base import LEDGER_API_ADDRESS
 from packages.valory.skills.abstract_round_abci.behaviour_utils import TimeoutException
 from packages.valory.skills.staking_abci.rpc import request_with_timeout
 
@@ -34,14 +36,52 @@ class LaneGuardMixin:
     def _lane_guard_rpc(
         self: Any, method: str, params: Any
     ) -> Generator[None, None, Any]:
-        """Read one private RPC result without exposing endpoint credentials.
+        """Read recovery state through the private RPC or ledger connection.
 
         :param method: JSON-RPC method.
         :param params: positional method arguments.
         :yield: control during the response wait.
         :return: decoded RPC result.
-        :raises ValueError: when the HTTP request or receipt result is invalid.
+        :raises ValueError: when the response or receipt result is invalid.
         """
+        if not self.params.lightning.lightning_rpc_url:
+            ledger_method, arguments = {
+                "eth_getTransactionReceipt": (
+                    "get_transaction_receipt",
+                    ("transaction_hash",),
+                ),
+                "eth_getBlockByNumber": ("get_block", ("block_identifier",)),
+                "eth_getTransactionCount": (
+                    "get_transaction_count",
+                    ("address", "block_identifier"),
+                ),
+            }[method]
+            kwargs = dict(zip(arguments, params))
+            if ledger_method == "get_block" and isinstance(params[0], str):
+                kwargs["block_identifier"] = int(params[0], 16)
+            message, dialogue = self.context.ledger_api_dialogues.create(
+                counterparty=LEDGER_API_ADDRESS,
+                performative=LedgerApiMessage.Performative.GET_STATE,
+                ledger_id=self.context.default_ledger_id,
+                callable=ledger_method,
+                args=tuple(),
+                kwargs=LedgerApiMessage.Kwargs(
+                    dict(kwargs, chain_id=self.params.mech_chain_id)
+                ),
+            )
+            response = yield from request_with_timeout(
+                self, message, dialogue, timeout=5.0
+            )
+            if response.performative != LedgerApiMessage.Performative.STATE:
+                if (
+                    ledger_method == "get_transaction_receipt"
+                    and response.message
+                    == f"Transaction with hash: {params[0]!r} not found."
+                ):
+                    return None
+                raise ValueError("Ledger recovery response failed")
+            body = response.state.body
+            return body.get(ledger_method + "_result", body)
         message, dialogue = self._build_http_request_message(
             method="POST",
             url=self.params.lightning.lightning_rpc_url,
@@ -92,7 +132,7 @@ class LaneGuardMixin:
                 value = yield from self._lane_guard_rpc(
                     "eth_getTransactionCount", [self.context.agent_address, "latest"]
                 )
-                nonce = int(value, 16)
+                nonce = int(value, 16) if isinstance(value, str) else int(value)
                 if shared.get("lightning_lane_inflight") is not inflight:
                     continue
                 if nonce <= inflight["eoa_nonce"]:

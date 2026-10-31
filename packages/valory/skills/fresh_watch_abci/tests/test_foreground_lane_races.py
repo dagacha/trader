@@ -43,7 +43,11 @@ from packages.valory.skills.fresh_watch_abci.tests.test_behaviours import (
     raw_market,
     run,
 )
-from packages.valory.skills.fresh_watch_abci.tests.test_lane_behaviour import lane
+from packages.valory.skills.fresh_watch_abci.tests.test_lane_behaviour import (
+    MARKET,
+    lane,
+    settled,
+)
 from packages.valory.skills.market_manager_abci.bets import Bet, QueueStatus
 
 
@@ -213,3 +217,54 @@ def test_placement_rechecks_durable_trade_cap_after_guard(tmp_path: Any) -> None
     assert len(payloads) == 1
     assert payloads[0].tx_hash is None
     assert b._placement_failure == "trade_cap"
+
+
+def test_flag_off_restored_purchase_blocks_second_buy_after_guard(
+    tmp_path: Any,
+) -> None:
+    """Skip a second buy after a restored lane shot fills during the wait."""
+    writer = lane(tmp_path)
+    info = settled(writer, tmp_path)
+    writer.context.shared_state["lightning_lane_inflight"] = info
+    writer._persist()
+    writer = lane(tmp_path, lightning_lane=False)
+    info = writer.context.shared_state["lightning_lane_inflight"]
+    b = make(FastBetPlacementBehaviour, tmp_path)
+    b.context.params.lightning = LightningConfig(lightning_lane=False)
+    b.context.params.max_trades = 3
+    b.context.shared_state = writer.context.shared_state
+    b.bets = [market_bet(MARKET)]
+    b.store_bets()
+    payloads = []
+
+    def sleep(_delay: float) -> Any:
+        yield
+
+    b.sleep = sleep
+
+    def finish(payload: Any) -> Any:
+        payloads.append(payload)
+        return done(None)
+
+    b.finish_behaviour = finish
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch("time.time", return_value=1005),
+        patch.object(
+            BetPlacementBehaviour,
+            "async_act",
+            side_effect=AssertionError("foreground placed a second buy"),
+        ),
+    ):
+        sd.return_value.sampled_bet_index = 0
+        sd.return_value.successful_trade_count = 0
+        sd.return_value.previous_checkpoint = None
+        generator = b.async_act()
+        assert next(generator) is None
+        writer._complete(info, {"status": "0x1"}, {"timestamp": hex(1005)})
+        assert b.durable_trade_count() == 1
+        assert b.durable_trade_count() < b.params.max_trades
+        run(generator)
+    assert len(payloads) == 1
+    assert payloads[0].tx_hash is None
+    assert b._placement_failure == "lane_already_bet"

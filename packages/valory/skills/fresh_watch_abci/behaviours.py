@@ -1161,7 +1161,7 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
         self._min_tokens_out = None
         if 0 < self.params.max_trades <= self.durable_trade_count():
             self._placement_failure = "trade_cap"
-        elif lightning_controls(self).lightning_lane:
+        else:
             bet = self.sampled_bet
             mined = self.context.shared_state.get("lightning_lane_bet_markets", set())
             if bet.id in mined or bet.has_investments:

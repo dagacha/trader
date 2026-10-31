@@ -1523,7 +1523,9 @@ def test_placement_reused_before_quote(tmp_path: Any, benchmarking: bool) -> Non
             type(b),
             "sampled_bet",
             new_callable=PropertyMock,
-            return_value=SimpleNamespace(id="market", creationTimestamp=1000),
+            return_value=SimpleNamespace(
+                id="market", creationTimestamp=1000, has_investments=False
+            ),
         ),
     ):
         sd.return_value.vote = 0

@@ -21,6 +21,7 @@
 
 import json
 import time
+from pathlib import Path
 from typing import Any, Dict, Generator, Optional
 from urllib.parse import urlparse
 
@@ -199,6 +200,8 @@ class LightningLaneBehaviour(FreshMarketPoller):
         :raises LaneRPCError: when the response is absent or unusable.
         """
         try:
+            if not self.params.lightning.lightning_rpc_url:
+                return (yield from self._lane_guard_rpc(method, params))
             message, dialogue = self._request(method, params)
             response = yield from request_with_timeout(
                 self, message, dialogue, timeout=2.0
@@ -481,7 +484,11 @@ class LightningLaneBehaviour(FreshMarketPoller):
             probability=decision.p_hat,
         )
         shared["lightning_lane_inflight"] = info
-        self._persist()
+        try:
+            self._persist()
+        except OSError:
+            shared.pop("lightning_lane_inflight", None)
+            raise
         terms = Terms(
             self.params.mech_chain_id,
             self.context.agent_address,
@@ -521,7 +528,12 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 return False
             info["sent_at"] = time.time()
             self._shots += 1
-            self._persist()
+            try:
+                self._persist()
+            except OSError:
+                shared.pop("lightning_lane_inflight", None)
+                self._shots -= 1
+                raise
             self._broadcast(response, raw)
         except (TimeoutException, ValueError, KeyError, TypeError):
             shared.pop("lightning_lane_inflight", None)
@@ -594,8 +606,10 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 bet.set_investment_amount(0, info["amount"])
                 bet.strategy = strategy
                 # Keep the saved receipt if the investment write fails.
-                with open(self.multi_bets_filepath, "w") as bets_file:
-                    json.dump(self.bets, bets_file, cls=BetsEncoder)
+                write_json_atomically(
+                    Path(self.multi_bets_filepath),
+                    json.loads(json.dumps(self.bets, cls=BetsEncoder)),
+                )
             record_trade(
                 self.params.store_path, number(block["timestamp"]), info["market"], key
             )

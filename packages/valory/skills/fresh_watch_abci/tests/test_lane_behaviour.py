@@ -235,6 +235,163 @@ def test_rpc_uses_http_client_and_redacts_rpc_errors(tmp_path: Any) -> None:
     assert "private-key" not in str(b.context.logger.method_calls)
 
 
+@pytest.mark.parametrize("saved_receipt", [False, True])
+def test_recovery_without_private_url_uses_ledger_request_path(
+    tmp_path: Any, saved_receipt: bool
+) -> None:
+    """Recover receipts and block timestamps through real ledger callbacks."""
+    from packages.valory.protocols.ledger_api import LedgerApiMessage
+
+    b = lane(tmp_path)
+    info = settled(b, tmp_path)
+    receipt = {"status": 1, "blockNumber": 2, "logs": []}
+    block = {"timestamp": 1005, "number": 2}
+    if saved_receipt:
+        info["receipt"] = receipt
+    b.context.shared_state["lightning_lane_inflight"] = info
+    b._persist()
+    b = lane(tmp_path, lightning_lane=False, lightning_rpc_url="")
+    b._build_http_request_message = MagicMock(
+        side_effect=AssertionError("recovery used the empty private URL")
+    )
+    values: list[Any] = [block] if saved_receipt else [None, 7, receipt, block]
+    results = iter(values)
+
+    def response() -> Any:
+        method = b.context.ledger_api_dialogues.create.call_args.kwargs["callable"]
+        result = next(results)
+        if result is None:
+            return SimpleNamespace(
+                performative=LedgerApiMessage.Performative.ERROR,
+                message="Transaction with hash: '0xfeed' not found.",
+            )
+        return SimpleNamespace(
+            performative=LedgerApiMessage.Performative.STATE,
+            state=SimpleNamespace(
+                body=(
+                    result if isinstance(result, dict) else {method + "_result": result}
+                )
+            ),
+        )
+
+    dialogue = reply_on_send(b, response)
+    b.context.ledger_api_dialogues.create.return_value = (MagicMock(), dialogue)
+    with patch(MODULE + ".time.time", return_value=1100):
+        if not saved_receipt:
+            run(b.async_act())
+            assert b.context.shared_state["lightning_lane_inflight"]["tx"] == "0xfeed"
+        run(b.async_act())
+        run(b.async_act())
+    assert "lightning_lane_inflight" not in b.context.shared_state
+    assert run(b.wait_for_lightning_lane()) is None
+    assert b.durable_trade_count() == 1
+    b.read_bets()
+    assert b.bets[0].invested_amount == info["amount"]
+    requests = b.context.ledger_api_dialogues.create.call_args_list
+    assert [call.kwargs["callable"] for call in requests] == (
+        ["get_block"]
+        if saved_receipt
+        else [
+            "get_transaction_receipt",
+            "get_transaction_count",
+            "get_transaction_receipt",
+            "get_block",
+        ]
+    )
+    for call in requests:
+        assert call.kwargs["ledger_id"] == "ethereum"
+        assert call.kwargs["kwargs"].body["chain_id"] == "gnosis"
+    assert requests[-1].kwargs["kwargs"].body["block_identifier"] == 2
+    b._build_http_request_message.assert_not_called()
+    assert not b.context.requests.request_id_to_callback
+
+
+def test_missing_ledger_receipt_is_pending(tmp_path: Any) -> None:
+    """Treat only the ledger's exact missing-transaction error as pending."""
+    from packages.valory.protocols.ledger_api import LedgerApiMessage
+
+    b = lane(tmp_path, lightning_rpc_url="")
+    dialogue = reply_on_send(
+        b,
+        SimpleNamespace(
+            performative=LedgerApiMessage.Performative.ERROR,
+            message="Transaction with hash: '0xfeed' not found.",
+        ),
+    )
+    b.context.ledger_api_dialogues.create.return_value = (MagicMock(), dialogue)
+    assert run(b._lane_guard_rpc("eth_getTransactionReceipt", ["0xfeed"])) is None
+
+
+@pytest.mark.parametrize(
+    "method,message",
+    [
+        ("eth_getTransactionCount", "Transaction with hash: '0xfeed' not found."),
+        ("eth_getTransactionReceipt", "RPC unavailable"),
+        ("eth_getTransactionReceipt", "Transaction with hash: '0xother' not found."),
+    ],
+)
+def test_ledger_recovery_errors_fail_closed(
+    tmp_path: Any, method: str, message: str
+) -> None:
+    """Do not release recovery for an unrelated ledger error."""
+    from packages.valory.protocols.ledger_api import LedgerApiMessage
+    from packages.valory.skills.fresh_watch_abci.lane_behaviour import LaneRPCError
+
+    b = lane(tmp_path, lightning_rpc_url="")
+    dialogue = reply_on_send(
+        b,
+        SimpleNamespace(
+            performative=LedgerApiMessage.Performative.ERROR, message=message
+        ),
+    )
+    b.context.ledger_api_dialogues.create.return_value = (MagicMock(), dialogue)
+    with pytest.raises(LaneRPCError):
+        run(b._rpc(method, ["0xfeed", "latest"]))
+
+
+def test_foreground_guard_without_private_url_uses_ledger_request_path(
+    tmp_path: Any,
+) -> None:
+    """Save a mined receipt through the ledger and let the lane finish it."""
+    from packages.valory.protocols.ledger_api import LedgerApiMessage
+
+    b = lane(tmp_path, lightning_lane=False, lightning_rpc_url="")
+    info = settled(b, tmp_path)
+    b.context.shared_state["lightning_lane_inflight"] = info
+    receipt = {"status": 1, "blockNumber": "0x2", "logs": []}
+    results = iter([8, receipt, {"timestamp": 1005, "number": 2}])
+
+    def response() -> Any:
+        method = b.context.ledger_api_dialogues.create.call_args.kwargs["callable"]
+        return SimpleNamespace(
+            performative=LedgerApiMessage.Performative.STATE,
+            state=SimpleNamespace(body={method + "_result": next(results)}),
+        )
+
+    def sleep(_delay: float) -> Any:
+        yield
+
+    dialogue = reply_on_send(b, response)
+    b.context.ledger_api_dialogues.create.return_value = (MagicMock(), dialogue)
+    b._build_http_request_message = MagicMock(
+        side_effect=AssertionError("guard used the empty private URL")
+    )
+    b.sleep = sleep
+    with patch(MODULE + ".time.time", return_value=1100):
+        waiting = b.wait_for_lightning_lane()
+        assert next(waiting) is None
+        assert info["receipt"] == receipt
+        run(b.async_act())
+        assert run(waiting) is None
+    assert "lightning_lane_inflight" not in b.context.shared_state
+    assert b.durable_trade_count() == 1
+    assert [
+        call.kwargs["callable"]
+        for call in b.context.ledger_api_dialogues.create.call_args_list
+    ] == ["get_transaction_count", "get_transaction_receipt", "get_block"]
+    b._build_http_request_message.assert_not_called()
+
+
 def prepared(b: Any) -> None:
     """Set the idle caches required for a direct shot."""
     b.context.shared_state["lightning_lane_eoa_nonce"] = {"nonce": 7, "read_at": 1001}
@@ -242,6 +399,70 @@ def prepared(b: Any) -> None:
     b._balance_at = 1001
     b._shots = 0
     b._night = "1970-01-01"
+
+
+@pytest.mark.parametrize("failed_write", [1, 2])
+def test_unsent_write_failure_releases_lane_and_foreground(
+    tmp_path: Any, failed_write: int
+) -> None:
+    """Retry an unsent shot with the same nonce after storage recovers."""
+    from aea.helpers.transaction.base import SignedTransaction
+
+    from packages.open_aea.protocols.signing import SigningMessage
+    from packages.valory.skills.agent_performance_summary_abci.models import (
+        write_json_atomically,
+    )
+
+    b = lane(tmp_path)
+    prepared(b)
+    response = SimpleNamespace(
+        performative=SigningMessage.Performative.SIGNED_TRANSACTION,
+        signed_transaction=SignedTransaction(
+            "ethereum", {"raw_transaction": "0xabcdef"}
+        ),
+    )
+    reply_on_send(b, response, signing=True)
+    b._broadcast = MagicMock()
+    market = {**raw_market(), "id": MARKET, "collateralToken": TOKEN}
+    decision = SimpleNamespace(stake=4.0, price=0.6, p_hat=0.95)
+    writes = 0
+
+    def write(path: Any, data: Any) -> None:
+        nonlocal writes
+        writes += 1
+        if writes == failed_write:
+            raise OSError("disk full")
+        write_json_atomically(path, data)
+
+    def send() -> Any:
+        return b._send(
+            market,
+            decision,
+            (0.9, 4444444444444444445),
+            {"baseFeePerGas": "0x1", "number": "0x2"},
+            1002,
+        )
+
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(MODULE + ".time.time", return_value=1002),
+        patch(MODULE + ".write_json_atomically", side_effect=write),
+    ):
+        sd.return_value.safe_contract_address = SAFE
+        with pytest.raises(OSError, match="disk full"):
+            run(send())
+        b._broadcast.assert_not_called()
+        assert b.context.decision_maker_message_queue.put_nowait.call_count == (
+            failed_write - 1
+        )
+        assert "lightning_lane_inflight" not in b.context.shared_state
+        assert b._shots == 0
+        assert run(b.wait_for_lightning_lane()) is None
+        assert b.context.shared_state["lightning_lane_eoa_nonce"]["nonce"] == 7
+        assert run(send()) is True
+    b._broadcast.assert_called_once()
+    assert b.context.shared_state["lightning_lane_inflight"]["eoa_nonce"] == 7
+    assert b._shots == 1
 
 
 def test_send_reserves_inflight_before_both_broadcasts(tmp_path: Any) -> None:
@@ -1206,7 +1427,7 @@ def test_completion_persistence_retries_on_next_tick(
 
 def test_bets_permission_error_retains_receipt_until_stored(tmp_path: Any) -> None:
     """Retry a failed investment write before counting or releasing a shot."""
-    import builtins
+    import os
 
     b = lane(tmp_path)
     info = settled(b, tmp_path)
@@ -1216,14 +1437,14 @@ def test_bets_permission_error_retains_receipt_until_stored(tmp_path: Any) -> No
     b.context.shared_state["lightning_lane_inflight"] = info
     b._persist()
     b._rpc = MagicMock(side_effect=AssertionError("saved receipt needs no RPC"))
-    original_open = builtins.open
+    original_replace = os.replace
 
-    def fail_bets(path: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
-        if path == b.multi_bets_filepath and mode == "w":
+    def fail_bets(source: Any, destination: Any) -> None:
+        if destination == b.multi_bets_filepath:
             raise PermissionError("bets file is read-only")
-        return original_open(path, mode, *args, **kwargs)
+        original_replace(source, destination)
 
-    with patch("builtins.open", side_effect=fail_bets):
+    with patch("os.replace", side_effect=fail_bets):
         run(b.async_act())
     assert b.context.shared_state.get("lightning_lane_inflight") is info
     assert b.durable_trade_count() == 0
@@ -1243,6 +1464,54 @@ def test_bets_permission_error_retains_receipt_until_stored(tmp_path: Any) -> No
     assert "lightning_lane_inflight" not in b.context.shared_state
     assert len(json.loads((tmp_path / "activity_goal_trades.json").read_text())) == 1
     b._rpc.assert_not_called()
+
+
+def test_interrupted_bets_write_preserves_all_older_positions(tmp_path: Any) -> None:
+    """Keep the saved bets intact when a partial lane write fails."""
+    from packages.valory.skills.fresh_watch_abci.tests.test_foreground_lane_races import (
+        market_bet,
+    )
+
+    b = lane(tmp_path)
+    older = [market_bet("older-one"), market_bet("older-two")]
+    for bet in older:
+        bet.set_investment_amount(0, 2 * 10**18)
+    b.bets = older
+    b.store_bets()
+    original_bets = (tmp_path / "multi_bets.json").read_bytes()
+    info = settled(b, tmp_path)
+    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+    block = {"timestamp": hex(1005), "number": "0x2"}
+    info.update(receipt=receipt, receipt_block=block)
+    b.context.shared_state["lightning_lane_inflight"] = info
+    b._persist()
+    original_dump = json.dump
+    partial: list[bool] = []
+
+    def interrupt(data: Any, target: Any, **kwargs: Any) -> None:
+        if isinstance(data, list) and not partial:
+            target.write("[")
+            target.flush()
+            partial.append(True)
+            raise OSError("disk full during bets write")
+        original_dump(data, target, **kwargs)
+
+    with patch(MODULE + ".json.dump", side_effect=interrupt):
+        run(b.async_act())
+    assert partial == [True]
+    assert b.context.shared_state["lightning_lane_inflight"] is info
+    assert b.durable_trade_count() == 0
+    assert (tmp_path / "multi_bets.json").read_bytes() == original_bets
+    run(b.async_act())
+    b.read_bets()
+    assert {bet.id: bet.invested_amount for bet in b.bets} == {
+        "older-one": 2 * 10**18,
+        "older-two": 2 * 10**18,
+        MARKET: 4 * 10**18,
+    }
+    assert b.durable_trade_count() == 1
+    assert "lightning_lane_inflight" not in b.context.shared_state
+    assert not list(tmp_path.glob("multi_bets.json.*"))
 
 
 def test_overnight_shot_budget_includes_reverts_across_midnight(tmp_path: Any) -> None:

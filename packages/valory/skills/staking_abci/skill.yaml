@@ -12,7 +12,7 @@ fingerprint:
   dialogues.py: bafybeibjyeuiqonquqx4hnovbkippxk3rng4q42t5n4rb77b642h6wa72y
   fsm_specification.yaml: bafybeicuoejmaks3ndwhbflp64kkfdkrdyn74a2fplarg4l3gxlonfmeoq
   handlers.py: bafybeidg4plq4x7hrk5vxihtphfd5uf26kh5yukb4m3wta4b4lkw7rchku
-  lane_guard.py: bafybeiflwydne7uxolsnvdfujiud6k5d32m6533pbddzvid5cc24hrj4fi
+  lane_guard.py: bafybeihicmsewucava4s757247urfvgwdf5sh6jk544u3q4ciad6fvhb3e
   models.py: bafybeihwrtmgur7swvwz327r5lotkddria36hnaf42dl6u2pg4xuvludq4
   payloads.py: bafybeigncopqpz3a2nd6hgpsbqjqff2hsoa73abjck4ic5tnxpkzmfmkwu
   rounds.py: bafybeiavfso2rano7hnqsqgh7pzctgooto4atc6xutwtchwoe73lpxsoxq
@@ -33,6 +33,7 @@ contracts:
 - valory/mech_activity:0.1.0:bafybeibsvqydfecckfxdd267fo6ebow6skdnub6axt3tuwiye6qo3avna4
 protocols:
 - valory/contract_api:1.0.0:bafybeibld2xb5m7kyluiptkamp4nrt6oeomkohz7a3yppbv2oo7qw2e4la
+- valory/ledger_api:1.0.0:bafybeiecq56phjfws36rgrefw6niyo4ezesloodsfis647mpm5ygqo4ysi
 skills:
 - valory/abstract_round_abci:0.1.0:bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4
 - valory/transaction_settlement_abci:0.1.0:bafybeidmmhjcgp7chozxovensq3zplkufvaityd2w3zladtssu4ijvqbzm
