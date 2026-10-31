@@ -86,6 +86,14 @@ def test_missing_lightning_params_keep_fast_defaults(params_args: Any) -> None:
     assert params.lightning.lightning_preview is False
 
 
+def test_lane_inherits_uncapped_global_trade_budget(params_args: Any) -> None:
+    """Keep the inherited nightly budget unlimited for an unlimited service."""
+    params_args["max_trades"] = 0
+    params_args["lightning_lane_max_per_night"] = -1
+    params = FastParams(name="params", skill_context=MagicMock(), **params_args)
+    assert params.lightning.lightning_lane_max_per_night == -1
+
+
 @pytest.mark.parametrize(
     "overrides,message",
     [

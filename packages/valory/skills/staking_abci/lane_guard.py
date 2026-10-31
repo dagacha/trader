@@ -25,18 +25,50 @@ from typing import Any, Generator, Optional, cast
 
 from packages.valory.protocols.contract_api import ContractApiMessage
 from packages.valory.skills.abstract_round_abci.behaviour_utils import TimeoutException
+from packages.valory.skills.staking_abci.rpc import request_with_timeout
 
 
 class LaneGuardMixin:
     """Guard local Safe behaviours without changing upstream packages."""
+
+    def _lane_guard_rpc(
+        self: Any, method: str, params: Any
+    ) -> Generator[None, None, Any]:
+        """Read one private RPC result without exposing endpoint credentials.
+
+        :param method: JSON-RPC method.
+        :param params: positional method arguments.
+        :yield: control during the response wait.
+        :return: decoded RPC result.
+        :raises ValueError: when the HTTP request or receipt result is invalid.
+        """
+        message, dialogue = self._build_http_request_message(
+            method="POST",
+            url=self.params.lightning.lightning_rpc_url,
+            headers={"Content-Type": "application/json"},
+            content=json.dumps(
+                {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+            ).encode(),
+        )
+        response = yield from request_with_timeout(self, message, dialogue, timeout=5.0)
+        if response.status_code != 200:
+            raise ValueError("RPC response failed")
+        result = json.loads(response.body)["result"]
+        if (
+            method == "eth_getTransactionReceipt"
+            and result is not None
+            and not isinstance(result, dict)
+        ):
+            raise ValueError("Invalid receipt")
+        return result
 
     def wait_for_lightning_lane(
         self: Any, reserve: bool = False
     ) -> Generator[None, None, None]:
         """Wait before preparing a Safe transaction while a lane shot is pending.
 
-        The background receipt watcher normally clears the flag. On timeout,
-        refresh the pending EOA nonce before releasing the Safe to the FSM.
+        The background receipt watcher clears the flag after bookkeeping.
+        After timeout, require a mined EOA nonce before checking replacement.
         Keep waiting if that read fails, and do not log the private RPC URL.
 
         :param reserve: also exclude shots while a whitelisted round prepares a Safe tx.
@@ -49,35 +81,48 @@ class LaneGuardMixin:
         while shared.get("lightning_lane_inflight"):
             inflight = shared["lightning_lane_inflight"]
             if (
-                time.time() - inflight["sent_at"]
+                inflight.get("receipt")
+                or time.time() - inflight["sent_at"]
                 < config.lightning_lane_inflight_timeout_s
             ):
                 yield from self.sleep(0.5)
                 continue
             try:
-                message, dialogue = self._build_http_request_message(
-                    method="POST",
-                    url=config.lightning_rpc_url,
-                    headers={"Content-Type": "application/json"},
-                    content=json.dumps(
-                        {
-                            "jsonrpc": "2.0",
-                            "id": 1,
-                            "method": "eth_getTransactionCount",
-                            "params": [self.context.agent_address, "pending"],
-                        }
-                    ).encode(),
+                value = yield from self._lane_guard_rpc(
+                    "eth_getTransactionCount", [self.context.agent_address, "latest"]
                 )
-                response = yield from self._do_request(message, dialogue, timeout=5.0)
-                if response.status_code != 200:
-                    raise ValueError("RPC response failed")
-                nonce = int(json.loads(response.body)["result"], 16)
-                shared["lightning_lane_eoa_nonce"] = {
-                    "nonce": nonce,
-                    "read_at": time.time(),
-                }
-                if shared.get("lightning_lane_inflight") is inflight:
+                nonce = int(value, 16)
+                if shared.get("lightning_lane_inflight") is not inflight:
+                    continue
+                if nonce <= inflight["eoa_nonce"]:
+                    now = time.time()
+                    if now - inflight.get("pending_logged_at", now - 60) >= 60:
+                        self.context.logger.info(
+                            "[LIGHTNING_LANE] tx=%s status=pending Safe remains blocked",
+                            inflight.get("tx"),
+                        )
+                        inflight["pending_logged_at"] = now
+                    yield from self.sleep(0.5)
+                    continue
+                receipt = yield from self._lane_guard_rpc(
+                    "eth_getTransactionReceipt", [inflight["tx"]]
+                )
+                if shared.get("lightning_lane_inflight") is not inflight:
+                    continue
+                if receipt is None:
                     shared.pop("lightning_lane_inflight", None)
+                    shared.pop("lightning_lane_eoa_nonce", None)
+                    self.context.logger.info(
+                        "[LIGHTNING_LANE_RESULT] tx=%s status=dropped reason=dropped_replaced",
+                        inflight.get("tx"),
+                    )
+                else:
+                    if (
+                        receipt.get("blockNumber") is not None
+                        and receipt.get("status") is not None
+                    ):
+                        inflight["receipt"] = receipt
+                    yield from self.sleep(0.5)
             except (TimeoutException, ValueError, KeyError, TypeError):
                 self.context.logger.warning(
                     "[LIGHTNING_LANE] timeout nonce refresh failed; Safe remains blocked"

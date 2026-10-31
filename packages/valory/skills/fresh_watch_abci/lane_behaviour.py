@@ -58,6 +58,7 @@ from packages.valory.skills.fresh_watch_abci.lane import (
     pool_balances_call,
 )
 from packages.valory.skills.fresh_watch_abci.lightning import BaseRateCache
+from packages.valory.skills.fresh_watch_abci.rpc import request_with_timeout
 from packages.valory.skills.fresh_watch_abci.strategy import FreshQueue
 from packages.valory.skills.market_manager_abci.bets import (
     Bet,
@@ -196,7 +197,9 @@ class LightningLaneBehaviour(FreshMarketPoller):
         """
         try:
             message, dialogue = self._request(method, params)
-            response = yield from self._do_request(message, dialogue, timeout=2.0)
+            response = yield from request_with_timeout(
+                self, message, dialogue, timeout=2.0
+            )
             body = json.loads(response.body)
             if response.status_code != 200 or "error" in body or "result" not in body:
                 raise ValueError("RPC result unavailable")
@@ -315,10 +318,12 @@ class LightningLaneBehaviour(FreshMarketPoller):
         :param signed: decision-maker signed transaction response.
         :param raw: signed EIP-1559 transaction bytes as hex.
         """
+        info = self.context.shared_state.get("lightning_lane_inflight", {})
+        tx = info.get("tx")
         message, dialogue = self._request("eth_sendRawTransaction", [raw])
         nonce = self._get_request_nonce_from_dialogue(dialogue)
         callbacks = self.context.requests.request_id_to_callback
-        callbacks[nonce] = lambda response, _behaviour: self._receive_send(response)
+        callbacks[nonce] = lambda response, _behaviour: self._receive_send(response, tx)
         self.context.outbox.put_message(message=message)
         self._stats.called(time.time())
         message, dialogue = self.context.ledger_api_dialogues.create(
@@ -328,14 +333,19 @@ class LightningLaneBehaviour(FreshMarketPoller):
             kwargs=LedgerApiMessage.Kwargs({"chain_id": self.params.mech_chain_id}),
         )
         nonce = self._get_request_nonce_from_dialogue(dialogue)
-        callbacks[nonce] = lambda _message, _behaviour: None
+        callbacks[nonce] = lambda response, _behaviour: self._receive_ledger_send(
+            response, tx
+        )
         self.context.outbox.put_message(message=message)
 
-    def _receive_send(self, response: Any) -> None:
+    def _receive_send(self, response: Any, tx: str) -> None:
         """Keep malformed RPC responses within the independent lane.
 
         :param response: HTTP broadcast response.
+        :param tx: transaction hash bound to this callback.
         """
+        if self.context.shared_state.get("lightning_lane_inflight", {}).get("tx") != tx:
+            return
         try:
             body = json.loads(response.body)
             if not isinstance(body, dict) or not isinstance(
@@ -344,7 +354,7 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 raise ValueError("Invalid send result")
             if not isinstance(body.get("error", {}).get("message", ""), str):
                 raise ValueError("Invalid send error")
-            self._handle_send_result(body)
+            self._handle_send_result(body, tx)
         except (OSError, ValueError, TypeError, KeyError):
             self._stats.called(time.time(), error=True)
             self.context.logger.warning("[LIGHTNING_LANE] broadcast_error=true")
@@ -366,17 +376,27 @@ class LightningLaneBehaviour(FreshMarketPoller):
             reason,
         )
 
-    def _handle_send_result(self, body: Dict[str, Any]) -> None:
-        """Treat duplicate broadcast as success and drop stale EOA nonces.
+    def _receive_ledger_send(self, response: Any, tx: str) -> None:
+        """Reconcile ledger errors against the same shot as the RPC callback.
+
+        :param response: ledger broadcast response.
+        :param tx: transaction hash bound to this callback.
+        """
+        if response.performative == LedgerApiMessage.Performative.ERROR:
+            self._handle_send_result({"error": {"message": response.message}}, tx)
+
+    def _handle_send_result(self, body: Dict[str, Any], tx: str) -> None:
+        """Keep duplicate send errors locked until the shot is reconciled.
 
         :param body: decoded JSON-RPC send response.
+        :param tx: transaction hash bound to this callback.
         """
+        info = self.context.shared_state.get("lightning_lane_inflight")
+        if not info or info.get("tx") != tx:
+            return
         error = body.get("error", {}).get("message", "").lower()
         if "nonce too low" in error:
-            info = self.context.shared_state.pop("lightning_lane_inflight", {})
-            self.context.shared_state.pop("lightning_lane_eoa_nonce", None)
-            self._persist()
-            self._log_drop(info, "nonce_too_low")
+            info["reconcile"] = True
         elif error and "already known" not in error:
             self._stats.called(time.time(), error=True)
             self.context.logger.warning("[LIGHTNING_LANE] broadcast_error=true")
@@ -467,11 +487,20 @@ class LightningLaneBehaviour(FreshMarketPoller):
             quantities_by_good_id={},
             nonce="",
         )
-        self._send_transaction_signing_request(
-            RawTransaction(self.context.default_ledger_id, tx), terms
+        message, dialogue = self.context.signing_dialogues.create(
+            counterparty=self.context.decision_maker_address,
+            performative=SigningMessage.Performative.SIGN_TRANSACTION,
+            raw_transaction=RawTransaction(self.context.default_ledger_id, tx),
+            terms=terms,
         )
         try:
-            response = yield from self.wait_for_message(timeout=2.0)
+            response = yield from request_with_timeout(
+                self,
+                message,
+                dialogue,
+                timeout=2.0,
+                send=self.context.decision_maker_message_queue.put_nowait,
+            )
             if response.performative != SigningMessage.Performative.SIGNED_TRANSACTION:
                 raise ValueError("Signing failed")
             body = response.signed_transaction.body
@@ -520,6 +549,8 @@ class LightningLaneBehaviour(FreshMarketPoller):
         :param block: receipt block timestamp context.
         """
         shared = self.context.shared_state
+        info["receipt"], info["receipt_block"] = receipt, block
+        self._persist()
         gas = number(receipt.get("gasUsed", 0))
         fee = gas * number(receipt.get("effectiveGasPrice", 0)) / 10**18
         age = number(block["timestamp"]) - number(info["row"]["creationTimestamp"])
@@ -538,6 +569,8 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 condition = row.pop("condition", None)
                 row["condition_id"] = condition["id"] if condition else None
                 bet = Bet(**row, market="omen_subgraph")
+                self._update_bet_strategy(bet)
+                strategy = bet.strategy
                 self.read_bets()
                 existing = next(
                     (stored for stored in self.bets if stored.id == bet.id), None
@@ -556,12 +589,18 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 bet.processed_timestamp = number(block["timestamp"])
                 bet.queue_status = QueueStatus.PROCESSED
                 bet.set_investment_amount(0, info["amount"])
-                self._update_bet_strategy(bet)
+                bet.strategy = strategy
                 self.store_bets()
-                record_trade(
-                    self.params.store_path, bet.processed_timestamp, bet.id, key
-                )
+            record_trade(
+                self.params.store_path, number(block["timestamp"]), info["market"], key
+            )
+            if not counted:
                 self.record_successful_placement(key)
+            if key not in self.read_counted_placement_keys():
+                self.context.logger.warning(
+                    "[LIGHTNING_LANE] completion_pending=true reason=trade_count_write"
+                )
+                return
             shared.setdefault("lightning_lane_bet_markets", set()).add(info["market"])
             queue = FreshQueue(self.params.store_path / "fresh_watch.json")
             queue.pending = [
@@ -599,38 +638,56 @@ class LightningLaneBehaviour(FreshMarketPoller):
         self._persist()
 
     def _watch_receipt(self, block: Dict[str, Any]) -> Generator[None, None, None]:
-        """Watch each new block, then refresh the nonce before timeout release.
+        """Keep a shot locked until its receipt or a confirmed replacement.
 
         :param block: newly detected block.
-        :yield: receipt and pending nonce reads.
+        :yield: receipt and confirmed nonce reads.
         """
         shared = self.context.shared_state
         info = shared.get("lightning_lane_inflight")
         if not info:
             return
-        receipt = None
-        if info.get("tx"):
+        reconcile = info.pop("reconcile", False)
+        receipt = info.get("receipt")
+        if receipt is None and info.get("tx"):
             receipt = yield from self._rpc("eth_getTransactionReceipt", [info["tx"]])
+        if receipt is None and (
+            time.time() - info["sent_at"]
+            >= self.params.lightning.lightning_lane_inflight_timeout_s
+            or reconcile
+        ):
+            nonce = yield from self._rpc(
+                "eth_getTransactionCount", [self.context.agent_address, "latest"]
+            )
+            if shared.get("lightning_lane_inflight") is not info:
+                return
+            if number(nonce) > info["eoa_nonce"]:
+                if info.get("tx"):
+                    receipt = yield from self._rpc(
+                        "eth_getTransactionReceipt", [info["tx"]]
+                    )
+                if shared.get("lightning_lane_inflight") is not info:
+                    return
+                if receipt is None:
+                    shared.pop("lightning_lane_inflight", None)
+                    shared.pop("lightning_lane_eoa_nonce", None)
+                    self._persist()
+                    self._log_drop(info, "dropped_replaced")
+                    return
+            elif time.time() - info.get("pending_logged_at", 0) >= 60:
+                info["pending_logged_at"] = time.time()
+                self.context.logger.info(
+                    "[LIGHTNING_LANE] market=%s tx=%s status=pending",
+                    info.get("market"),
+                    info.get("tx"),
+                )
         if receipt is not None:
             if receipt.get("blockNumber") != block.get("number"):
                 block = yield from self._rpc(
                     "eth_getBlockByNumber", [receipt["blockNumber"], False]
                 )
-            self._complete(info, receipt, block)
-        elif (
-            time.time() - info["sent_at"]
-            >= self.params.lightning.lightning_lane_inflight_timeout_s
-        ):
-            nonce = yield from self._rpc(
-                "eth_getTransactionCount", [self.context.agent_address, "pending"]
-            )
-            shared["lightning_lane_eoa_nonce"] = {
-                "nonce": number(nonce),
-                "read_at": time.time(),
-            }
-            shared.pop("lightning_lane_inflight", None)
-            self._persist()
-            self._log_drop(info, "timeout")
+            if shared.get("lightning_lane_inflight") is info:
+                self._complete(info, receipt, block)
 
     def _market(
         self, log: Dict[str, Any], block: Dict[str, Any], seen: float
@@ -715,15 +772,23 @@ class LightningLaneBehaviour(FreshMarketPoller):
 
     def async_act(self) -> Generator:
         """Drive one slot-aligned step without a consensus payload."""
-        if not self._enabled():
-            yield from self.sleep(1)
-            return
         now = time.time()
         cfg = self.params.lightning
-        if not self.params.fast.in_window(now) and not self.context.shared_state.get(
-            "lightning_lane_inflight"
+        if not self._enabled() or (
+            not self.params.fast.in_window(now)
+            and not self.context.shared_state.get("lightning_lane_inflight")
         ):
             yield from self.sleep(1)
+            return
+        info = self.context.shared_state.get("lightning_lane_inflight")
+        if info and (info.get("reconcile") or info.get("receipt")):
+            try:
+                if info.get("receipt") and info.get("receipt_block"):
+                    self._complete(info, info["receipt"], info["receipt_block"])
+                else:
+                    yield from self._watch_receipt({})
+            except (LaneRPCError, OSError, ValueError, KeyError, TypeError):
+                self.context.logger.warning("[LIGHTNING_LANE] tick_failed=true")
             return
         report = self._stats.report(now)
         if report:
@@ -771,7 +836,7 @@ class LightningLaneBehaviour(FreshMarketPoller):
             if night != self._night:
                 self._night, self._shots = night, 0
                 self._persist()
-            if self._shots >= cfg.lightning_lane_max_per_night:
+            if 0 <= cfg.lightning_lane_max_per_night <= self._shots:
                 return
             logs = yield from self._rpc(
                 "eth_getLogs",

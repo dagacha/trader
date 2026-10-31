@@ -266,7 +266,7 @@ def lane_decision(
         is None
     ):
         return None, None, "not_still_hold"
-    if max_trades >= 0 and trade_count >= max_trades:
+    if max_trades > 0 and trade_count >= max_trades:
         return None, None, "trade_cap"
     rate = cache.usable(now, lightning)
     if rate is None:

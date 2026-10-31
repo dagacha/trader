@@ -1527,6 +1527,7 @@ def test_placement_reused_before_quote(tmp_path: Any, benchmarking: bool) -> Non
         ),
     ):
         sd.return_value.vote = 0
+        sd.return_value.previous_checkpoint = None
         sd.return_value.db.get_strict.side_effect = lambda key: {
             "request_prices": [0.5, 0.5],
             "fast_decision": json.dumps(dict(p_hat=0.815, stake=4, reason="")),

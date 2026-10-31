@@ -181,6 +181,16 @@ def test_lane_decision_matches_still_hold_fsm_yes_sizing(tmp_path: Any) -> None:
     assert reason == ""
 
 
+def test_zero_global_trade_cap_allows_lane_shots(tmp_path: Any) -> None:
+    """Treat the service's zero trade cap as unlimited."""
+    inputs = decision_inputs(tmp_path)
+    inputs.update(max_trades=0, trade_count=100)
+    decision, bounds, reason = lane_decision(**inputs)
+    assert reason == ""
+    assert decision is not None and decision.stake > 0
+    assert bounds is not None
+
+
 @pytest.mark.parametrize(
     ("change", "reason"),
     [

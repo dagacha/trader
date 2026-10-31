@@ -19,6 +19,7 @@
 
 """Keep FSM Safe transactions behind an in-flight lightning shot."""
 
+import datetime
 import json
 from types import SimpleNamespace
 from typing import Any, cast
@@ -27,7 +28,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from packages.valory.skills.abstract_round_abci.base import AbstractRound
-from packages.valory.skills.abstract_round_abci.behaviour_utils import BaseBehaviour
+from packages.valory.skills.abstract_round_abci.behaviour_utils import (
+    AsyncBehaviour,
+    BaseBehaviour,
+)
 from packages.valory.skills.staking_abci.lane_guard import LaneGuardMixin
 
 
@@ -43,7 +47,13 @@ class GuardedBehaviour(LaneGuardMixin, BaseBehaviour):
 
 def make_guard(enabled: bool = True, sent_at: float = 100.0) -> Any:
     """Build the shared guard without a live agent."""
-    shared = {"lightning_lane_inflight": {"tx": "0xshot", "sent_at": sent_at}}
+    shared = {
+        "lightning_lane_inflight": {
+            "tx": "0xshot",
+            "eoa_nonce": 8,
+            "sent_at": sent_at,
+        }
+    }
     context = SimpleNamespace(
         shared_state=shared, agent_address="0xowner", logger=MagicMock()
     )
@@ -87,8 +97,10 @@ def test_guard_resumes_after_receipt_clears_inflight() -> None:
     assert sleeps == [0.5]
 
 
-def test_guard_timeout_refreshes_pending_nonce_before_clear() -> None:
-    """Refresh the pending EOA nonce through the private RPC before release."""
+def test_guard_timeout_checks_consumed_nonce_and_receipt_before_clear(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Release a consumed EOA nonce only after checking the saved shot receipt."""
     guard = make_guard()
     calls = []
 
@@ -99,25 +111,167 @@ def test_guard_timeout_refreshes_pending_nonce_before_clear() -> None:
     def request(*args: Any, **kwargs: Any) -> Any:
         assert "lightning_lane_inflight" in guard.context.shared_state
         yield
-        return SimpleNamespace(status_code=200, body=b'{"result":"0x9"}')
+        body = b'{"result":"0x9"}' if len(calls) == 1 else b'{"result":null}'
+        return SimpleNamespace(status_code=200, body=body)
 
     guard._build_http_request_message = build
-    guard._do_request = request
+    monkeypatch.setattr(
+        "packages.valory.skills.staking_abci.lane_guard.request_with_timeout", request
+    )
     with patch("time.time", return_value=161):
-        assert list(LaneGuardMixin.wait_for_lightning_lane(guard)) == [None]
+        assert list(LaneGuardMixin.wait_for_lightning_lane(guard)) == [None, None]
     assert "lightning_lane_inflight" not in guard.context.shared_state
-    assert guard.context.shared_state["lightning_lane_eoa_nonce"] == {
-        "nonce": 9,
-        "read_at": 161,
-    }
+    assert "lightning_lane_eoa_nonce" not in guard.context.shared_state
     assert calls[0]["url"] == guard.params.lightning.lightning_rpc_url
     assert json.loads(calls[0]["content"]) == {
         "jsonrpc": "2.0",
         "id": 1,
         "method": "eth_getTransactionCount",
-        "params": ["0xowner", "pending"],
+        "params": ["0xowner", "latest"],
     }
+    assert json.loads(calls[1]["content"])["params"] == ["0xshot"]
+    assert json.loads(calls[1]["content"])["method"] == "eth_getTransactionReceipt"
+    assert "dropped_replaced" in str(guard.context.logger.info.call_args)
     assert not guard.context.logger.warning.called
+
+
+def test_guard_pending_nonce_keeps_safe_blocked_and_logs_once_per_minute(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A live shot keeps the Safe lock after its timeout."""
+    guard = make_guard()
+    calls = []
+
+    def build(**kwargs: Any) -> Any:
+        calls.append(json.loads(kwargs["content"]))
+        return "message", "dialogue"
+
+    def request(*args: Any, **kwargs: Any) -> Any:
+        yield from ()
+        return SimpleNamespace(status_code=200, body=b'{"result":"0x8"}')
+
+    guard._build_http_request_message = build
+    monkeypatch.setattr(
+        "packages.valory.skills.staking_abci.lane_guard.request_with_timeout", request
+    )
+    guard.sleep = lambda seconds: iter([None])
+    now = [161.0]
+    with patch("time.time", side_effect=lambda: now[0]):
+        generator = LaneGuardMixin.wait_for_lightning_lane(guard)
+        assert next(generator) is None
+        assert "lightning_lane_inflight" in guard.context.shared_state
+        now[0] = 190.0
+        assert next(generator) is None
+        assert guard.context.logger.info.call_count == 1
+        now[0] = 221.0
+        assert next(generator) is None
+        assert guard.context.logger.info.call_count == 2
+        generator.close()
+    assert all(call["params"] == ["0xowner", "latest"] for call in calls)
+    assert "pending" in str(guard.context.logger.info.call_args)
+
+
+def test_guard_mined_receipt_waits_for_lane_bookkeeping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pass a terminal receipt to the watcher before it releases recovery state."""
+    guard = make_guard()
+    receipt = {"status": "0x1", "blockNumber": "0x2"}
+    responses = iter(["0x9", receipt])
+    guard._build_http_request_message = lambda **kwargs: ("message", "dialogue")
+
+    def request(*args: Any, **kwargs: Any) -> Any:
+        yield from ()
+        return SimpleNamespace(
+            status_code=200, body=json.dumps({"result": next(responses)}).encode()
+        )
+
+    monkeypatch.setattr(
+        "packages.valory.skills.staking_abci.lane_guard.request_with_timeout", request
+    )
+    guard.sleep = lambda seconds: iter([None])
+    with patch("time.time", return_value=161):
+        generator = LaneGuardMixin.wait_for_lightning_lane(guard)
+        assert next(generator) is None
+        assert (
+            guard.context.shared_state["lightning_lane_inflight"]["receipt"] == receipt
+        )
+        assert next(generator) is None
+        generator.close()
+    guard.context.logger.info.assert_not_called()
+
+
+def test_guard_nonce_deadline_expires_on_scheduler_ticks_without_response() -> None:
+    """Retry a silent nonce read on real scheduler ticks while retaining the lock."""
+    guard = make_guard()
+    AsyncBehaviour.__init__(guard)
+    guard.async_act_wrapper = guard.wait_for_lightning_lane
+    guard.context.requests = SimpleNamespace(request_id_to_callback={})
+    guard.context.outbox = MagicMock()
+    guard._get_default_terms = lambda: None
+    guard._get_request_nonce_from_dialogue = lambda dialogue: "nonce"
+    guard.get_callback_request = lambda: lambda message, behaviour: guard.try_send(
+        message
+    )
+    guard._build_http_request_message = lambda **kwargs: ("message", SimpleNamespace())
+    seconds = [0.0]
+    epoch = datetime.datetime(2026, 1, 1)
+
+    class Clock(datetime.datetime):
+        """Advance scheduler sleeps with the RPC deadline clock."""
+
+        @classmethod
+        def now(cls, tz: Any = None) -> "Clock":
+            """Read the time of the current scheduler tick."""
+            return cls.fromtimestamp(epoch.timestamp() + seconds[0], tz=tz)
+
+    with (
+        patch(
+            "packages.valory.skills.abstract_round_abci.behaviour_utils.datetime.datetime",
+            Clock,
+        ),
+        patch("time.time", return_value=161),
+        patch("time.monotonic", side_effect=lambda: seconds[0]),
+    ):
+        guard.act()
+        assert "nonce" in guard.context.requests.request_id_to_callback
+        for tick in range(1, 28):
+            seconds[0] = tick * 0.2
+            guard.act()
+        guard.context.logger.warning.assert_called_once_with(
+            "[LIGHTNING_LANE] timeout nonce refresh failed; Safe remains blocked"
+        )
+        assert guard.state != AsyncBehaviour.AsyncState.WAITING_MESSAGE
+        assert "lightning_lane_inflight" in guard.context.shared_state
+        guard.context.outbox.put_message.assert_called_once()
+        guard.stop()
+
+
+@pytest.mark.parametrize("receipt", [[], "invalid", 7])
+def test_guard_invalid_receipt_keeps_safe_blocked(
+    receipt: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep malformed receipt replies inside the guarded wait."""
+    guard = make_guard()
+    results = iter(["0x9", receipt])
+    guard._build_http_request_message = lambda **kwargs: ("message", "dialogue")
+
+    def request(*args: Any, **kwargs: Any) -> Any:
+        yield from ()
+        return SimpleNamespace(
+            status_code=200, body=json.dumps({"result": next(results)}).encode()
+        )
+
+    monkeypatch.setattr(
+        "packages.valory.skills.staking_abci.lane_guard.request_with_timeout", request
+    )
+    guard.sleep = lambda seconds: iter([None])
+    with patch("time.time", return_value=161):
+        generator = guard.wait_for_lightning_lane()
+        assert next(generator) is None
+        assert "lightning_lane_inflight" in guard.context.shared_state
+        generator.close()
+    guard.context.logger.warning.assert_called_once()
 
 
 @pytest.mark.parametrize(
@@ -129,7 +283,7 @@ def test_guard_timeout_refreshes_pending_nonce_before_clear() -> None:
     ],
 )
 def test_guard_failed_nonce_refresh_keeps_safe_blocked(
-    body: bytes, status: int
+    body: bytes, status: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Do not release a Safe transaction after a failed timeout nonce read."""
     guard = make_guard()
@@ -139,7 +293,9 @@ def test_guard_failed_nonce_refresh_keeps_safe_blocked(
         yield from ()
         return SimpleNamespace(status_code=status, body=body)
 
-    guard._do_request = request
+    monkeypatch.setattr(
+        "packages.valory.skills.staking_abci.lane_guard.request_with_timeout", request
+    )
     guard.sleep = lambda seconds: iter([None])
     with patch("time.time", return_value=161):
         generator = LaneGuardMixin.wait_for_lightning_lane(guard)

@@ -1110,6 +1110,12 @@ class FastDecisionBehaviour(PreviewMixin, DecisionMakerBaseBehaviour):
         result["request_price"] = db.get_strict("request_prices")[decision.side]
         result["executed_price"] = decision.price
         if decision.stake > 0:
+            self.read_bets()
+            stored_bet = next((item for item in self.bets if item.id == bet.id), None)
+            if stored_bet is None:
+                self.bets.append(bet)
+            else:
+                bet = stored_bet
             bet.strategy_vote = decision.side
             bet.prediction_response = PredictionResponse(
                 p_yes=decision.p_hat,
@@ -1146,19 +1152,22 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
         self._executed_price = None
         self._price_ceiling = None
         self._min_tokens_out = None
-        if lightning_controls(self).lightning_lane:
+        if 0 < self.params.max_trades <= self.durable_trade_count():
+            self._placement_failure = "trade_cap"
+        elif lightning_controls(self).lightning_lane:
             bet = self.sampled_bet
             mined = self.context.shared_state.get("lightning_lane_bet_markets", set())
             if bet.id in mined or bet.has_investments:
                 self._placement_failure = "lane_already_bet"
-                yield from self.finish_behaviour(
-                    BetPlacementPayload(
-                        self.context.agent_address,
-                        tx_submitter=self.matching_round.auto_round_id(),
-                        tx_hash=None,
-                    )
+        if self._placement_failure != "other":
+            yield from self.finish_behaviour(
+                BetPlacementPayload(
+                    self.context.agent_address,
+                    tx_submitter=self.matching_round.auto_round_id(),
+                    tx_hash=None,
                 )
-                return
+            )
+            return
         yield from super().async_act()
 
     def _get_decision_prediction(self) -> Optional[PredictionResponse]:
