@@ -21,7 +21,6 @@
 
 import builtins
 import json
-from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -67,13 +66,12 @@ def test_completion_keeps_positions_and_journal_after_bets_read_failure(
     def fail_read(filename: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
         if Path(filename) == path and mode == "r" and not failed:
             failed.append(True)
+            if failure == "unreadable":
+                raise PermissionError("bets store is unreadable")
             raise OSError("single bets read failure")
         return original_open(filename, mode, *args, **kwargs)
 
-    if failure == "unreadable":
-        path.chmod(0)
-        failure_context: Any = nullcontext()
-    elif failure == "read":
+    if failure in {"unreadable", "read"}:
         failure_context = patch("builtins.open", side_effect=fail_read)
     else:
         error = (
@@ -82,21 +80,16 @@ def test_completion_keeps_positions_and_journal_after_bets_read_failure(
             else TypeError("bad bet fields")
         )
         failure_context = patch("json.load", side_effect=error)
-    try:
-        with failure_context:
-            run(b.async_act())
-        assert b.context.shared_state.get("lightning_lane_inflight") is info
-        assert b.durable_trade_count() == 0
-        assert b.read_counted_placement_keys() == set()
-        assert journal.read_bytes() == original_journal
-        assert not (tmp_path / "activity_goal_trades.json").exists()
-        assert FreshQueue(tmp_path / "fresh_watch.json").pending[0]["id"] == MARKET
-        if failure == "unreadable":
-            assert path.stat().st_mode & 0o777 == 0
-    finally:
-        path.chmod(0o600)
+    with failure_context:
+        run(b.async_act())
+    assert b.context.shared_state.get("lightning_lane_inflight") is info
+    assert b.durable_trade_count() == 0
+    assert b.read_counted_placement_keys() == set()
+    assert journal.read_bytes() == original_journal
+    assert not (tmp_path / "activity_goal_trades.json").exists()
+    assert FreshQueue(tmp_path / "fresh_watch.json").pending[0]["id"] == MARKET
     assert path.read_bytes() == original_bets
-    if failure == "read":
+    if failure in {"unreadable", "read"}:
         assert failed == [True]
 
     run(b.async_act())

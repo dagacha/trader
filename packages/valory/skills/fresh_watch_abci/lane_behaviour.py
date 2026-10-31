@@ -95,21 +95,28 @@ class LightningLaneBehaviour(FreshMarketPoller):
         self._rpc_id = 0
         self._journal_ok = True
         self._saved_state = ""
-        path = self.params.store_path / "lightning_lane_state.json"
-        if path.exists():
-            try:
-                saved = json.loads(path.read_text())
-                self._night, self._shots = saved["night"], saved["shots"]
-                if saved.get("inflight"):
-                    if saved["inflight"].get("tx") is None:
-                        self._log_drop(saved["inflight"], "abandoned_signing")
-                        self._persist()
-                    else:
-                        self.context.shared_state["lightning_lane_inflight"] = saved[
-                            "inflight"
-                        ]
-            except (OSError, ValueError, KeyError, TypeError):
-                self._journal_ok = False
+        if (self.params.store_path / "lightning_lane_state.json").exists():
+            self._load_journal()
+
+    def _load_journal(self) -> None:
+        """Block Safe preparation until the recovery journal can be loaded."""
+        shared = self.context.shared_state
+        try:
+            saved = json.loads(
+                (self.params.store_path / "lightning_lane_state.json").read_text()
+            )
+            self._night, self._shots = saved["night"], saved["shots"]
+            shared.pop("lightning_lane_inflight", None)
+            if saved.get("inflight"):
+                if saved["inflight"].get("tx") is None:
+                    self._log_drop(saved["inflight"], "abandoned_signing")
+                    self._persist()
+                else:
+                    shared["lightning_lane_inflight"] = saved["inflight"]
+            self._journal_ok = True
+        except (OSError, ValueError, KeyError, TypeError):
+            self._journal_ok = False
+            shared["lightning_lane_inflight"] = {"unloaded": True}
 
     def _persist(self) -> None:
         """Save the nonce lock and nightly budget before either broadcast."""
@@ -793,6 +800,12 @@ class LightningLaneBehaviour(FreshMarketPoller):
         """Drive one slot-aligned step without a consensus payload."""
         now = time.time()
         cfg = self.params.lightning
+        if not self._journal_ok:
+            self._load_journal()
+            if not self._journal_ok:
+                self._enabled()
+                yield from self.sleep(1)
+                return
         info = self.context.shared_state.get("lightning_lane_inflight")
         if info:
             try:

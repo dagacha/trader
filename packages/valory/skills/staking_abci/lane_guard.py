@@ -122,7 +122,8 @@ class LaneGuardMixin:
         while shared.get("lightning_lane_inflight"):
             inflight = shared["lightning_lane_inflight"]
             if (
-                inflight.get("receipt")
+                inflight.get("unloaded")
+                or inflight.get("receipt")
                 or time.time() - inflight["sent_at"]
                 < config.lightning_lane_inflight_timeout_s
             ):

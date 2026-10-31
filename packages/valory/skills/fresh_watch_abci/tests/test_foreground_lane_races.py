@@ -19,6 +19,8 @@
 
 """Keep lane state when foreground work resumes after a wait."""
 
+import builtins
+from pathlib import Path
 from typing import Any
 from unittest.mock import PropertyMock, patch
 
@@ -177,6 +179,60 @@ def test_decision_preserves_lane_purchase_during_quote(
     selected = next(bet for bet in b.bets if bet.id == "market")
     assert selected.strategy_vote == 0
     assert selected.prediction_response is not None
+
+
+def test_decision_keeps_positions_after_merge_read_failure(tmp_path: Any) -> None:
+    """Decline without writing when the read after the quote fails once."""
+    b = make(FastDecisionBehaviour, tmp_path)
+    b.context.shared_state = {}
+    older = market_bet("older-position")
+    older.set_investment_amount(1, 2 * 10**18)
+    b.bets = [market_bet("market"), older]
+    b.store_bets()
+    path = Path(b.multi_bets_filepath)
+    original_bets = path.read_bytes()
+    b._get_decision_prediction = lambda: type("Prediction", (), {"p_yes": 0.9})()
+
+    def quote(*_args: Any) -> Any:
+        yield
+        return [100 * 10**18, 100 * 10**18]
+
+    b._get_pool_balances = quote
+    original_open = builtins.open
+    failed: list[bool] = []
+    writes: list[str] = []
+
+    def fail_read(filename: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        if Path(filename) == path:
+            if mode == "r" and not failed:
+                failed.append(True)
+                raise OSError("single bets read failure")
+            if mode == "w":
+                writes.append(mode)
+        return original_open(filename, mode, *args, **kwargs)
+
+    selection = {"requested_at": 1050, "request_prices": [0.5, 0.5]}
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch("time.time", return_value=1100),
+    ):
+        sd.return_value.sampled_bet_index = 0
+        sd.return_value.db.get_strict.side_effect = selection.__getitem__
+        generator = b.evaluate()
+        assert next(generator) is None
+        with patch("builtins.open", side_effect=fail_read):
+            result = run(generator)
+
+    assert failed == [True]
+    assert result["reason"] == "bets_read_failed"
+    assert result["stake"] == 0
+    assert writes == []
+    assert path.read_bytes() == original_bets
+    b.read_bets()
+    assert {bet.id: bet.invested_amount for bet in b.bets} == {
+        "market": 0,
+        "older-position": 2 * 10**18,
+    }
 
 
 def test_placement_rechecks_durable_trade_cap_after_guard(tmp_path: Any) -> None:

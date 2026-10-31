@@ -1117,7 +1117,11 @@ class FastDecisionBehaviour(PreviewMixin, DecisionMakerBaseBehaviour):
         result["request_price"] = db.get_strict("request_prices")[decision.side]
         result["executed_price"] = decision.price
         if decision.stake > 0:
-            self.read_bets()
+            try:
+                self.read_bets(strict=True)
+            except (OSError, json.JSONDecodeError, TypeError):
+                result.update(stake=0.0, reason="bets_read_failed")
+                return result
             stored_bet = next((item for item in self.bets if item.id == bet.id), None)
             if stored_bet is None:
                 self.bets.append(bet)
