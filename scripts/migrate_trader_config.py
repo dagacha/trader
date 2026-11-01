@@ -780,8 +780,11 @@ def rollback_fast_inputs(
     text, added, json_file, kind="fast", recorded_values=None, previous_values=None
 ):
     """Remove recorded fast inputs from quickstart, saved args, and caches."""
+    lane_controls = (
+        {"LIGHTNING_LANE", "LIGHTNING_RPC_URL"} if kind == "lightning" else set()
+    )
     names = {}
-    for key in added:
+    for key in set(added) | lane_controls:
         for name in (
             key,
             PARAM_PREFIX + key,
@@ -802,7 +805,7 @@ def rollback_fast_inputs(
             return raw.strip("'\"")
 
     def keep_edited(key, value):
-        if recorded_values is None:
+        if key in lane_controls or recorded_values is None:
             return False
         if key not in recorded_values or parsed(value) != parsed(recorded_values[key]):
             changes.append(f"keep operator value {key}")
@@ -816,7 +819,11 @@ def rollback_fast_inputs(
                 if key in names:
                     if keep_edited(names[key], obj[key]):
                         continue
-                    if previous_values and names[key] in previous_values:
+                    if (
+                        names[key] not in lane_controls
+                        and previous_values
+                        and names[key] in previous_values
+                    ):
                         container, field = (
                             (obj[key], "value")
                             if isinstance(obj[key], dict)
@@ -832,7 +839,10 @@ def rollback_fast_inputs(
                         continue
                     del obj[key]
                     text = remove_json_key(text, data, key)
-                    changes.append(f"remove {kind} default {names[key]}")
+                    action = (
+                        "lane control" if names[key] in lane_controls else "default"
+                    )
+                    changes.append(f"remove {kind} {action} {names[key]}")
     else:
         lines = text.splitlines(keepends=True)
         for index in range(len(lines) - 1, -1, -1):
@@ -847,7 +857,11 @@ def rollback_fast_inputs(
                 value = re.split(r"[:=]", lines[end - 1], maxsplit=1)[1].strip()
                 if keep_edited(names[match[1]], value):
                     continue
-                if previous_values and names[match[1]] in previous_values:
+                if (
+                    names[match[1]] not in lane_controls
+                    and previous_values
+                    and names[match[1]] in previous_values
+                ):
                     previous = scalar(previous_values[names[match[1]]])
                     if parsed(value) != parsed(previous):
                         assignment = re.match(
@@ -862,7 +876,10 @@ def rollback_fast_inputs(
                         changes.append(f"restore {kind} previous {names[match[1]]}")
                     continue
                 del lines[index:end]
-                changes.append(f"remove {kind} default {names[match[1]]}")
+                action = (
+                    "lane control" if names[match[1]] in lane_controls else "default"
+                )
+                changes.append(f"remove {kind} {action} {names[match[1]]}")
         text = "".join(lines)
     return text, changes
 
@@ -1217,32 +1234,32 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
             continue
         with path.open(encoding="utf-8", newline="") as source:
             text = source.read()
-        if selected_cid is None and not fast_mode and "omenstrat_fast" in text.lower():
-            print(f">> {path}: omenstrat_fast: skipping trader migration")
-            continue
-        priorities = []
-        warnings = []
-        # Saved inputs use plain values. Only sync explicit controls there.
-        if fast_mode or rollback or path.parent == quickstart / ".operate":
-            updated, changes = text, []
-        else:
-            updated, changes = (
-                migrate_json if path.suffix == ".json" else migrate_env
-            )(text, priorities, hashes, warnings)
-        updated, renamed = rename_fast_tools(
-            updated, path.suffix == ".json", path.name == "agent_0.env"
-        )
-        changes.extend(renamed)
-        if lightning_rollback and lightning_recorded:
-            updated, removed_changes = rollback_fast_inputs(
+        updated, changes = text, []
+        if not lightning_mode:
+            updated, changes = rollback_fast_inputs(
                 updated,
-                lightning_recorded,
+                lightning_recorded if lightning_rollback else [],
                 path.suffix == ".json",
                 "lightning",
                 lightning_values,
                 lightning_previous,
             )
-            changes.extend(removed_changes)
+        if selected_cid is None and not fast_mode and "omenstrat_fast" in text.lower():
+            write_changes(path, updated, changes, dry_run, warn_only)
+            print(f">> {path}: omenstrat_fast: skipping trader migration")
+            continue
+        priorities = []
+        warnings = []
+        # Saved inputs use plain values. Only sync explicit controls there.
+        if not (fast_mode or rollback or path.parent == quickstart / ".operate"):
+            updated, migrated = (
+                migrate_json if path.suffix == ".json" else migrate_env
+            )(updated, priorities, hashes, warnings)
+            changes.extend(migrated)
+        updated, renamed = rename_fast_tools(
+            updated, path.suffix == ".json", path.name == "agent_0.env"
+        )
+        changes.extend(renamed)
         if rollback:
             if recorded is None:
                 warn_pearl_defaults(text, path)

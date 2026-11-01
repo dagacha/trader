@@ -2396,8 +2396,8 @@ def test_rollback_removes_only_added_fast_defaults(tmp_path, existing, style):
     assert all(p.read_bytes() == after[p] for p in after)
 
 
-def test_rollback_without_provenance_keeps_all_keys(tmp_path):
-    """Keep pilot and fleet settings even when they equal fast defaults."""
+def test_rollback_without_provenance_keeps_non_lane_settings(tmp_path):
+    """Remove lane controls and keep all other pilot and fleet settings."""
     paths = fixture(tmp_path)
     template = json.loads(
         (SCRIPT.parents[1] / "configs/config_omenstrat_fast.json").read_text()
@@ -2415,8 +2415,19 @@ def test_rollback_without_provenance_keeps_all_keys(tmp_path):
         for key in SHARED_FAST_KEYS:
             assert key in report
     actual = json.loads(paths[0].read_text())
-    assert actual["env_variables"] == template["env_variables"]
-    assert all(p.read_bytes() == before[p] for p in paths[1:])
+    expected_env = {
+        key: value
+        for key, value in template["env_variables"].items()
+        if key not in ("LIGHTNING_LANE", "LIGHTNING_RPC_URL")
+    }
+    assert actual["env_variables"] == expected_env
+    for path in paths[1:]:
+        assert json.loads(path.read_text()) == {
+            **template,
+            "env_variables": expected_env,
+        }
+        backup = next(path.parent.glob(path.name + ".bak-*"))
+        assert backup.read_bytes() == before[path]
     assert json.loads(saved.read_text())["user_provided_args"] == {
         "USE_OFFCHAIN": "true",
         "LIGHTNING_STILL_HOLD": "false",
