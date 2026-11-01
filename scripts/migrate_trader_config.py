@@ -847,11 +847,11 @@ def rollback_fast_inputs(
         lines = text.splitlines(keepends=True)
         for index in range(len(lines) - 1, -1, -1):
             pair = re.match(r"\s*- name: ([A-Z_0-9]+)\s*$", lines[index])
-            match = pair or re.match(r"\s*(?:-\s*)?([A-Z_0-9]+)(?:=|:)", lines[index])
+            match = pair or re.match(r"\s*(?:-\s*)?([A-Z_0-9]+)(=|:)", lines[index])
             if match and match[1] in names:
                 end = index + 1
                 if names[match[1]] in lane_controls:
-                    if pair:
+                    if pair or match[2] == ":":
                         level = len(lines[index]) - len(lines[index].lstrip())
                         while end < len(lines):
                             line = lines[end]
@@ -1066,6 +1066,7 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                     creator_inputs[key] = args[key]
     paths = [config, *saved]
     services = sorted((quickstart / ".operate/services").glob("sc-*"))
+    cached_public_ids = set()
     different_public_ids = set()
     if not services:
         print(f">> {quickstart}: no operate services; skipping cache")
@@ -1082,9 +1083,10 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                 break
         else:
             paths.extend(service_paths)
-            if service:
-                public_id = cached_public_id(service_paths[0])
-                if public_id and public_id != f"valory/{service}":
+            public_id = cached_public_id(service_paths[0])
+            if public_id:
+                cached_public_ids.add(public_id)
+                if service and public_id != f"valory/{service}":
                     different_public_ids.add(public_id)
     provenance = quickstart / "configs/.fast_defaults_added.json"
     recorded = None
@@ -1137,6 +1139,9 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
     service_switch = service is not None and service != (
         source_service or recorded_service
     )
+    effective_service = service or source_service or recorded_service
+    if effective_service is None and len(cached_public_ids) == 1:
+        effective_service = next(iter(cached_public_ids)).removeprefix("valory/")
     creator_overrides = {}
     if lightning_mode and service_switch:
         creator_overrides.update(creator_inputs)
@@ -1243,7 +1248,7 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
         with path.open(encoding="utf-8", newline="") as source:
             text = source.read()
         updated, changes = text, []
-        if not lightning_mode:
+        if effective_service != "omenstrat_lightning":
             updated, changes = rollback_fast_inputs(
                 updated,
                 lightning_recorded if lightning_rollback else [],

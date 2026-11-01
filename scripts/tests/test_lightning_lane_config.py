@@ -25,7 +25,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import yaml
-from scripts.tests.test_deploy_migration import entry, fixture, run
+from scripts.tests.test_deploy_migration import cached_package, entry, fixture, run
 from scripts.tests.test_lightning_config import params
 
 from packages.valory.skills.fresh_watch_abci.lightning import LightningConfig
@@ -336,6 +336,46 @@ def test_lane_cleanup_removes_kubernetes_secret_without_provenance(
 
 
 @pytest.mark.parametrize("service", ["omenstrat_fast", "trader_pearl"])
+@pytest.mark.parametrize("style", [">-", "|", ""])
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "",
+        "SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_",
+        "SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_",
+    ],
+)
+def test_lane_cleanup_removes_mapping_values(tmp_path, service, style, prefix):
+    """Remove each full lane value and keep the next mapping entry."""
+    paths = fixture(tmp_path)
+    path = paths[1].parent / "build.yaml"
+    url = "https://key.invalid/multiline-lane-token"
+    sibling = '      KEEP: "yes" # Keep this comment.\n'
+    header = "services:\n  agent:\n    environment:\n"
+    path.write_text(
+        header
+        + f"      {prefix}LIGHTNING_LANE: {style}\n"
+        + "        true\n"
+        + f"      {prefix}LIGHTNING_RPC_URL: {style}\n"
+        + f"        {url}\n"
+        + sibling
+    )
+    yaml.safe_load(path.read_text())
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    run(tmp_path, "--service", service, "--dry-run")
+    assert {
+        path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()
+    } == before
+    run(tmp_path, "--service", service)
+    text = path.read_text()
+    assert yaml.safe_load(text)["services"]["agent"]["environment"] == {"KEEP": "yes"}
+    assert "LIGHTNING_LANE" not in text
+    assert "LIGHTNING_RPC_URL" not in text
+    assert url not in text
+    assert text == header + sibling
+
+
+@pytest.mark.parametrize("service", ["omenstrat_fast", "trader_pearl"])
 @pytest.mark.parametrize("explicit", [False, True])
 def test_lane_migration_clears_non_lightning_controls(
     tmp_path, capsys, service, explicit
@@ -385,6 +425,104 @@ def test_lane_migration_keeps_lightning_controls(tmp_path, capsys, explicit):
                 assert (
                     value["value"] if isinstance(value, dict) else value
                 ) == expected
+
+
+@pytest.mark.parametrize(
+    "source,recorded,cached,explicit,keep",
+    [
+        pytest.param(
+            "unknown", "omenstrat_lightning", None, None, True, id="older-provenance"
+        ),
+        pytest.param(
+            "unknown", None, "omenstrat_lightning", None, True, id="older-cache"
+        ),
+        pytest.param(
+            "unknown",
+            "omenstrat_lightning",
+            "omenstrat_fast",
+            None,
+            True,
+            id="provenance-before-cache",
+        ),
+        pytest.param(
+            "omenstrat_fast",
+            "omenstrat_lightning",
+            "omenstrat_lightning",
+            None,
+            False,
+            id="fast-before-provenance",
+        ),
+        pytest.param(
+            "trader_pearl",
+            "omenstrat_lightning",
+            "omenstrat_lightning",
+            None,
+            False,
+            id="pearl-before-provenance",
+        ),
+        pytest.param("unknown", None, None, None, False, id="unknown"),
+        pytest.param(
+            "unknown", None, "omenstrat_fast", None, False, id="unknown-fast-cache"
+        ),
+        pytest.param(
+            "omenstrat_lightning",
+            "omenstrat_lightning",
+            None,
+            "omenstrat_fast",
+            False,
+            id="explicit-fast",
+        ),
+        pytest.param(
+            "omenstrat_lightning",
+            "omenstrat_lightning",
+            None,
+            "trader_pearl",
+            False,
+            id="explicit-pearl",
+        ),
+        pytest.param(
+            "omenstrat_fast",
+            "omenstrat_fast",
+            None,
+            "omenstrat_lightning",
+            True,
+            id="explicit-lightning",
+        ),
+    ],
+)
+def test_lane_cleanup_resolves_service_identity(
+    tmp_path, source, recorded, cached, explicit, keep
+):
+    """Keep the lane only when the effective service is lightning."""
+    paths, url = lane_copies(
+        tmp_path, "omenstrat_lightning" if source == "unknown" else source
+    )
+    if source == "unknown":
+        for path in paths[:3]:
+            data = json.loads(path.read_text())
+            data["hash"] = "older-lightning-service-cid"
+            path.write_text(json.dumps(data))
+    original_hash = json.loads(paths[0].read_text())["hash"]
+    if recorded:
+        marker = tmp_path / "configs/.lightning_defaults_added.json"
+        marker.write_text(json.dumps({"added": [], "service": recorded}))
+    if cached:
+        for path in paths[1:3]:
+            cached_package(path, cached)
+    args = ("--service", explicit) if explicit else ()
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    run(tmp_path, *args, "--dry-run")
+    assert {
+        path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()
+    } == before
+    run(tmp_path, *args)
+    if not explicit:
+        assert json.loads(paths[0].read_text())["hash"] == original_hash
+    for path in paths:
+        text = path.read_text()
+        assert ("LIGHTNING_LANE" in text) == keep, path
+        assert ("LIGHTNING_RPC_URL" in text) == keep, path
+        assert (url in text) == keep, path
 
 
 @pytest.mark.parametrize("explicit", [False, True])
