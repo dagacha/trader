@@ -289,6 +289,53 @@ def test_lane_rollback_clears_stale_caches_without_provenance(tmp_path, capsys, 
 
 
 @pytest.mark.parametrize("service", ["omenstrat_fast", "trader_pearl"])
+@pytest.mark.parametrize("rpc", [None, ""])
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "",
+        "SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_",
+        "SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_",
+    ],
+)
+def test_lane_cleanup_removes_kubernetes_secret_without_provenance(
+    tmp_path, service, rpc, prefix
+):
+    """Remove complete lane items and keep the next secret entry unchanged."""
+    paths = fixture(tmp_path)
+    if rpc is not None:
+        data = json.loads(paths[0].read_text())
+        data["env_variables"]["LIGHTNING_RPC_URL"] = entry(rpc)
+        paths[0].write_text(json.dumps(data))
+    assert not (tmp_path / "configs/.lightning_defaults_added.json").exists()
+    path = paths[1].parent / "build.yaml"
+    sibling = (
+        "- name: KEEP_SECRET\n"
+        "  valueFrom:\n"
+        "    secretKeyRef:\n"
+        "      name: keep-secret # Keep this comment.\n"
+        "      key: value\n"
+    )
+    path.write_text(
+        "env:\n"
+        f"- name: {prefix}LIGHTNING_LANE\n"
+        '  value: "true"\n'
+        f"- name: {prefix}LIGHTNING_RPC_URL\n"
+        "  valueFrom:\n"
+        "    secretKeyRef:\n"
+        "      name: lightning-rpc\n"
+        "      key: url\n" + sibling
+    )
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    run(tmp_path, "--service", service, "--dry-run")
+    assert {
+        path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()
+    } == before
+    run(tmp_path, "--service", service)
+    assert path.read_text() == "env:\n" + sibling
+
+
+@pytest.mark.parametrize("service", ["omenstrat_fast", "trader_pearl"])
 @pytest.mark.parametrize("explicit", [False, True])
 def test_lane_migration_clears_non_lightning_controls(
     tmp_path, capsys, service, explicit

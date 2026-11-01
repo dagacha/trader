@@ -850,6 +850,17 @@ def rollback_fast_inputs(
             match = pair or re.match(r"\s*(?:-\s*)?([A-Z_0-9]+)(?:=|:)", lines[index])
             if match and match[1] in names:
                 end = index + 1
+                if names[match[1]] in lane_controls:
+                    if pair:
+                        level = len(lines[index]) - len(lines[index].lstrip())
+                        while end < len(lines):
+                            line = lines[end]
+                            if line.strip() and len(line) - len(line.lstrip()) <= level:
+                                break
+                            end += 1
+                    del lines[index:end]
+                    changes.append(f"remove {kind} lane control {names[match[1]]}")
+                    continue
                 if pair:
                     if end >= len(lines) or not re.match(r"\s*value:", lines[end]):
                         raise ValueError(f"Missing value for {match[1]}")
@@ -876,10 +887,7 @@ def rollback_fast_inputs(
                         changes.append(f"restore {kind} previous {names[match[1]]}")
                     continue
                 del lines[index:end]
-                action = (
-                    "lane control" if names[match[1]] in lane_controls else "default"
-                )
-                changes.append(f"remove {kind} {action} {names[match[1]]}")
+                changes.append(f"remove {kind} default {names[match[1]]}")
         text = "".join(lines)
     return text, changes
 
