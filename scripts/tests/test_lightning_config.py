@@ -147,3 +147,21 @@ def test_lightning_keeps_the_fast_price_default():
         "services/omenstrat_lightning/service.yaml",
     ):
         assert params(relative)["max_price"] == "${MAX_PRICE:float:0.9}"
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "skills/fresh_watch_abci/skill.yaml",
+        "skills/omenstrat_fast_abci/skill.yaml",
+        "agents/omenstrat_fast/aea-config.yaml",
+        "agents/omenstrat_lightning/aea-config.yaml",
+        "services/omenstrat_fast/service.yaml",
+        "services/omenstrat_lightning/service.yaml",
+    ],
+)
+def test_topup_lead_declared(relative: str) -> None:
+    """Declare the top-up lead in each fast deployment entry point."""
+    assert params(relative)["fast_topup_lead_s"] == (
+        1800 if relative.startswith("skills/") else "${FAST_TOPUP_LEAD_S:int:1800}"
+    )

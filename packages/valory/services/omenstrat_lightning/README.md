@@ -118,6 +118,7 @@ Other values below are the lightning defaults.
 
 | Environment name | Lightning default | Purpose |
 | --- | --- | --- |
+| `FAST_TOPUP_LEAD_S` | `1800` | Start activity top-up with this lead plus 90 seconds per missing request. |
 | `LIGHTNING_STILL_HOLD` | `true` | Enable direct still-hold YES decisions. |
 | `LIGHTNING_STILL_HOLD_MAX_PRICE` | `0.93` | Direct still-hold price ceiling. |
 | `LIGHTNING_BASE_RATE_WINDOW_DAYS` | `21` | Creation-time sample window. |
@@ -135,7 +136,7 @@ The creators are `0x89c5cc945dd550bcffb72fe42bff002429f46fec` and
 `0xffc8029154ecd55abed15bd428ba596e7d23f557`. The lightning template sets
 `MAX_PRICE=0.90`, as fast does. All other fast controls apply.
 
-Before release on operate 0.15.5 hosts, add **all 12 names in this table** to
+Before release on operate 0.15.5 hosts, add **all names in this table** to
 olas-scripts `patch_agent_env_passthrough.py` `_NAMED_VARS`. A missing name
 caused the reported 26 October outage. No host script is changed by this commit.
 
@@ -216,3 +217,11 @@ per night on the safes' stakes for 26–27 October. After the next-block buyer's
 trade, the stated opportunity was about 1.3 xDAI per market, or 33 xDAI per night
 for all followers. These figures are context for the canary, not measured
 results from this implementation.
+
+Activity top-up uses request-only rounds, even below `MAX_TRADES`. It starts
+before the earlier of the current or next active window end and the next epoch
+checkpoint. The lead is `FAST_TOPUP_LEAD_S` plus 90 seconds per missing request.
+Top-up does not run after the checkpoint is due or when the agent is not staked.
+Fresh markets keep priority. Each top-up round reads activity again and stops
+at the target. The log is
+`[ACTIVITY_TOPUP] completed=... target=... left_s=...`.

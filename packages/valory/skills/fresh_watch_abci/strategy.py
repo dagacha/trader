@@ -41,6 +41,7 @@ class FastConfig:
     overlap_s: int = 120
     poll_s: int = 15
     active_window_utc: str = "00:00-05:30"
+    fast_topup_lead_s: int = 1800
     housekeeping_interval_s: int = 600
     tools: List[str] = field(
         default_factory=lambda: [
@@ -76,6 +77,38 @@ class FastConfig:
         if start > end:
             return minute >= start or minute < end
         return start <= minute < end
+
+    def window_left_s(self, now: float) -> float:
+        """Return seconds to the end of the current or next window.
+
+        :param now: Unix timestamp.
+        :return: seconds until the current or next window ends.
+        """
+        hour, minute = map(int, self.active_window_utc.split("-")[1].split(":"))
+        return (hour * 3600 + minute * 60 - now % 86400) % 86400 or 86400.0
+
+    def topup_left_s(
+        self, now: float, next_checkpoint: Optional[int], target: int, completed: int
+    ) -> Optional[float]:
+        """Return seconds to the deadline only when an activity top-up is due.
+
+        :param now: Unix timestamp.
+        :param next_checkpoint: next staking checkpoint, if staked.
+        :param target: required requests in this epoch.
+        :param completed: completed requests in this epoch.
+        :return: seconds to the deadline, or None when no top-up is due.
+        """
+        if (
+            target <= 0
+            or completed >= target
+            or next_checkpoint is None
+            or next_checkpoint <= now
+        ):
+            return None
+        left_s = min(self.window_left_s(now), next_checkpoint - now)
+        if left_s <= self.fast_topup_lead_s + (target - completed) * 90:
+            return left_s
+        return None
 
 
 def template(title: str) -> str:
