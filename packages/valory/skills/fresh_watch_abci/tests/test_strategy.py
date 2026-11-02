@@ -510,3 +510,26 @@ def test_min_edge_margin(margin: float) -> None:
     amount = int(result.stake * 10**18)
     moved_edge = result.p_hat - amount / buy_amount(amount, moved, 0, fee)
     assert (moved_edge >= cfg.min_edge) is bool(margin)
+
+
+@pytest.mark.parametrize(
+    "window,now,left",
+    [
+        ("00:00-05:30", 17460, 2340),
+        ("00:00-05:30", 19799.5, 0.5),
+        ("00:00-05:30", 19800, 86400),
+        ("00:00-05:30", 45001, 61199),
+        ("23:00-01:00", 84600, 5400),
+        ("23:00-01:00", 88200, 1800),
+        ("23:00-01:00", 90000, 86400),
+        ("23:00-01:00", 45000, 45000),
+    ],
+)
+def test_window_left_s(window: str, now: float, left: float) -> None:
+    """Measure seconds to the current or next window end."""
+    assert FastConfig(active_window_utc=window).window_left_s(now) == left
+
+
+def test_topup_without_checkpoint() -> None:
+    """Do not top up without a staking deadline."""
+    assert FastConfig().topup_left_s(19000, None, 9, 3) is None

@@ -36,7 +36,7 @@ skills:
 - valory/chatui_abci:0.1.0:bafybeihj5y6cecuw4iz2gshicoygghrgi5b6rzynnofx25ycsv56ehgdvq
 - valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
 - valory/trader_abci:0.1.0:bafybeifa4ovkakzqqekuuarirk4cdwsmzknuxvq4zwcmzmxf7r6jundrkm
-- valory/fresh_watch_abci:0.1.0:bafybeia4k5sv6m2ici3fltoswp6a6s32eidtucwcnxdf3eumciva527yxe
+- valory/fresh_watch_abci:0.1.0:bafybeieqz6gqluvzpgnwdcj7ul7ziw4e56f2dogghsyjzhejjhlhrd4oye
 behaviours:
   main:
     args: {}
@@ -366,6 +366,7 @@ models:
       overlap_s: 120
       poll_s: 15
       active_window_utc: 00:00-05:30
+      fast_topup_lead_s: 1800
       housekeeping_interval_s: 600
       tools:
       - superforcaster_calibrated_full_search

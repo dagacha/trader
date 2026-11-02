@@ -127,3 +127,10 @@ def test_initial_state() -> None:
     assert state.fast_last_poll == 0
     assert state.fast_background_running is False
     assert state.fast_polling is False
+
+
+def test_topup_lead_override(params_args: Any) -> None:
+    """Read the operator's top-up lead through the fast parameter model."""
+    params_args["fast_topup_lead_s"] = 600
+    params = FastParams(name="params", skill_context=MagicMock(), **params_args)
+    assert params.fast.fast_topup_lead_s == 600

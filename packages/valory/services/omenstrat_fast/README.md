@@ -92,6 +92,7 @@ settlement logs for that result.
 | `OVERLAP_S` | `120` |
 | `POLL_S` | `15` |
 | `ACTIVE_WINDOW_UTC` | `00:00-05:30` (start included, end excluded) |
+| `FAST_TOPUP_LEAD_S` | `1800`; start activity top-up with this lead plus 90 seconds per missing request |
 | `HOUSEKEEPING_INTERVAL_S` | `600` |
 | `FAST_TOOLS` | `superforcaster_calibrated_full_search`, then `superforcaster` |
 | `PRIOR_WEIGHT` | `0.5` (tool weight; prior weight is its complement) |
@@ -142,6 +143,16 @@ defaults to `3` per staking period; `0` disables the cap. The durable counter
 survives restarts. After the cap, only off-chain Mech requests run until the
 staking activity target is met. Then the agent waits and performs periodic
 housekeeping. An activity target met before the cap does not stop trading.
+
+When no fresh market is queued, request-only activity top-up starts before the
+earlier of the current or next active window end and the next epoch checkpoint.
+The lead is `FAST_TOPUP_LEAD_S` plus 90 seconds per missing request. Top-up does
+not run after the checkpoint is due or when the agent is not staked.
+It stops at the activity target. Fresh markets keep priority.
+The log is `[ACTIVITY_TOPUP] completed=... target=... left_s=...`.
+Add `FAST_TOPUP_LEAD_S` to olas-scripts `patch_agent_env_passthrough.py`
+`_NAMED_VARS` so host overrides reach the agent.
+
 Fast parameters are declared in both skills, the agent, and the service. The two-tool allowlist is fixed; the parameter
 must retain those two names in priority order.
 

@@ -3529,3 +3529,19 @@ def test_saved_lightning_creator_override_is_kept(tmp_path, source_lightning):
         json.loads(saved.read_text())["user_provided_args"]["LIGHTNING_CREATORS"]
         == explicit
     )
+
+
+@pytest.mark.parametrize("service", ["omenstrat_fast", "omenstrat_lightning"])
+@pytest.mark.parametrize("existing", [False, True])
+def test_topup_lead_migration(tmp_path: Path, service: str, existing: bool) -> None:
+    """Add the named lead control and keep an operator's value in all copies."""
+    paths = fixture(tmp_path)
+    data = json.loads(paths[0].read_text())
+    if existing:
+        data["env_variables"]["FAST_TOPUP_LEAD_S"] = entry("1200")
+    paths[0].write_text(json.dumps(data))
+    run(tmp_path, "--service", service)
+    for path in paths:
+        env = json.loads(path.read_text())["env_variables"]
+        assert env["FAST_TOPUP_LEAD_S"]["value"] == ("1200" if existing else "1800")
+        assert not any(k.endswith("_ARGS_FAST_TOPUP_LEAD_S") for k in env)

@@ -1,6 +1,6 @@
 {
     "name": "omenstrat_fast",
-    "hash": "bafybeiag7h75v6es2xbxfqjvrmdt2vybwayt74rbymy7p2hz5f4ladsage",
+    "hash": "bafybeigf3rgf43la5arkwvltbgkg4z32ayhzy7wfwig5eaqjq2eur6br6e",
     "description": "Fresh-watch Omen agent with the fixed fast strategy.",
     "image": "https://operate.olas.network/_next/image?url=%2Fimages%2Fprediction-agent.png&w=3840&q=75",
     "service_version": "main",
@@ -236,6 +236,12 @@
             "name": "Active window utc",
             "description": "",
             "value": "00:00-05:30",
+            "provision_type": "user"
+        },
+        "FAST_TOPUP_LEAD_S": {
+            "name": "Fast top-up lead (seconds)",
+            "description": "Start activity top-up with this lead plus 90 seconds per missing request.",
+            "value": "1800",
             "provision_type": "user"
         },
         "HOUSEKEEPING_INTERVAL_S": {

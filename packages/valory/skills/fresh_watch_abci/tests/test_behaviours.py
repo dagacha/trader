@@ -76,6 +76,7 @@ def make(cls: Any, tmp_path: Any) -> Any:
 
     behaviour.service_staking_state = StakingState.STAKED
     behaviour.ts_checkpoint = 100
+    behaviour.liveness_period = 86400
     counter = tmp_path / "successful_trade_count.txt"
     if not counter.exists():
         counter.write_text("0")
@@ -2887,9 +2888,15 @@ def test_capped_activity_status_refreshes_until_target_met(
     b._select = lambda *args: done({"lane": "wait"})
     reads = MagicMock(side_effect=lambda: done((met, met, 8, 8 if met else 3)))
     b._compute_activity_status = reads
-    with patch(
-        "packages.valory.skills.fresh_watch_abci.behaviours.time.monotonic",
-        return_value=10,
+    with (
+        patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.monotonic",
+            return_value=10,
+        ),
+        patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+            return_value=1050,
+        ),
     ):
         run(b.select())
         run(b.select())
@@ -3000,3 +3007,248 @@ def test_fast_placement_with_lane_on_buys_an_unbought_market(tmp_path: Any) -> N
         run(b.async_act())
     buy.assert_called_once()
     assert b._placement_failure == "other"
+
+
+@pytest.mark.parametrize(
+    "now,target,completed,next_checkpoint,pending,lane",
+    [
+        (17459, 9, 3, 90000, False, "wait"),
+        (45001, 9, 0, 131400, False, "wait"),
+        (45000, 9, 3, 47341, False, "wait"),
+        (45000, 9, 3, 47340, False, "mech_only"),
+        (10000, 9, 3, 12341, False, "wait"),
+        (10000, 9, 3, 12340, False, "mech_only"),
+        (19000, 9, 3, 19000, False, "wait"),
+        (19000, 9, 3, 18999, False, "wait"),
+        (17460, 9, 3, 90000, False, "mech_only"),
+        (17461, 9, 3, 90000, False, "mech_only"),
+        (17460, 9, 4, 90000, False, "wait"),
+        (19000, 9, 9, 90000, False, "wait"),
+        (19000, 0, 0, 90000, False, "wait"),
+        (19000, 9, 3, 90000, True, "market"),
+        (19800, 9, 3, 19801, False, "mech_only"),
+        (19800, 9, 3, 19800, False, "wait"),
+        (19800, 9, 3, 19799, False, "wait"),
+    ],
+)
+def test_activity_topup_selection(
+    tmp_path: Any,
+    now: int,
+    target: int,
+    completed: int,
+    next_checkpoint: int,
+    pending: bool,
+    lane: str,
+) -> None:
+    """Top up at the shortfall boundary and give fresh markets priority."""
+    b = make(FreshWatchBehaviour, tmp_path)
+    b.context.params.fast = FastConfig()
+    b.context.state.fast_last_poll = now
+    b._compute_activity_status = lambda: done(
+        (completed >= target, completed >= target, target, completed)
+    )
+    b.sleep = lambda *args: done(None)
+    checkpoint_read = MagicMock(return_value=done(True))
+    b._get_next_checkpoint = checkpoint_read
+    b.wait_for_condition_with_sleep = lambda condition: condition()
+    b.liveness_period = next_checkpoint - b.ts_checkpoint
+    b._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    queue.last_housekeeping = now
+    if pending:
+        row = raw_market()
+        row["creationTimestamp"] = now - 10
+        queue.pending = [row]
+    queue.save()
+    with (
+        patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+            return_value=now,
+        ),
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+    ):
+        sd.return_value.successful_trade_count = 0
+        sd.return_value.mechs_info = [
+            SimpleNamespace(relevant_tools={"superforcaster"})
+        ]
+        selection = run(b.select())
+    assert selection["lane"] == lane
+    assert selection["mech_only_mode"] is (lane == "mech_only")
+    assert b.context.state.fast_activity_status[4] == next_checkpoint
+    checkpoint_read.assert_not_called()
+    if lane == "mech_only":
+        b.context.logger.info.assert_any_call(
+            "[ACTIVITY_TOPUP] completed=%s target=%s left_s=%s",
+            completed,
+            target,
+            min((19800 - now) % 86400 or 86400, next_checkpoint - now),
+        )
+
+
+def test_activity_topup_refresh_stops_and_restores_market_lane(tmp_path: Any) -> None:
+    """Refresh each top-up round, stop at target, and clear request-only mode."""
+    from packages.valory.skills.abstract_round_abci.base import AbciAppDB
+    from packages.valory.skills.decision_maker_abci.states.base import SynchronizedData
+    from packages.valory.skills.fresh_watch_abci.rounds import (
+        Event,
+        FreshWatchRound,
+        SelectionPayload,
+    )
+
+    b = make(FreshWatchBehaviour, tmp_path)
+    b.context.params.fast = FastConfig()
+    b.context.state.synchronized_data = SynchronizedData(
+        AbciAppDB(
+            setup_data={
+                "all_participants": [("agent",)],
+                "participants": [("agent",)],
+                "consensus_threshold": [1],
+                "previous_checkpoint": [100],
+                "successful_trade_count": [0],
+            }
+        )
+    )
+    b.context.state.fast_last_poll = 19000
+    b.sleep = lambda *args: done(None)
+    b._fast_tool = lambda: "superforcaster"
+    b._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
+    reads = MagicMock(
+        side_effect=[done((False, False, 9, 8)), done((True, True, 9, 9))]
+    )
+    b._compute_activity_status = reads
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    queue.last_housekeeping = 19000
+    queue.save()
+    with (
+        patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+            return_value=19000,
+        ),
+        patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.monotonic",
+            return_value=10,
+        ),
+    ):
+        selection = run(b.select())
+        assert selection["lane"] == "mech_only"
+        round_ = FreshWatchRound(b.synchronized_data, MagicMock())
+        round_.process_payload(SelectionPayload("agent", json.dumps(selection)))
+        outcome = round_.end_block()
+        assert outcome is not None
+        data, event = outcome
+        assert event == Event.MECH_ONLY
+        b.context.state.synchronized_data = data
+        # The fast response route checks this flag before it reads a market.
+        decision = make(FastDecisionBehaviour, tmp_path)
+        decision.context.state.synchronized_data = b.synchronized_data
+        assert run(decision.evaluate())["stake"] == 0
+        assert run(b.select())["lane"] == "wait"
+        row = raw_market()
+        row["creationTimestamp"] = 18990
+        queue.pending = [row]
+        queue.save()
+        selection = run(b.select())
+        assert selection["lane"] == "market"
+        round_ = FreshWatchRound(b.synchronized_data, MagicMock())
+        round_.process_payload(SelectionPayload("agent", json.dumps(selection)))
+        outcome = round_.end_block()
+        assert outcome is not None
+        data, event = outcome
+        assert event == Event.MARKET
+        assert isinstance(data, SynchronizedData)
+        assert data.mech_only_mode is False
+    assert reads.call_count == 2
+
+
+@pytest.mark.parametrize("lead,cap", [(1800, 3), (600, 0)])
+@pytest.mark.parametrize(
+    "deadline,checkpoint", [(19800, 86500), (12340, 12340), (47340, 47340)]
+)
+def test_topup_refresh_starts_at_boundary(
+    tmp_path: Any, lead: int, cap: int, deadline: int, checkpoint: int
+) -> None:
+    """Refresh a cached shortfall when the top-up becomes due."""
+    from packages.valory.skills.abstract_round_abci.base import AbciAppDB
+    from packages.valory.skills.decision_maker_abci.states.base import SynchronizedData
+
+    b = make(FreshWatchBehaviour, tmp_path)
+    b.context.params.fast = FastConfig(fast_topup_lead_s=lead)
+    b.context.params.max_trades = cap
+    b.context.state.synchronized_data = SynchronizedData(
+        AbciAppDB(
+            setup_data={"previous_checkpoint": [100], "successful_trade_count": [0]}
+        )
+    )
+    boundary = deadline - lead - 6 * 90
+    b.context.state.fast_last_poll = boundary
+    b.sleep = lambda *args: done(None)
+    queue = FreshQueue(tmp_path / "fresh_watch.json")
+    queue.last_housekeeping = boundary
+    queue.save()
+    b.context.state.fast_activity_status = (
+        10,
+        100,
+        (False, False, 9, 3),
+        0,
+        checkpoint,
+    )
+    reads = MagicMock(return_value=done((True, True, 9, 9)))
+    b._compute_activity_status = reads
+    with (
+        patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.monotonic",
+            return_value=10,
+        ),
+        patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+            return_value=boundary - 1,
+        ) as clock,
+    ):
+        assert run(b.select())["lane"] == "wait"
+        reads.assert_not_called()
+        clock.return_value = boundary
+        assert run(b.select())["lane"] == "wait"
+    reads.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "now,checkpoint,target,completed",
+    [
+        (45001, 45000, 9, 0),
+        (105400, 19000, 9, 3),
+        (45001, 45000, 0, 0),
+    ],
+)
+def test_topup_not_due_reuses_activity_cache(
+    tmp_path: Any, now: int, checkpoint: int, target: int, completed: int
+) -> None:
+    """Reuse daytime and overdue activity status across watch instances."""
+    from packages.valory.skills.abstract_round_abci.base import AbciAppDB
+    from packages.valory.skills.decision_maker_abci.states.base import SynchronizedData
+    from packages.valory.skills.staking_abci.rounds import StakingState
+
+    b = make(FreshWatchBehaviour, tmp_path)
+    b.context.params.fast = FastConfig()
+    b.ts_checkpoint = checkpoint
+    if target == 0:
+        b.service_staking_state = StakingState.UNSTAKED
+    b.context.state.synchronized_data = SynchronizedData(
+        AbciAppDB(setup_data={"previous_checkpoint": [checkpoint]})
+    )
+    reads = MagicMock(side_effect=lambda: done((False, False, target, completed)))
+    with (
+        patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.monotonic",
+            return_value=10,
+        ),
+        patch(
+            "packages.valory.skills.fresh_watch_abci.behaviours.time.time",
+            return_value=now,
+        ),
+    ):
+        for _ in range(2):
+            b._compute_activity_status = reads
+            b._select = lambda *args: done({"lane": "wait"})
+            run(b.select())
+            b = FreshWatchBehaviour(name="next", skill_context=b.context)
+    reads.assert_called_once()

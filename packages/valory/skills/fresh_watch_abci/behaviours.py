@@ -359,16 +359,22 @@ class FreshWatchBehaviour(
         cache = self.context.state.fast_activity_status
         now = time.monotonic()
         count = None
-        # Mech requests after the trade cap do not change the trade count, so
-        # recompute the activity target until it is met.
-        capped_unmet = (
+        # Request-only rounds do not change the trade count. Refresh activity
+        # while capped or while the uncapped top-up is due.
+        refresh_unmet = (
             cache is not None
-            and 0 < self.params.max_trades <= cache[3]
             and not cache[2][1]
+            and (
+                0 < self.params.max_trades <= cache[3]
+                or self.params.fast.topup_left_s(
+                    time.time(), cache[4], cache[2][2], cache[2][3]
+                )
+                is not None
+            )
         )
         if (
             cache is not None
-            and not capped_unmet
+            and not refresh_unmet
             and cache[1] == self.synchronized_data.previous_checkpoint
             and now - cache[0] < self.params.fast.housekeeping_interval_s
         ):
@@ -390,9 +396,14 @@ class FreshWatchBehaviour(
                 )
                 if count is None:
                     count = self.synchronized_data.successful_trade_count
-            cache = (now, period, status, count)
+            next_checkpoint = (
+                self.ts_checkpoint + self.liveness_period
+                if self.service_staking_state == StakingState.STAKED
+                else None
+            )
+            cache = (now, period, status, count, next_checkpoint)
             self.context.state.fast_activity_status = cache
-        _, period, (kpi_met, target_met, target, completed), count = cache
+        _, period, (kpi_met, target_met, target, completed), count, _ = cache
         capped = self.params.max_trades > 0 and count >= self.params.max_trades
         if capped:
             marker = self.params.store_path / "fast_trade_cap.json"
@@ -408,7 +419,9 @@ class FreshWatchBehaviour(
                     self.params.max_trades,
                 )
                 write_json_atomically(marker, {"period_start": period})
-        selection = yield from self._select(capped, target_met or target == 0)
+        selection = yield from self._select(
+            capped, target_met or target == 0, target, completed
+        )
         return dict(
             selection,
             previous_checkpoint=period,
@@ -416,7 +429,7 @@ class FreshWatchBehaviour(
             is_activity_target_met=target_met,
             activity_target=target,
             activity_completed=completed,
-            mech_only_mode=capped,
+            mech_only_mode=capped or selection["lane"] == "mech_only",
         )
 
     def _fast_tool(self) -> Optional[str]:
@@ -492,12 +505,14 @@ class FreshWatchBehaviour(
         )
 
     def _select(
-        self, capped: bool, target_met: bool
+        self, capped: bool, target_met: bool, target: int = 0, completed: int = 0
     ) -> Generator[None, None, Dict[str, Any]]:
-        """Select a market, a capped request, or periodic housekeeping.
+        """Select a market, an activity request, or periodic housekeeping.
 
         :param capped: whether the period trade cap is reached.
         :param target_met: whether no more staking activity is needed.
+        :param target: required requests in this epoch.
+        :param completed: completed requests in this epoch.
         :yield: polling and contract I/O.
         :return: the selected lane and its inputs.
         """
@@ -543,6 +558,18 @@ class FreshWatchBehaviour(
                     )
                     queue.save()
         if not queue.pending:
+            cache = self.context.state.fast_activity_status
+            left_s = cfg.topup_left_s(
+                now, cache[4] if cache is not None else None, target, completed
+            )
+            if not target_met and left_s is not None:
+                self.context.logger.info(
+                    "[ACTIVITY_TOPUP] completed=%s target=%s left_s=%s",
+                    completed,
+                    target,
+                    left_s,
+                )
+                return {"lane": "mech_only"}
             preview = self._preview_selection(now)
             if preview is not None:
                 return preview

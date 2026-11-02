@@ -5,9 +5,9 @@ description: A single-agent Omen service using base rates, chain events, and pre
 aea_version: '>=2.0.0, <3.0.0'
 license: Apache-2.0
 fingerprint:
-  README.md: bafybeia2oxd3qgvlr3jpdnd7vzaw7tecwxwwu5wrbsy45okn4warh5il7i
+  README.md: bafybeif6umpcq5ktt2qowahif5dn7xboyfox6myzfy7shz6j5eg65y2j5a
 fingerprint_ignore_patterns: []
-agent: valory/omenstrat_lightning:0.1.0:bafybeic4bmpyqhyhi7vvfj7tnzj5afb35zjprg5xt6s3sjmfeopko4tz3a
+agent: valory/omenstrat_lightning:0.1.0:bafybeihc6khbcdu3v7ywebuv5oaej54g6mjypoio274bv2v2pqg7ygwhau
 number_of_agents: 1
 deployment:
   agent:
@@ -197,6 +197,7 @@ models:
       overlap_s: ${OVERLAP_S:int:120}
       poll_s: ${POLL_S:int:15}
       active_window_utc: ${ACTIVE_WINDOW_UTC:str:00:00-05:30}
+      fast_topup_lead_s: ${FAST_TOPUP_LEAD_S:int:1800}
       housekeeping_interval_s: ${HOUSEKEEPING_INTERVAL_S:int:600}
       tools: ${FAST_TOOLS:list:["superforcaster_calibrated_full_search","superforcaster"]}
       prior_weight: ${PRIOR_WEIGHT:float:0.5}
