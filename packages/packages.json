@@ -29,7 +29,7 @@
         "service/valory/trader_pearl/0.1.0": "bafybeiaykhx4vwqcduhdc5numedgbggw33ejwgmyuis2pqqoyxis4g5qii",
         "service/valory/polymarket_trader/0.1.0": "bafybeiberkro2u2t6svnmxs5pi5c4asszdxsrlnqvvpnzvmqqmva6nolse",
         "service/valory/omenstrat_fast/0.1.0": "bafybeia6ggbjbfwf6x3wqh6wzn3j5sdepymlirrz4lsfpp6pnvztd5yhc4",
-        "service/valory/omenstrat_lightning/0.1.0": "bafybeidohmvuz2zg2z4bl2qw4uozkpiwo3t7n2da4evfil4pmzjy7gqehq"
+        "service/valory/omenstrat_lightning/0.1.0": "bafybeiczpiehczuz7gfjz4ituyzgxuu6ns7f3p6h7fggdbfkf2z5zomhti"
     },
     "third_party": {
         "protocol/valory/acn_data_share/0.1.0": "bafybeieqisfr6lhaaesq37lk7vyaxza2h6nucshksgyo2djqfyf2saqo4i",

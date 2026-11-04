@@ -124,8 +124,10 @@ minutes on each side. Connection logs contain the host and error class only.
 
 The decoder checks the known creator EOA/Safe pair, configured creator Safe,
 Safe delegatecall to MultiSend, factory target, wxDAI, template 2, exact Yes/No
-order, one condition, positive funds, and `distributionHint=[1,1]`. It reuses the
-receipt question parser. The lane uses the pending funds as both pool balances.
+order, one condition, positive funds, and a `distributionHint` of `[]` or `[1,1]`.
+It also needs one binary `prepareCondition` whose condition ID follows from the
+Realitio question in the same batch. It reuses the receipt question parser. The
+lane uses the pending funds as both pool balances.
 It uses cached Safe balances and EOA nonce. Missing cache data skips the shot.
 
 The lane copies both creator EIP-1559 fee fields without change. The next-block
@@ -207,7 +209,9 @@ implementationMaster = 0x907e5e6e8391395f6d518ae29bfe593051bbec52
 
 The supplied evidence has two differences from the brief. All 108 historical
 calls use the factory's empty distribution hint, `[]`, which also gives equal
-reserves. The strict `[1,1]` rule rejects those pending transactions. The final
+reserves, so the decoder accepts it. Of the 108 calls, 107 decode to a pending
+market. Of those, 83 pass the still-hold rule and can produce a shot when
+`LIGHTNING_STILL_HOLD` is on and the lane tip is above 0. The final
 36 titles contain 30 matches for the existing still-hold phrase rule, not 28.
 One matched title also fails the existing JSON title parser. The tests retain
 these facts. They do not alter historical calldata or the phrase rule to make

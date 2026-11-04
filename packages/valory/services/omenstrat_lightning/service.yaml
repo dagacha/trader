@@ -5,7 +5,7 @@ description: A single-agent Omen service using base rates, chain events, and pre
 aea_version: '>=2.0.0, <3.0.0'
 license: Apache-2.0
 fingerprint:
-  README.md: bafybeifp7ivaazek7skrt6xrx6hjwovkq5lznxh7hqwq4zxmptrpukrlwm
+  README.md: bafybeicmyjmjv6e6gcpsogoprgzkulk66qt7hyqnweq53ibaupa46nsykm
 fingerprint_ignore_patterns: []
 agent: valory/omenstrat_lightning:0.1.0:bafybeib2d7oj5eo56mphp4dw52kbahvhmfar2ilrtnudciij6ivmhxzpcy
 number_of_agents: 1
