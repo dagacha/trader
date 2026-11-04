@@ -34,6 +34,7 @@ from packages.valory.skills.mech_interact_abci.behaviours.mech_info import (
     MechInformationBehaviour,
 )
 from packages.valory.skills.omenstrat_fast_abci.composition import (
+    FastFinalizationRound,
     FastPreTxSettlementRound,
     OmenstratFastAbciApp,
 )
@@ -43,6 +44,7 @@ from packages.valory.skills.trader_abci.behaviours import (
     TraderConsensusBehaviour,
 )
 from packages.valory.skills.transaction_settlement_abci.behaviours import (
+    FinalizeBehaviour,
     ValidateTransactionBehaviour,
 )
 from packages.valory.skills.tx_settlement_multiplexer_abci.behaviours import (
@@ -69,6 +71,12 @@ class FastPreTxSettlementBehaviour(PreTxSettlementBehaviour):
     matching_round = FastPreTxSettlementRound
 
 
+class FastFinalizeBehaviour(FinalizeBehaviour):
+    """Use the fast finalization round with the existing sender logic."""
+
+    matching_round = FastFinalizationRound
+
+
 _REPLACED = {b.matching_round for b in FreshWatchRoundBehaviour.behaviours} | {
     FastMechInformationBehaviour.matching_round,
     FastMechRequestBehaviour.matching_round,
@@ -92,6 +100,7 @@ class OmenstratFastConsensusBehaviour(TraderConsensusBehaviour):
         FastMechRequestBehaviour,
         FastMechResponseBehaviour,
         FastPreTxSettlementBehaviour,
+        FastFinalizeBehaviour,
         *TerminationAbciBehaviours.behaviours,
     }
     # Termination also supplies the upstream validator; keep the trader's

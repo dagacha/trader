@@ -20,7 +20,7 @@
 """Check fast and housekeeping paths in the composed FSM."""
 
 import json
-from typing import Any
+from typing import Any, Dict, List
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
@@ -126,6 +126,7 @@ def test_settlement_drops_previous_transaction_state(vote: bool) -> None:
                 final_tx_hash=["old"],
                 tx_submitter=["bet_placement_round"],
                 most_voted_tx_hash=["new"],
+                fast_finalization_failures=[3],
             )
         )
     )
@@ -143,6 +144,7 @@ def test_settlement_drops_previous_transaction_state(vote: bool) -> None:
     assert result.db.get("tx_hashes_history") == ""
     assert result.db.get("blacklisted_keepers") == ""
     assert result.db.get("final_tx_hash") is None
+    assert result.db.get("fast_finalization_failures") == 0
     assert result.db.get("most_voted_tx_hash") == "new"
     assert result.db.get("tx_submitter") == "bet_placement_round"
 
@@ -265,3 +267,120 @@ def test_settled_fast_bets_reach_durable_cap(tmp_path: Any) -> None:
         assert run(watch.select())["lane"] == "mech_only"
     assert FreshQueue(queue.path).pending == [raw_market()]
     watch._fetch_fresh.assert_not_called()
+
+
+def _finalization_round(failures: Any = None, history: str = "") -> Any:
+    """Build a fast finalization round with a keeper that sent nothing."""
+    from packages.valory.skills.abstract_round_abci.base import AbciAppDB
+    from packages.valory.skills.omenstrat_fast_abci.composition import (
+        FastFinalizationRound,
+    )
+    from packages.valory.skills.transaction_settlement_abci.payloads import (
+        FinalizationTxPayload,
+    )
+    from packages.valory.skills.transaction_settlement_abci.rounds import (
+        SynchronizedData,
+        VerificationStatus,
+    )
+
+    setup: Dict[str, List[Any]] = dict(
+        all_participants=[("agent",)],
+        participants=[("agent",)],
+        consensus_threshold=[1],
+    )
+    if failures is not None:
+        setup["fast_finalization_failures"] = [failures]
+    data = SynchronizedData(AbciAppDB(setup_data=setup))
+    round_ = FastFinalizationRound(data, MagicMock())
+    round_.keeper_payload = FinalizationTxPayload(
+        "agent",
+        tx_data=dict(
+            status_value=VerificationStatus.PENDING.value,
+            serialized_keepers="",
+            blacklisted_keepers="",
+            tx_hashes_history=history,
+            received_hash=False,
+        ),
+    )
+    return round_
+
+
+def test_repeated_finalization_failures_return_to_the_watch() -> None:
+    """A transaction that was never sent must not block the agent forever."""
+    from packages.valory.skills.omenstrat_fast_abci.composition import (
+        FastFinalizationRound,
+        MAX_FINALIZATION_FAILURES,
+    )
+    from packages.valory.skills.transaction_settlement_abci.rounds import (
+        Event as Settlement,
+    )
+
+    transitions = OmenstratFastAbciApp.transition_function
+    assert transitions[FastFinalizationRound][Settlement.NONE] == FreshWatchRound
+    failures = 0
+    for _ in range(MAX_FINALIZATION_FAILURES - 1):
+        result, event = _finalization_round(failures).end_block()
+        assert event == Settlement.FINALIZATION_FAILED
+        failures = result.db.get("fast_finalization_failures")
+    assert failures == MAX_FINALIZATION_FAILURES - 1
+    _, event = _finalization_round(failures).end_block()
+    assert event == Settlement.NONE
+
+
+def test_finalization_failure_without_a_payload_counts() -> None:
+    """A keeper with no raw transaction fails the same way."""
+    from packages.valory.skills.omenstrat_fast_abci.composition import (
+        MAX_FINALIZATION_FAILURES,
+    )
+    from packages.valory.skills.transaction_settlement_abci.payloads import (
+        FinalizationTxPayload,
+    )
+    from packages.valory.skills.transaction_settlement_abci.rounds import (
+        Event as Settlement,
+    )
+
+    round_ = _finalization_round(MAX_FINALIZATION_FAILURES - 1)
+    round_.keeper_payload = None
+    assert round_.end_block() is None
+    round_.keeper_payload = FinalizationTxPayload("agent", tx_data=None)
+    _, event = round_.end_block()
+    assert event == Settlement.NONE
+
+
+def test_finalization_keeps_a_transaction_that_may_be_sent() -> None:
+    """Never abandon a settlement that has a transaction hash."""
+    from packages.valory.skills.omenstrat_fast_abci.composition import (
+        MAX_FINALIZATION_FAILURES,
+    )
+    from packages.valory.skills.transaction_settlement_abci.rounds import (
+        Event as Settlement,
+    )
+
+    round_ = _finalization_round(MAX_FINALIZATION_FAILURES, history="a" * 64)
+    _, event = round_.end_block()
+    assert event == Settlement.FINALIZATION_FAILED
+
+
+def test_fast_agent_finalizes_with_the_bounded_round() -> None:
+    """Trading uses the bounded round. Termination keeps the upstream round."""
+    from packages.valory.skills.omenstrat_fast_abci.behaviours import (
+        FastFinalizeBehaviour,
+        OmenstratFastConsensusBehaviour,
+    )
+    from packages.valory.skills.omenstrat_fast_abci.composition import (
+        FastFinalizationRound,
+    )
+    from packages.valory.skills.transaction_settlement_abci.behaviours import (
+        FinalizeBehaviour,
+    )
+    from packages.valory.skills.transaction_settlement_abci.rounds import (
+        FinalizationRound,
+    )
+
+    behaviours = OmenstratFastConsensusBehaviour.behaviours
+    assert {FastFinalizeBehaviour, FinalizeBehaviour} <= behaviours
+    assert FastFinalizeBehaviour.matching_round is FastFinalizationRound
+    transitions = OmenstratFastAbciApp.transition_function
+    assert FastFinalizationRound in transitions
+    assert FinalizationRound not in transitions
+    assert not any(FinalizationRound in row.values() for row in transitions.values())

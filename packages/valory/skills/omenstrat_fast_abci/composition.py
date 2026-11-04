@@ -20,7 +20,7 @@
 """Compose the fast trading lane and the periodic housekeeping lane."""
 
 from enum import Enum
-from typing import Optional, Set, Tuple
+from typing import Dict, Optional, Set, Tuple, cast
 
 from packages.valory.skills.abstract_round_abci.abci_app_chain import (
     AbciAppTransitionMapping,
@@ -74,12 +74,20 @@ from packages.valory.skills.staking_abci.rounds import (
 )
 from packages.valory.skills.trader_abci.composition import termination_config
 from packages.valory.skills.transaction_settlement_abci.rounds import (
+    Event as SettlementEvent,
+)
+from packages.valory.skills.transaction_settlement_abci.rounds import (
     FailedRound,
+    FinalizationRound,
     FinishedTransactionSubmissionRound,
     RandomnessTransactionSubmissionRound,
+    SynchronizedData,
     TransactionSubmissionAbciApp,
 )
 from packages.valory.skills.tx_settlement_multiplexer_abci import rounds as tx
+
+# One failed attempt takes about 2 seconds, so this stops a settlement in 20 seconds.
+MAX_FINALIZATION_FAILURES = 10
 
 _MECH_ROUNDS: Set[AppState] = {
     MechInformationRound,
@@ -132,8 +140,57 @@ class FastPreTxSettlementRound(tx.PreTxSettlementRound):
                 missed_messages=dict.fromkeys(data.all_participants, 0),
                 late_arriving_tx_hashes="{}",
                 suspects=(),
+                fast_finalization_failures=0,
             )
         return data, event
+
+
+class FastFinalizationRound(FinalizationRound):
+    """Stop a settlement that repeatedly fails before it sends a transaction."""
+
+    def end_block(self) -> Optional[Tuple[BaseSynchronizedData, Enum]]:
+        """Count failed attempts and abandon the transaction at the limit."""
+        result = super().end_block()
+        if result is None:
+            return None
+        data, event = result
+        synchronized_data = cast(SynchronizedData, data)
+        # A transaction hash means the transaction can still be mined.
+        if (
+            event != SettlementEvent.FINALIZATION_FAILED
+            or synchronized_data.tx_hashes_history
+        ):
+            return data, event
+        failures = cast(int, data.db.get("fast_finalization_failures", 0)) + 1
+        data = data.update(
+            synchronized_data_class=self.synchronized_data_class,
+            fast_finalization_failures=failures,
+        )
+        if failures < MAX_FINALIZATION_FAILURES:
+            return data, event
+        self.context.logger.warning(
+            f"Abandoning a transaction after {failures} failed finalizations."
+        )
+        return data, SettlementEvent.NONE
+
+
+def _fast_settlement_transitions() -> Dict[AppState, Dict[Enum, AppState]]:
+    """Use the fast finalization round, with an exit to the failed state."""
+    function = {
+        (FastFinalizationRound if state == FinalizationRound else state): {
+            event: FastFinalizationRound if target == FinalizationRound else target
+            for event, target in transitions.items()
+        }
+        for state, transitions in TransactionSubmissionAbciApp.transition_function.items()
+    }
+    function[FastFinalizationRound][SettlementEvent.NONE] = FailedRound
+    return function
+
+
+class FastTransactionSubmissionAbciApp(TransactionSubmissionAbciApp):
+    """Submit transactions without an endless finalization retry."""
+
+    transition_function = _fast_settlement_transitions()
 
 
 class FastTxSettlementMultiplexerAbciApp(tx.TxSettlementMultiplexerAbciApp):
@@ -195,7 +252,7 @@ OmenstratFastAbciApp = chain(
         AgentRegistrationAbciApp,
         FreshWatchAbciApp,
         FastMechInteractAbciApp,
-        TransactionSubmissionAbciApp,
+        FastTransactionSubmissionAbciApp,
         FastTxSettlementMultiplexerAbciApp,
         StakingAbciApp,
         AgentPerformanceSummaryAbciApp,
