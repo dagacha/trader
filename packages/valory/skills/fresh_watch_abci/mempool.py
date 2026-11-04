@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from eth_abi import decode, encode
 from eth_abi.exceptions import DecodingError
+from eth_abi.packed import encode_packed
 from eth_utils import keccak  # type: ignore[import-not-found]
 
 CREATOR_PAIRS = {
@@ -35,6 +36,8 @@ EXEC_SELECTOR = bytes.fromhex("6a761202")
 MULTISEND_SELECTOR = bytes.fromhex("8d80ff0a")
 FACTORY_SELECTOR = bytes.fromhex("82e90fa0")
 QUESTION_SELECTOR = bytes.fromhex("762c38fd")
+PREPARE_SELECTOR = bytes.fromhex("d96ee754")
+REALITIO = "0x79e32ae03fb27b07c89c0c568f80287c01ca2e57"
 WXDAI = "0xe91d153e0b41518a2ce8dd3d7944fa863463a97d"
 # implementationMaster() on the Gnosis deterministic factory.
 IMPLEMENTATION = "0x907e5e6e8391395f6d518ae29bfe593051bbec52"
@@ -60,6 +63,7 @@ FACTORY_TYPES = [
     "uint256[]",
 ]
 QUESTION_TYPES = ["uint256", "string", "address", "uint32", "uint32", "uint256"]
+PREPARE_TYPES = ["address", "bytes32", "uint256"]
 
 
 @dataclass(frozen=True)
@@ -182,14 +186,45 @@ def decode_calls(
             if op == 0 and address == factory.lower() and call[:4] == FACTORY_SELECTOR
         ]
         questions = [
-            call for op, _, call in entries if op == 0 and call[:4] == QUESTION_SELECTOR
+            call
+            for op, address, call in entries
+            if op == 0 and address == REALITIO and call[:4] == QUESTION_SELECTOR
         ]
-        if len(factories) != 1 or len(questions) != 1:
+        preparations = [entry for entry in entries if entry[2][:4] == PREPARE_SELECTOR]
+        if len(factories) != 1 or len(questions) != 1 or len(preparations) != 1:
             return None
         salt, conditional, collateral, conditions, fee, funds, hint = decode(
             FACTORY_TYPES, factories[0][4:]
         )
-        template, question, _, _, opening, _ = decode(QUESTION_TYPES, questions[0][4:])
+        op, address, preparation = preparations[0]
+        oracle, question_id, slots = decode(PREPARE_TYPES, preparation[4:])
+        if (
+            op != 0
+            or address != conditional
+            or slots != 2
+            or not conditions
+            or keccak(encode_packed(PREPARE_TYPES, [oracle, question_id, slots]))
+            != conditions[0]
+        ):
+            return None
+        template, question, arbitrator, timeout, opening, nonce = decode(
+            QUESTION_TYPES, questions[0][4:]
+        )
+        # Deployed Realitio v2.1, askQuestion: gnosis.blockscout.com/address/
+        # 0x79e32aE03fb27B07C89c0c568F80287C01ca2E57?tab=contract
+        content_hash = keccak(
+            encode_packed(
+                ["uint256", "uint32", "string"], [template, opening, question]
+            )
+        )
+        expected_question = keccak(
+            encode_packed(
+                ["bytes32", "address", "uint32", "address", "uint256"],
+                [content_hash, arbitrator, timeout, tx["to"], nonce],
+            )
+        )
+        if question_id != expected_question:
+            return None
         return CreationCall(
             tx["to"].lower(),
             salt,

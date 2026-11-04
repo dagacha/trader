@@ -27,6 +27,7 @@ from typing import Any, Dict, List
 
 import pytest
 from eth_abi import decode, encode
+from eth_abi.packed import encode_packed
 from eth_utils import keccak  # type: ignore[import-not-found]
 
 from packages.valory.skills.fresh_watch_abci.lane import lane_decision
@@ -66,6 +67,7 @@ FACTORY_TYPES = [
     "uint256[]",
 ]
 QUESTION_TYPES = ["uint256", "string", "address", "uint32", "uint32", "uint256"]
+PREPARE_TYPES = ["address", "bytes32", "uint256"]
 SEEN = 1793665800.125
 
 
@@ -107,6 +109,81 @@ def repack(
     )
     outer[2] = bytes.fromhex("8d80ff0a") + encode(["bytes"], [packed])
     return dict(tx, input="0x6a761202" + encode(SAFE_TYPES, outer).hex())
+
+
+def test_realitio_selector_matches_deployed_abi() -> None:
+    """Use the six-argument askQuestion ABI from deployed Realitio v2.1."""
+    module = subject()
+    signature = "askQuestion(" + ",".join(module.QUESTION_TYPES) + ")"
+    assert keccak(text=signature)[:4] == bytes.fromhex("762c38fd")
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "factory_condition",
+        "prepare_question",
+        "prepare_question_and_condition",
+        "missing_prepare",
+        "duplicate_prepare",
+        "nonbinary_prepare",
+        "prepare_operation",
+        "prepare_target",
+        "question_target",
+        "question_arbitrator",
+        "question_timeout",
+        "question_opening",
+        "question_nonce",
+    ],
+)
+def test_question_and_pool_must_share_the_batch_condition(change: str) -> None:
+    """Reject real calldata when the question and pool link is broken."""
+    tx = TRANSACTIONS[0]
+    outer, entries = unpack(tx)
+    if change == "factory_condition":
+        _, other = unpack(TRANSACTIONS[1])
+        values = list(decode(FACTORY_TYPES, entries[3][3][4:]))
+        other_values = decode(FACTORY_TYPES, other[3][3][4:])
+        assert values[3] != other_values[3]
+        assert decode(PREPARE_TYPES, other[2][3][4:])[2] == 2
+        values[3] = other_values[3]
+        entries[3][3] = entries[3][3][:4] + encode(FACTORY_TYPES, values)
+    elif change in {
+        "prepare_question",
+        "prepare_question_and_condition",
+        "nonbinary_prepare",
+    }:
+        values = list(decode(PREPARE_TYPES, entries[2][3][4:]))
+        values[2 if change == "nonbinary_prepare" else 1] = (
+            3 if change == "nonbinary_prepare" else keccak(text="other question")
+        )
+        entries[2][3] = entries[2][3][:4] + encode(PREPARE_TYPES, values)
+        if change == "prepare_question_and_condition":
+            factory = list(decode(FACTORY_TYPES, entries[3][3][4:]))
+            factory[3] = [keccak(encode_packed(PREPARE_TYPES, values))]
+            entries[3][3] = entries[3][3][:4] + encode(FACTORY_TYPES, factory)
+    elif change == "missing_prepare":
+        entries.pop(2)
+    elif change == "duplicate_prepare":
+        entries.append(entries[2])
+    elif change == "prepare_operation":
+        entries[2][0] = 1
+    elif change in {"prepare_target", "question_target"}:
+        entries[2 if change == "prepare_target" else 1][1] = "0x" + "11" * 20
+    else:
+        index = {
+            "question_arbitrator": 2,
+            "question_timeout": 3,
+            "question_opening": 4,
+            "question_nonce": 5,
+        }[change]
+        values = list(decode(QUESTION_TYPES, entries[1][3][4:]))
+        values[index] = "0x" + "11" * 20 if index == 2 else values[index] + 1
+        entries[1][3] = entries[1][3][:4] + encode(QUESTION_TYPES, values)
+    changed = repack(tx, outer, entries)
+    module = subject()
+    assert module.decode_calls(changed, MULTISEND, FACTORY) is None
+    assert module.decode_pending(changed, LightningConfig(), MULTISEND, SEEN) is None
 
 
 @pytest.mark.parametrize("row,tx", list(zip(ROWS, TRANSACTIONS)))
@@ -360,6 +437,26 @@ def test_strict_creation_fields(field: str, index: int, value: Any) -> None:
         values = list(decode(types, entry[3][4:]))
         values[index] = value
         entry[3] = entry[3][:4] + encode(types, values)
+        if field == "question":
+            # Keep the link valid to test the metadata checks after it.
+            template, question, arbitrator, timeout, opening, nonce = values
+            content = keccak(
+                encode_packed(
+                    ["uint256", "uint32", "string"], [template, opening, question]
+                )
+            )
+            question_id = keccak(
+                encode_packed(
+                    ["bytes32", "address", "uint32", "address", "uint256"],
+                    [content, arbitrator, timeout, tx["to"], nonce],
+                )
+            )
+            prepare = list(decode(PREPARE_TYPES, entries[2][3][4:]))
+            prepare[1] = question_id
+            entries[2][3] = entries[2][3][:4] + encode(PREPARE_TYPES, prepare)
+            factory = list(decode(FACTORY_TYPES, entries[3][3][4:]))
+            factory[3] = [keccak(encode_packed(PREPARE_TYPES, prepare))]
+            entries[3][3] = entries[3][3][:4] + encode(FACTORY_TYPES, factory)
     assert (
         subject().decode_pending(
             repack(tx, outer, entries), LightningConfig(), MULTISEND, SEEN
