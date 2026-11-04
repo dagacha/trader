@@ -159,13 +159,19 @@ def _entries(data: bytes) -> List[Tuple[int, str, bytes]]:
 
 
 def decode_calls(
-    tx: Dict[str, Any], multisend: str, factory: str
+    tx: Dict[str, Any],
+    multisend: str,
+    factory: str,
+    conditional_tokens_address: str,
+    realitio_proxy_address: str,
 ) -> Optional[CreationCall]:
     """Read creation arguments without inferring whether the pool is supported.
 
     :param tx: full JSON-RPC transaction.
     :param multisend: configured MultiSend delegate target.
     :param factory: configured deterministic factory target.
+    :param conditional_tokens_address: configured ConditionalTokens address.
+    :param realitio_proxy_address: configured Realitio proxy address.
     :return: decoded arguments, or None for another or malformed transaction.
     """
     try:
@@ -200,7 +206,9 @@ def decode_calls(
         oracle, question_id, slots = decode(PREPARE_TYPES, preparation[4:])
         if (
             op != 0
-            or address != conditional
+            or address.lower() != conditional.lower()
+            or conditional.lower() != conditional_tokens_address.lower()
+            or oracle.lower() != realitio_proxy_address.lower()
             or slots != 2
             or not conditions
             or keccak(encode_packed(PREPARE_TYPES, [oracle, question_id, slots]))
@@ -284,13 +292,20 @@ def _number(value: Any) -> int:
 
 
 def decode_pending(
-    tx: Dict[str, Any], cfg: Any, multisend: str, seen_at: float
+    tx: Dict[str, Any],
+    cfg: Any,
+    multisend: str,
+    conditional_tokens_address: str,
+    realitio_proxy_address: str,
+    seen_at: float,
 ) -> Optional[PendingCreation]:
     """Build a complete row only for the supported pending binary pool.
 
     :param tx: pending JSON-RPC transaction with EIP-1559 fee fields.
     :param cfg: lightning controls, including factory and creator allowlist.
     :param multisend: configured MultiSend delegate target.
+    :param conditional_tokens_address: configured ConditionalTokens address.
+    :param realitio_proxy_address: configured Realitio proxy address.
     :param seen_at: first local sight time, in seconds since the epoch.
     :return: pending market and copied fees, or None when unsupported or malformed.
     """
@@ -302,7 +317,13 @@ def decode_pending(
         )
         if priority < 0 or maximum < priority or not isinstance(tx["hash"], str):
             return None
-        call = decode_calls(tx, multisend, cfg.omen_fpmm_factory)
+        call = decode_calls(
+            tx,
+            multisend,
+            cfg.omen_fpmm_factory,
+            conditional_tokens_address,
+            realitio_proxy_address,
+        )
         if (
             call is None
             or call.creator not in {value.lower() for value in cfg.lightning_creators}

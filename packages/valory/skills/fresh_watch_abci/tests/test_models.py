@@ -26,12 +26,17 @@ from unittest.mock import MagicMock
 
 import pytest
 import yaml
+from aea.helpers.env_vars import apply_env_variables
 
 from packages.valory.skills.fresh_watch_abci import dialogues, handlers
 from packages.valory.skills.fresh_watch_abci.lightning import LightningConfig
 from packages.valory.skills.fresh_watch_abci.models import FastParams, SharedState
 from packages.valory.skills.fresh_watch_abci.rounds import FreshWatchAbciApp
 from packages.valory.skills.fresh_watch_abci.strategy import FastConfig
+from packages.valory.skills.fresh_watch_abci.tests.test_mempool import (
+    CONDITIONAL_TOKENS,
+    REALITIO_PROXY,
+)
 from packages.valory.skills.trader_abci import dialogues as trader_dialogues
 from packages.valory.skills.trader_abci import handlers as trader_handlers
 
@@ -72,6 +77,34 @@ def test_declared_params(params_args: Any, dynamic: bool) -> None:
     assert params.fast_dynamic_mech is dynamic
     assert params.use_offchain is dynamic
     assert params.mech_marketplace_config.use_dynamic_mech_selection is dynamic
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_service_settlement_params(params_args: Any, override: bool) -> None:
+    """Load settlement addresses from the service into the real lane params."""
+    service = Path(__file__).parents[3] / "services/omenstrat_lightning/service.yaml"
+    docs = yaml.safe_load_all(service.read_text())
+    config = next(doc for doc in docs if doc.get("type") == "skill")
+    args = config["models"]["params"]["args"]
+    names = ("conditional_tokens_address", "realitio_proxy_address")
+    env = (
+        {
+            "CONDITIONAL_TOKENS_ADDRESS": "0x" + "12" * 20,
+            "REALITIO_PROXY_ADDRESS": "0x" + "34" * 20,
+        }
+        if override
+        else {}
+    )
+    resolved = apply_env_variables({name: args[name] for name in names}, env)
+    params = FastParams(
+        name="params", skill_context=MagicMock(), **{**params_args, **resolved}
+    )
+    assert params.conditional_tokens_address == env.get(
+        "CONDITIONAL_TOKENS_ADDRESS", CONDITIONAL_TOKENS
+    )
+    assert params.realitio_proxy_address == env.get(
+        "REALITIO_PROXY_ADDRESS", REALITIO_PROXY
+    )
 
 
 def test_missing_lightning_params_keep_fast_defaults(params_args: Any) -> None:

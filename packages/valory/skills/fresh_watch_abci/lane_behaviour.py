@@ -243,6 +243,8 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 cfg.lightning_wss_url,
                 cfg,
                 self.params.multisend_address,
+                self.params.conditional_tokens_address,
+                self.params.realitio_proxy_address,
                 self.context.logger,
             )
             self._mempool.start()

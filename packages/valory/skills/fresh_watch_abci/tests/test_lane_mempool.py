@@ -222,6 +222,8 @@ def test_mempool_source_window_margin_and_teardown(tmp_path: Any) -> None:
 
     b = lane(tmp_path, lightning_mempool=True, lightning_wss_url="wss://rpc.test/key")
     b.context.params.fast = replace(b.params.fast, active_window_utc="01:00-02:00")
+    b.context.params.conditional_tokens_address = "0x" + "12" * 20
+    b.context.params.realitio_proxy_address = "0x" + "34" * 20
     with patch(MODULE + ".MempoolSource") as cls:
         source = cls.return_value
         source.drain.return_value = []
@@ -229,6 +231,14 @@ def test_mempool_source_window_margin_and_teardown(tmp_path: Any) -> None:
         run(b._drain_mempool(3299))
         cls.assert_not_called()
         run(b._drain_mempool(3300))
+        cls.assert_called_once_with(
+            b.params.lightning.lightning_wss_url,
+            b.params.lightning,
+            b.params.multisend_address,
+            b.params.conditional_tokens_address,
+            b.params.realitio_proxy_address,
+            b.context.logger,
+        )
         source.start.assert_called_once()
         run(b._drain_mempool(7501))
         source.stop.assert_called_once()
@@ -451,12 +461,21 @@ def test_pending_completion_uses_mined_creation_data_when_available(
     """Complete a real decoded pending row with mined time and index metadata."""
     from packages.valory.skills.fresh_watch_abci.mempool import decode_pending
     from packages.valory.skills.fresh_watch_abci.tests.test_mempool import (
+        CONDITIONAL_TOKENS,
         MULTISEND,
+        REALITIO_PROXY,
         TRANSACTIONS,
     )
 
     b = lane(tmp_path)
-    candidate = decode_pending(TRANSACTIONS[0], b.params.lightning, MULTISEND, 1002.125)
+    candidate = decode_pending(
+        TRANSACTIONS[0],
+        b.params.lightning,
+        MULTISEND,
+        CONDITIONAL_TOKENS,
+        REALITIO_PROXY,
+        1002.125,
+    )
     assert candidate is not None
     info = dict(
         tx="0xshot",

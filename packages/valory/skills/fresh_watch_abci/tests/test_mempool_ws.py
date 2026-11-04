@@ -33,6 +33,10 @@ import pytest
 from packages.valory.skills.fresh_watch_abci import mempool_ws
 from packages.valory.skills.fresh_watch_abci.lightning import LightningConfig
 from packages.valory.skills.fresh_watch_abci.mempool import CREATOR_PAIRS
+from packages.valory.skills.fresh_watch_abci.tests.test_mempool import (
+    CONDITIONAL_TOKENS,
+    REALITIO_PROXY,
+)
 
 # pylint: disable=protected-access
 
@@ -177,7 +181,12 @@ async def test_proxy_connect(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_reconnect_and_resubscribe() -> None:
     """A dropped connection gets both subscriptions again after backoff."""
     source = mempool_ws.MempoolSource(
-        "wss://example.test/private", LightningConfig(), "0xmultisend", MagicMock()
+        "wss://example.test/private",
+        LightningConfig(),
+        "0xmultisend",
+        CONDITIONAL_TOKENS,
+        REALITIO_PROXY,
+        MagicMock(),
     )
     sockets = [MagicMock(), MagicMock()]
     for ws in sockets:
@@ -211,7 +220,13 @@ async def test_reconnect_and_resubscribe() -> None:
 def test_queue_filters_and_head_priority() -> None:
     """Only known pairs reach decoding; heads keep their local arrival time."""
     source = mempool_ws.MempoolSource(
-        "wss://example.test", LightningConfig(), "0xmultisend", MagicMock(), 1
+        "wss://example.test",
+        LightningConfig(),
+        "0xmultisend",
+        CONDITIONAL_TOKENS,
+        REALITIO_PROXY,
+        MagicMock(),
+        1,
     )
     sender, target = next(iter(CREATOR_PAIRS.items()))
     transaction = {"from": sender, "to": target, "input": "0x6a761202"}
@@ -235,6 +250,14 @@ def test_queue_filters_and_head_priority() -> None:
             source._message(message, 10, subscriptions)
         decode.assert_not_called()
         source._message(notification(transaction), 11, subscriptions)
+        decode.assert_called_once_with(
+            transaction,
+            source.cfg,
+            source.multisend,
+            CONDITIONAL_TOKENS,
+            REALITIO_PROXY,
+            11,
+        )
         source._message(notification(transaction), 12, subscriptions)
         source._message(
             notification({"number": "0x1", "timestamp": "0xa"}, "heads"),
@@ -258,7 +281,12 @@ def test_queue_filters_and_head_priority() -> None:
 def test_thread_lifecycle() -> None:
     """Stop cancels the thread's loop without joining from the lane."""
     source = mempool_ws.MempoolSource(
-        "wss://example.test", LightningConfig(), "0xmultisend", MagicMock()
+        "wss://example.test",
+        LightningConfig(),
+        "0xmultisend",
+        CONDITIONAL_TOKENS,
+        REALITIO_PROXY,
+        MagicMock(),
     )
     ready = threading.Event()
 
@@ -283,7 +311,9 @@ def test_thread_lifecycle() -> None:
     source._loop, source._task = MagicMock(), MagicMock()
     source._loop.call_soon_threadsafe.side_effect = RuntimeError("closed")
     source.stop()
-    empty = mempool_ws.MempoolSource("", LightningConfig(), "", MagicMock())
+    empty = mempool_ws.MempoolSource(
+        "", LightningConfig(), "", CONDITIONAL_TOKENS, REALITIO_PROXY, MagicMock()
+    )
     empty.start()
     assert empty._thread is None
 
@@ -383,7 +413,12 @@ async def test_proxy_failure_is_private(
 async def test_subscriptions_ignore_bad_messages_and_keep_heads() -> None:
     """Malformed messages do not end the stream or hide a valid head."""
     source = mempool_ws.MempoolSource(
-        "wss://example.test", LightningConfig(), "", MagicMock()
+        "wss://example.test",
+        LightningConfig(),
+        "",
+        CONDITIONAL_TOKENS,
+        REALITIO_PROXY,
+        MagicMock(),
     )
     messages = iter(
         [
@@ -427,7 +462,12 @@ async def test_subscriptions_ignore_bad_messages_and_keep_heads() -> None:
 async def test_backoff_caps_and_subscription_errors() -> None:
     """Repeated errors use 3, 6, 12, 24, 48, 60, 60 seconds."""
     source = mempool_ws.MempoolSource(
-        "wss://example.test/secret", LightningConfig(), "", MagicMock()
+        "wss://example.test/secret",
+        LightningConfig(),
+        "",
+        CONDITIONAL_TOKENS,
+        REALITIO_PROXY,
+        MagicMock(),
     )
     ws = MagicMock(
         connect=AsyncMock(),
@@ -456,7 +496,12 @@ async def test_backoff_caps_and_subscription_errors() -> None:
 async def test_cancelled_stream_closes_socket() -> None:
     """Thread cancellation reaches an active socket immediately."""
     source = mempool_ws.MempoolSource(
-        "wss://example.test", LightningConfig(), "", MagicMock()
+        "wss://example.test",
+        LightningConfig(),
+        "",
+        CONDITIONAL_TOKENS,
+        REALITIO_PROXY,
+        MagicMock(),
     )
     ws = MagicMock(
         connect=AsyncMock(side_effect=asyncio.CancelledError()), close=AsyncMock()
@@ -471,7 +516,12 @@ async def test_cancelled_stream_closes_socket() -> None:
 async def test_invalid_endpoint_does_not_kill_source() -> None:
     """An invalid endpoint logs its error class and can stop during backoff."""
     source = mempool_ws.MempoolSource(
-        "https://example.test/secret", LightningConfig(), "", MagicMock()
+        "https://example.test/secret",
+        LightningConfig(),
+        "",
+        CONDITIONAL_TOKENS,
+        REALITIO_PROXY,
+        MagicMock(),
     )
 
     async def stop_backoff(_delay: int) -> None:
@@ -491,7 +541,12 @@ async def test_mock_server_reconnects_and_restores_both_subscriptions(
     monkeypatch.delenv("HTTPS_PROXY", raising=False)
     monkeypatch.delenv("https_proxy", raising=False)
     source = mempool_ws.MempoolSource(
-        "wss://example.test/secret", LightningConfig(), "", MagicMock()
+        "wss://example.test/secret",
+        LightningConfig(),
+        "",
+        CONDITIONAL_TOKENS,
+        REALITIO_PROXY,
+        MagicMock(),
     )
     sessions: List[List[Dict[str, Any]]] = []
 

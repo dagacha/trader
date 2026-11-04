@@ -224,6 +224,8 @@ class MempoolSource:
         url: str,
         cfg: LightningConfig,
         multisend: str,
+        conditional_tokens_address: str,
+        realitio_proxy_address: str,
         logger: Any,
         queue_size: int = 64,
     ) -> None:
@@ -232,12 +234,16 @@ class MempoolSource:
         :param url: private websocket endpoint.
         :param cfg: lightning configuration.
         :param multisend: configured MultiSend address.
+        :param conditional_tokens_address: configured ConditionalTokens address.
+        :param realitio_proxy_address: configured Realitio proxy address.
         :param logger: skill logger.
         :param queue_size: maximum number of waiting candidates.
         """
         self._url = url
         self.host = urlsplit(url).hostname or ""
         self.cfg, self.multisend, self.logger = cfg, multisend, logger
+        self.conditional_tokens_address = conditional_tokens_address
+        self.realitio_proxy_address = realitio_proxy_address
         self._queue: Queue[PendingCreation] = Queue(maxsize=max(1, queue_size))
         self._head: Optional[Dict[str, Any]] = None
         self._head_lock = threading.Lock()
@@ -331,7 +337,14 @@ class MempoolSource:
             return
         if kind != 1 or not creator_transaction(result):
             return
-        candidate = decode_pending(result, self.cfg, self.multisend, seen_at)
+        candidate = decode_pending(
+            result,
+            self.cfg,
+            self.multisend,
+            self.conditional_tokens_address,
+            self.realitio_proxy_address,
+            seen_at,
+        )
         if candidate is not None:
             try:
                 self._queue.put_nowait(candidate)

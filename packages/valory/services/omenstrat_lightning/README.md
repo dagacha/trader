@@ -126,8 +126,9 @@ The decoder checks the known creator EOA/Safe pair, configured creator Safe,
 Safe delegatecall to MultiSend, factory target, wxDAI, template 2, exact Yes/No
 order, one condition, positive funds, and a `distributionHint` of `[]` or `[1,1]`.
 It also needs one binary `prepareCondition` whose condition ID follows from the
-Realitio question in the same batch. It reuses the receipt question parser. The
-lane uses the pending funds as both pool balances.
+Realitio question in the same batch. It checks the configured ConditionalTokens
+contract and Realitio proxy. It reuses the receipt question parser. The lane uses
+the pending funds as both pool balances.
 It uses cached Safe balances and EOA nonce. Missing cache data skips the shot.
 
 The lane copies both creator EIP-1559 fee fields without change. The next-block

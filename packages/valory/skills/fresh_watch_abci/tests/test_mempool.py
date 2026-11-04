@@ -45,6 +45,8 @@ HISTORY = json.loads((FIXTURES / "create2_transactions.json").read_text())
 TRANSACTIONS = HISTORY["transactions"]
 FACTORY = LightningConfig().omen_fpmm_factory
 MULTISEND = "0xA238CBeb142c10Ef7Ad8442C6D1f9E89e07e7761"
+CONDITIONAL_TOKENS = "0xCeAfDD6bc0bEF976fdCd1112955828E00543c0Ce"
+REALITIO_PROXY = "0xAB16D643bA051C11962DA645f74632d3130c81E2"
 SAFE_TYPES = [
     "address",
     "uint256",
@@ -118,6 +120,52 @@ def test_realitio_selector_matches_deployed_abi() -> None:
     assert keccak(text=signature)[:4] == bytes.fromhex("762c38fd")
 
 
+@pytest.mark.parametrize("change", ["oracle", "conditional_tokens", "prepare_target"])
+def test_settlement_must_use_configured_contracts(change: str) -> None:
+    """Reject other settlement contracts even with valid question and condition IDs."""
+    tx = TRANSACTIONS[0]
+    outer, entries = unpack(tx)
+    preparation = list(decode(PREPARE_TYPES, entries[2][3][4:]))
+    factory = list(decode(FACTORY_TYPES, entries[3][3][4:]))
+    question_id = preparation[1]
+    other = "0x" + "11" * 20
+    if change == "oracle":
+        preparation[0] = other
+    elif change == "conditional_tokens":
+        factory[1] = other
+        entries[2][1] = other
+    else:
+        entries[2][1] = other
+    factory[3] = [keccak(encode_packed(PREPARE_TYPES, preparation))]
+    entries[2][3] = entries[2][3][:4] + encode(PREPARE_TYPES, preparation)
+    entries[3][3] = entries[3][3][:4] + encode(FACTORY_TYPES, factory)
+    changed = repack(tx, outer, entries)
+    _, repacked = unpack(changed)
+    actual = decode(PREPARE_TYPES, repacked[2][3][4:])
+    assert actual[1] == question_id
+    assert decode(FACTORY_TYPES, repacked[3][3][4:])[3] == (
+        keccak(encode_packed(PREPARE_TYPES, actual)),
+    )
+    module = subject()
+    assert (
+        module.decode_calls(
+            changed, MULTISEND, FACTORY, CONDITIONAL_TOKENS, REALITIO_PROXY
+        )
+        is None
+    )
+    assert (
+        module.decode_pending(
+            changed,
+            LightningConfig(),
+            MULTISEND,
+            CONDITIONAL_TOKENS,
+            REALITIO_PROXY,
+            SEEN,
+        )
+        is None
+    )
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -182,14 +230,31 @@ def test_question_and_pool_must_share_the_batch_condition(change: str) -> None:
         entries[1][3] = entries[1][3][:4] + encode(QUESTION_TYPES, values)
     changed = repack(tx, outer, entries)
     module = subject()
-    assert module.decode_calls(changed, MULTISEND, FACTORY) is None
-    assert module.decode_pending(changed, LightningConfig(), MULTISEND, SEEN) is None
+    assert (
+        module.decode_calls(
+            changed, MULTISEND, FACTORY, CONDITIONAL_TOKENS, REALITIO_PROXY
+        )
+        is None
+    )
+    assert (
+        module.decode_pending(
+            changed,
+            LightningConfig(),
+            MULTISEND,
+            CONDITIONAL_TOKENS,
+            REALITIO_PROXY,
+            SEEN,
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize("row,tx", list(zip(ROWS, TRANSACTIONS)))
 def test_decode_historical_calldata(row: Dict[str, Any], tx: Dict[str, Any]) -> None:
     """Decode all 108 historical Safe, MultiSend, factory and question calls."""
-    result = subject().decode_calls(tx, MULTISEND, FACTORY)
+    result = subject().decode_calls(
+        tx, MULTISEND, FACTORY, CONDITIONAL_TOKENS, REALITIO_PROXY
+    )
     assert result is not None
     assert result.salt_nonce == row["salt_nonce"]
     assert result.question == row["question"]
@@ -205,14 +270,19 @@ def test_decode_historical_calldata(row: Dict[str, Any], tx: Dict[str, Any]) -> 
 def test_create2_historical_addresses(row: Dict[str, Any], tx: Dict[str, Any]) -> None:
     """Prove the source-derived CREATE2 formula on all 108 real addresses."""
     module = subject()
-    call = module.decode_calls(tx, MULTISEND, FACTORY)
+    call = module.decode_calls(
+        tx, MULTISEND, FACTORY, CONDITIONAL_TOKENS, REALITIO_PROXY
+    )
     assert module.predict_market(call, FACTORY) == row["market"]
 
 
 def test_still_hold_fixture_count() -> None:
     """Keep the existing phrase rule and report the actual final-night count."""
     module = subject()
-    calls = [module.decode_calls(tx, MULTISEND, FACTORY) for tx in TRANSACTIONS[-36:]]
+    calls = [
+        module.decode_calls(tx, MULTISEND, FACTORY, CONDITIONAL_TOKENS, REALITIO_PROXY)
+        for tx in TRANSACTIONS[-36:]
+    ]
     assert len(calls) == 36
     assert (
         sum(
@@ -243,7 +313,12 @@ def test_pending_distribution_hints(hint: List[int], accepted: bool) -> None:
     values[6] = hint
     entries[3][3] = entries[3][3][:4] + encode(FACTORY_TYPES, values)
     candidate = subject().decode_pending(
-        repack(tx, outer, entries), LightningConfig(), MULTISEND, SEEN
+        repack(tx, outer, entries),
+        LightningConfig(),
+        MULTISEND,
+        CONDITIONAL_TOKENS,
+        REALITIO_PROXY,
+        SEEN,
     )
     assert (candidate is not None) == accepted
     if candidate is not None:
@@ -290,7 +365,9 @@ def test_real_pending_transactions_reach_lane(
             )
         except ValueError:
             metadata = None
-        candidate = subject().decode_pending(tx, cfg, MULTISEND, now)
+        candidate = subject().decode_pending(
+            tx, cfg, MULTISEND, CONDITIONAL_TOKENS, REALITIO_PROXY, now
+        )
         if not metadata:
             assert candidate is None
             rejected.append(row["market"])
@@ -331,7 +408,12 @@ def test_pending_row_and_fees_are_complete() -> None:
     """Build a real Bet row and preserve both creator fee fields."""
     module = subject()
     candidate = module.decode_pending(
-        TRANSACTIONS[0], LightningConfig(), MULTISEND, SEEN
+        TRANSACTIONS[0],
+        LightningConfig(),
+        MULTISEND,
+        CONDITIONAL_TOKENS,
+        REALITIO_PROXY,
+        SEEN,
     )
     assert candidate is not None
     with pytest.raises(dataclasses.FrozenInstanceError):
@@ -391,7 +473,12 @@ def test_invalid_pending_transaction_is_ignored(change: Dict[str, Any]) -> None:
     """Ignore unsupported transactions without raising in the websocket thread."""
     assert (
         subject().decode_pending(
-            dict(TRANSACTIONS[0], **change), LightningConfig(), MULTISEND, SEEN
+            dict(TRANSACTIONS[0], **change),
+            LightningConfig(),
+            MULTISEND,
+            CONDITIONAL_TOKENS,
+            REALITIO_PROXY,
+            SEEN,
         )
         is None
     )
@@ -405,7 +492,12 @@ def test_missing_pending_field_is_ignored(field: str) -> None:
     """Require complete EIP-1559 and creation data."""
     tx = TRANSACTIONS[0].copy()
     tx.pop(field)
-    assert subject().decode_pending(tx, LightningConfig(), MULTISEND, SEEN) is None
+    assert (
+        subject().decode_pending(
+            tx, LightningConfig(), MULTISEND, CONDITIONAL_TOKENS, REALITIO_PROXY, SEEN
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(
@@ -459,7 +551,12 @@ def test_strict_creation_fields(field: str, index: int, value: Any) -> None:
             entries[3][3] = entries[3][3][:4] + encode(FACTORY_TYPES, factory)
     assert (
         subject().decode_pending(
-            repack(tx, outer, entries), LightningConfig(), MULTISEND, SEEN
+            repack(tx, outer, entries),
+            LightningConfig(),
+            MULTISEND,
+            CONDITIONAL_TOKENS,
+            REALITIO_PROXY,
+            SEEN,
         )
         is None
     )
@@ -508,7 +605,12 @@ def test_invalid_multisend_is_ignored(mode: str) -> None:
             packed = packed[:40] if mode == "short_header" else packed[:-1]
             outer[2] = bytes.fromhex("8d80ff0a") + encode(["bytes"], [packed])
         tx["input"] = "0x6a761202" + encode(SAFE_TYPES, outer).hex()
-    assert subject().decode_pending(tx, LightningConfig(), MULTISEND, SEEN) is None
+    assert (
+        subject().decode_pending(
+            tx, LightningConfig(), MULTISEND, CONDITIONAL_TOKENS, REALITIO_PROXY, SEEN
+        )
+        is None
+    )
 
 
 def test_configured_factory_and_creator_are_required() -> None:
@@ -520,13 +622,20 @@ def test_configured_factory_and_creator_are_required() -> None:
             tx,
             LightningConfig(lightning_creators=[ROWS[1]["creator_safe"]]),
             MULTISEND,
+            CONDITIONAL_TOKENS,
+            REALITIO_PROXY,
             SEEN,
         )
         is None
     )
     assert (
         module.decode_pending(
-            tx, LightningConfig(omen_fpmm_factory="0x" + "11" * 20), MULTISEND, SEEN
+            tx,
+            LightningConfig(omen_fpmm_factory="0x" + "11" * 20),
+            MULTISEND,
+            CONDITIONAL_TOKENS,
+            REALITIO_PROXY,
+            SEEN,
         )
         is None
     )
@@ -566,7 +675,14 @@ def test_integer_fees_and_case_normalization() -> None:
     tx = dict(TRANSACTIONS[0], type=2, maxPriorityFeePerGas=123, maxFeePerGas=456)
     tx["from"] = tx["from"].upper().replace("0X", "0x")
     tx["to"] = tx["to"].upper().replace("0X", "0x")
-    candidate = subject().decode_pending(tx, LightningConfig(), MULTISEND.upper(), SEEN)
+    candidate = subject().decode_pending(
+        tx,
+        LightningConfig(),
+        MULTISEND.upper(),
+        CONDITIONAL_TOKENS,
+        REALITIO_PROXY,
+        SEEN,
+    )
     assert candidate is not None
     assert (candidate.priority_fee, candidate.max_fee) == (123, 456)
 
@@ -574,7 +690,9 @@ def test_integer_fees_and_case_normalization() -> None:
 def test_create2_uses_every_constructor_input() -> None:
     """Keep the source formula sensitive to constructor data and caller."""
     module = subject()
-    call = module.decode_calls(TRANSACTIONS[0], MULTISEND, FACTORY)
+    call = module.decode_calls(
+        TRANSACTIONS[0], MULTISEND, FACTORY, CONDITIONAL_TOKENS, REALITIO_PROXY
+    )
     original = module.predict_market(call, FACTORY)
     for change in [
         dict(creator=ROWS[1]["creator_safe"]),
