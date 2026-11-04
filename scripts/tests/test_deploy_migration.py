@@ -2418,7 +2418,15 @@ def test_rollback_without_provenance_keeps_non_lane_settings(tmp_path):
     expected_env = {
         key: value
         for key, value in template["env_variables"].items()
-        if key not in ("LIGHTNING_LANE", "LIGHTNING_RPC_URL")
+        if key
+        not in (
+            "LIGHTNING_LANE",
+            "LIGHTNING_RPC_URL",
+            "LIGHTNING_MEMPOOL",
+            "LIGHTNING_WSS_URL",
+            "LIGHTNING_MEMPOOL_DELAY_MS",
+            "LIGHTNING_MEMPOOL_MAX_PRIO_GWEI",
+        )
     }
     assert actual["env_variables"] == expected_env
     for path in paths[1:]:

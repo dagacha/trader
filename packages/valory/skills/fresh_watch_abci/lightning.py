@@ -56,9 +56,19 @@ class LightningConfig:
     lightning_lane_inflight_timeout_s: int = 60
     # -1 selects MAX_TRADES when FastParams loads the deployment controls.
     lightning_lane_max_per_night: int = 3
+    lightning_mempool: bool = False
+    lightning_wss_url: str = field(default="", repr=False)
+    lightning_mempool_delay_ms: int = 150
+    lightning_mempool_max_prio_gwei: float = 2.0
 
     def __post_init__(self) -> None:
         """Reject controls that cannot give a bounded probability or budget."""
+        if not (
+            self.lightning_mempool_delay_ms >= 0
+            and math.isfinite(self.lightning_mempool_max_prio_gwei)
+            and self.lightning_mempool_max_prio_gwei >= 0
+        ):
+            raise ValueError("Mempool delay and fee controls are invalid.")
         if not (
             math.isfinite(self.lightning_lane_tip_gwei)
             and math.isfinite(self.lightning_lane_tip_cap_gwei)

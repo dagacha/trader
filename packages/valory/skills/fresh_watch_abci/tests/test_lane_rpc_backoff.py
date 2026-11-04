@@ -28,6 +28,7 @@ from packages.valory.skills.fresh_watch_abci.strategy import FreshQueue
 from packages.valory.skills.fresh_watch_abci.tests.test_lane_behaviour import (
     MARKET,
     MODULE,
+    buy_logs,
     lane,
     reply_on_send,
     run,
@@ -76,7 +77,7 @@ def test_pending_lane_waits_for_rpc_pause_before_recovery(tmp_path: Any) -> None
 
     responses = iter(
         [
-            {"status": "0x1", "blockNumber": "0x2", "logs": []},
+            {"status": "0x1", "blockNumber": "0x2", "logs": buy_logs()},
             {"number": "0x2", "timestamp": hex(1064)},
         ]
     )
@@ -174,7 +175,7 @@ def test_saved_terminal_receipt_completes_during_rpc_pause(tmp_path: Any) -> Non
     behaviour = pending_lane(tmp_path)
     info = behaviour.context.shared_state["lightning_lane_inflight"]
     info.update(
-        receipt={"status": "0x1", "blockNumber": "0x2", "logs": []},
+        receipt={"status": "0x1", "blockNumber": "0x2", "logs": buy_logs()},
         receipt_block={"number": "0x2", "timestamp": hex(1005)},
     )
     behaviour._build_http_request_message.reset_mock()

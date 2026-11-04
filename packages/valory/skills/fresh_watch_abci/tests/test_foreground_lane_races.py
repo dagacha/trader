@@ -47,6 +47,8 @@ from packages.valory.skills.fresh_watch_abci.tests.test_behaviours import (
 )
 from packages.valory.skills.fresh_watch_abci.tests.test_lane_behaviour import (
     MARKET,
+    SAFE,
+    buy_logs,
     lane,
     settled,
 )
@@ -101,6 +103,7 @@ def test_selection_does_not_restore_lane_purchase_during_quote(
         patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
         patch("time.time", return_value=200000) as clock,
     ):
+        sd.return_value.safe_contract_address = SAFE
         sd.return_value.previous_checkpoint = None
         sd.return_value.successful_trade_count = 0
         generator = b.select()
@@ -115,7 +118,11 @@ def test_selection_does_not_restore_lane_purchase_during_quote(
             amount=4 * 10**18,
             probability=0.95,
         )
-        lane_writer._complete(info, {"status": "0x1"}, {"timestamp": hex(200001)})
+        lane_writer._complete(
+            info,
+            {"status": "0x1", "logs": buy_logs(row["id"])},
+            {"timestamp": hex(200001)},
+        )
         assert FreshQueue(queue.path).asked == {}
         lane_writer.read_bets()
         assert lane_writer.bets[0].has_investments
@@ -266,6 +273,7 @@ def test_placement_rechecks_durable_trade_cap_after_guard(tmp_path: Any) -> None
     ):
         sd.return_value.sampled_bet_index = 0
         sd.return_value.successful_trade_count = 0
+        sd.return_value.safe_contract_address = SAFE
         sd.return_value.previous_checkpoint = None
         generator = b.async_act()
         assert next(generator) is None
@@ -314,10 +322,13 @@ def test_flag_off_restored_purchase_blocks_second_buy_after_guard(
     ):
         sd.return_value.sampled_bet_index = 0
         sd.return_value.successful_trade_count = 0
+        sd.return_value.safe_contract_address = SAFE
         sd.return_value.previous_checkpoint = None
         generator = b.async_act()
         assert next(generator) is None
-        writer._complete(info, {"status": "0x1"}, {"timestamp": hex(1005)})
+        writer._complete(
+            info, {"status": "0x1", "logs": buy_logs(MARKET)}, {"timestamp": hex(1005)}
+        )
         assert b.durable_trade_count() == 1
         assert b.durable_trade_count() < b.params.max_trades
         run(generator)

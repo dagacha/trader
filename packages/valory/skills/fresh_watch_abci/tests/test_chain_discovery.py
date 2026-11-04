@@ -974,3 +974,21 @@ def test_chain_title_is_unescaped_before_queueing_and_classification(
     assert (
         still_hold_rule(expected_title, rows[0]["creator"], LightningConfig()) == rule
     )
+
+
+def test_subgraph_lookup_deadline_discards_late_response(ledger_harness: Any) -> None:
+    """Keep the existing title timeout bounded when no response arrives."""
+    harness = ledger_harness
+    harness._build_http_request_message = MagicMock(
+        return_value=(MagicMock(), MagicMock())
+    )
+    harness.context.omen_subgraph = SimpleNamespace(get_spec=lambda: {})
+    harness.sleep = MagicMock(side_effect=lambda seconds: done(None))
+    with (
+        patch("time.monotonic", side_effect=[0.0, 5.0]),
+        pytest.raises(ChainRPCError, match="Market title response timed out"),
+    ):
+        run(ChainDiscoveryMixin._chain_subgraph_market(harness, "0x" + "12" * 20))
+    callback = harness.context.requests.request_id_to_callback.pop("nonce")
+    assert callback(object(), harness) is None
+    assert harness.context.requests.request_id_to_callback == {}

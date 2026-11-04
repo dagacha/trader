@@ -45,6 +45,25 @@ MARKET = "0x" + "56" * 20
 TOKEN = "0x" + "78" * 20
 
 
+def buy_logs(market: str = MARKET) -> list:
+    """Return the Safe's real FPMMBuy event for a successful shot."""
+    return [
+        dict(
+            address=market,
+            topics=[
+                "0x"
+                + keccak(text="FPMMBuy(address,uint256,uint256,uint256,uint256)").hex(),
+                "0x" + SAFE[2:].rjust(64, "0"),
+                "0x" + "00" * 32,
+            ],
+            data="0x"
+            + encode(
+                ["uint256", "uint256", "uint256"], [4 * 10**18, 0, 6 * 10**18]
+            ).hex(),
+        )
+    ]
+
+
 def lane(tmp_path: Any, **changes: Any) -> Any:
     """Use real storage and replace only external I/O."""
     from packages.valory.skills.fresh_watch_abci.lane_behaviour import (
@@ -73,6 +92,7 @@ def lane(tmp_path: Any, **changes: Any) -> Any:
 
     b = make(construct, tmp_path)
     b.context.params.lightning = SimpleNamespace(**settings)
+    b.context.state.synchronized_data.db.get_strict.return_value = SAFE
     b.context.agent_address = OWNER
     b.context.default_ledger_id = "ethereum"
     b.context.state.chatui_config.trading_strategy = "kelly_criterion"
@@ -144,7 +164,7 @@ def test_x402_restart_reconciles_outstanding_journal(
     """Complete an outstanding shot before the x402 new-shot guard."""
     b = lane(tmp_path)
     info = settled(b, tmp_path)
-    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": buy_logs()}
     block = {"timestamp": hex(1005), "number": "0x2"}
     if saved_receipt:
         info.update(receipt=receipt, receipt_block=block)
@@ -294,7 +314,7 @@ def test_recovery_without_private_url_uses_ledger_request_path(
 
     b = lane(tmp_path)
     info = settled(b, tmp_path)
-    receipt = {"status": 1, "blockNumber": 2, "logs": []}
+    receipt = {"status": 1, "blockNumber": 2, "logs": buy_logs()}
     block = {"timestamp": 1005, "number": 2}
     if saved_receipt:
         info["receipt"] = receipt
@@ -408,7 +428,7 @@ def test_foreground_guard_without_private_url_uses_ledger_request_path(
     b = lane(tmp_path, lightning_lane=False, lightning_rpc_url="")
     info = settled(b, tmp_path)
     b.context.shared_state["lightning_lane_inflight"] = info
-    receipt = {"status": 1, "blockNumber": "0x2", "logs": []}
+    receipt = {"status": 1, "blockNumber": "0x2", "logs": buy_logs()}
     results = iter([8, receipt, {"timestamp": 1005, "number": 2}])
 
     def response() -> Any:
@@ -740,7 +760,7 @@ def test_mined_receipt_updates_all_bet_bookkeeping_once(tmp_path: Any) -> None:
         "transactionIndex": "0x0",
         "gasUsed": "0x3a980",
         "effectiveGasPrice": hex(550 * 10**9),
-        "logs": [],
+        "logs": buy_logs(),
     }
     with (
         patch(MODULE + ".time.time", return_value=1005),
@@ -869,7 +889,7 @@ def test_receipt_retry_after_bet_store_does_not_repeat_investment(
         "status": "0x1",
         "gasUsed": "0x1",
         "effectiveGasPrice": "0x1",
-        "logs": [],
+        "logs": buy_logs(),
     }
     with (
         patch(MODULE + ".record_trade", side_effect=OSError("disk unavailable")),
@@ -904,7 +924,7 @@ def test_disabled_restart_reconciles_broadcast_without_new_shots(tmp_path: Any) 
     restarted._market = MagicMock(side_effect=AssertionError("new shot"))
     restarted._refresh_idle = MagicMock(side_effect=AssertionError("idle RPC"))
     restarted._rpc = MagicMock(return_value=done(None))
-    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": buy_logs()}
     block = {"timestamp": hex(1005), "number": "0x2"}
     with patch(MODULE + ".time.time", return_value=1005):
         run(restarted.async_act())
@@ -929,7 +949,7 @@ def test_restart_recovers_before_send_admission(
     """Recover pending and saved receipts with new-shot admission disabled."""
     b = lane(tmp_path)
     info = settled(b, tmp_path)
-    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": buy_logs()}
     block = {"timestamp": hex(1005), "number": "0x2"}
     if saved_receipt:
         info.update(receipt=receipt, receipt_block=block)
@@ -1063,6 +1083,7 @@ def test_creation_receipt_reaches_signed_send_in_one_tick(
         patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
         patch(MODULE + ".time.time", return_value=created + 0.4),
     ):
+        sd.return_value.safe_contract_address = SAFE
         sd.return_value.safe_contract_address = SAFE
         sd.return_value.previous_checkpoint = None
         sd.return_value.successful_trade_count = 0
@@ -1285,7 +1306,7 @@ def test_consumed_nonce_rechecks_originating_receipt(tmp_path: Any) -> None:
     b = lane(tmp_path)
     info = settled(b, tmp_path)
     b.context.shared_state["lightning_lane_inflight"] = info
-    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": buy_logs()}
     b._rpc = MagicMock(side_effect=[done(None), done("0x8"), done(receipt)])
     b._complete = MagicMock()
     block = {"timestamp": hex(1060), "number": "0x2"}
@@ -1417,7 +1438,7 @@ def test_nonce_error_reconciles_the_originating_shot(
         )
     callback(response, None)
     assert b.context.shared_state.get("lightning_lane_inflight") is info
-    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": buy_logs()}
     b._rpc = MagicMock(
         side_effect=[done(receipt), done({"timestamp": "0x3ed", "number": "0x2"})]
     )
@@ -1489,7 +1510,7 @@ def test_lane_completion_merges_fresh_bets_at_the_store(tmp_path: Any) -> None:
         writer.store_bets()
 
     b._update_bet_strategy = update_strategy
-    b._complete(info, {"status": "0x1", "logs": []}, {"timestamp": hex(1005)})
+    b._complete(info, {"status": "0x1", "logs": buy_logs()}, {"timestamp": hex(1005)})
     b.read_bets()
     by_id = {bet.id: bet for bet in b.bets}
     assert set(by_id) == {MARKET, "another-market"}
@@ -1539,7 +1560,7 @@ def test_completion_persistence_retries_on_next_tick(
     b._poller.request.return_value = None
     b._poller.next_at = 1006
     b._refresh_idle = MagicMock(return_value=done(None))
-    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": buy_logs()}
     block = {"timestamp": hex(1005), "number": "0x2"}
     b._rpc = MagicMock(side_effect=[done(receipt), done(block)])
     original_count = b.record_successful_placement
@@ -1589,7 +1610,7 @@ def test_bets_permission_error_retains_receipt_until_stored(tmp_path: Any) -> No
 
     b = lane(tmp_path)
     info = settled(b, tmp_path)
-    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": buy_logs()}
     block = {"timestamp": hex(1005), "number": "0x2"}
     info.update(receipt=receipt, receipt_block=block)
     b.context.shared_state["lightning_lane_inflight"] = info
@@ -1638,7 +1659,7 @@ def test_interrupted_bets_write_preserves_all_older_positions(tmp_path: Any) -> 
     b.store_bets()
     original_bets = (tmp_path / "multi_bets.json").read_bytes()
     info = settled(b, tmp_path)
-    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": buy_logs()}
     block = {"timestamp": hex(1005), "number": "0x2"}
     info.update(receipt=receipt, receipt_block=block)
     b.context.shared_state["lightning_lane_inflight"] = info

@@ -513,3 +513,57 @@ def test_pool_balance_call_retries_non_residue() -> None:
         18836107302434001775683108182129277647488155787062377388152193028635158947911,
         100368091131051703796743362756066818936532217385031010946847646001836210833633,
     )
+
+
+@pytest.mark.parametrize("priority,maximum", [(10**9, 2000000007), (0, 1)])
+def test_mempool_transaction_copies_both_creator_fees(
+    priority: int, maximum: int
+) -> None:
+    """Keep both creator fees unchanged and retain the EOA gas guard."""
+    from packages.valory.skills.fresh_watch_abci.lane import mempool_transaction
+
+    tx = mempool_transaction(
+        "0x" + "11" * 20,
+        "0x" + "22" * 20,
+        b"abc",
+        9,
+        400000,
+        priority,
+        maximum,
+        10**18,
+        2,
+    )
+    assert tx["maxPriorityFeePerGas"] == priority
+    assert tx["maxFeePerGas"] == maximum
+    assert tx["nonce"] == 9
+    assert tx["type"] == 2
+    assert tx["data"] == "0x616263"
+
+
+@pytest.mark.parametrize(
+    "priority,maximum,balance,reason",
+    [
+        (2000000001, 3000000000, 10**18, "cap"),
+        (10**9, 2 * 10**9, 1, "gas"),
+        (-1, 2 * 10**9, 10**18, "fee"),
+        (10**9, 1, 10**18, "fee"),
+    ],
+)
+def test_mempool_transaction_refuses_expensive_or_unfunded_shots(
+    priority: int, maximum: int, balance: int, reason: str
+) -> None:
+    """Reject unsafe fees and require the same three-shot gas reserve."""
+    from packages.valory.skills.fresh_watch_abci.lane import mempool_transaction
+
+    with pytest.raises(ValueError, match=reason):
+        mempool_transaction(
+            "0x" + "11" * 20,
+            "0x" + "22" * 20,
+            b"",
+            9,
+            400000,
+            priority,
+            maximum,
+            balance,
+            2,
+        )

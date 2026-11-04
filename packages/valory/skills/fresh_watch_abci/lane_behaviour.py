@@ -55,10 +55,12 @@ from packages.valory.skills.fresh_watch_abci.lane import (
     funding_balances,
     intrinsic_gas,
     lane_decision,
+    mempool_transaction,
     number,
     pool_balances_call,
 )
 from packages.valory.skills.fresh_watch_abci.lightning import BaseRateCache
+from packages.valory.skills.fresh_watch_abci.mempool_ws import MempoolSource
 from packages.valory.skills.fresh_watch_abci.preview import preview_night
 from packages.valory.skills.fresh_watch_abci.rpc import request_with_timeout
 from packages.valory.skills.fresh_watch_abci.strategy import FreshQueue
@@ -99,6 +101,13 @@ class LightningLaneBehaviour(FreshMarketPoller):
         self._journal_ok = True
         self._saved_state = ""
         self._rebroadcast_tx: Optional[str] = None
+        self._unsent_recovery_tx: Optional[str] = None
+        self._mempool: Optional[MempoolSource] = None
+        self._mempool_off_logged = False
+        self._pending_seen: set[str] = set()
+        self._creation_seen: Dict[str, Dict[str, Any]] = {}
+        self._last_head: Dict[str, Any] = {}
+        self._draining_mempool = False
         if (self.params.store_path / "lightning_lane_state.json").exists():
             self._load_journal()
 
@@ -110,6 +119,9 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 (self.params.store_path / "lightning_lane_state.json").read_text()
             )
             self._night, self._shots = saved["night"], saved["shots"]
+            shared["lightning_mempool_sent_markets"] = set(
+                saved.get("mempool_sent", [])
+            )
             shared.pop("lightning_lane_inflight", None)
             if saved.get("inflight"):
                 if saved["inflight"].get("tx") is None:
@@ -119,6 +131,12 @@ class LightningLaneBehaviour(FreshMarketPoller):
                     shared["lightning_lane_inflight"] = saved["inflight"]
                     if saved["inflight"].get("signed_transaction"):
                         self._rebroadcast_tx = saved["inflight"]["tx"]
+                        if saved["inflight"].get(
+                            "source"
+                        ) == "mempool" and time.time() < saved["inflight"].get(
+                            "send_after", 0
+                        ):
+                            self._unsent_recovery_tx = self._rebroadcast_tx
             self._journal_ok = True
         except (OSError, ValueError, KeyError, TypeError):
             self._journal_ok = False
@@ -130,6 +148,9 @@ class LightningLaneBehaviour(FreshMarketPoller):
             night=self._night,
             shots=self._shots,
             inflight=self.context.shared_state.get("lightning_lane_inflight"),
+            mempool_sent=sorted(
+                self.context.shared_state.get("lightning_mempool_sent_markets", set())
+            ),
         )
         serialized = json.dumps(state, sort_keys=True)
         if serialized != self._saved_state:
@@ -137,6 +158,142 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 self.params.store_path / "lightning_lane_state.json", state
             )
             self._saved_state = serialized
+
+    def sleep(self, seconds: float) -> Generator[None, None, None]:
+        """Use short scheduler waits while the pending source is active.
+
+        :param seconds: requested wait in seconds.
+        :yield: short scheduler waits and pending signing work.
+        """
+        if self._mempool is None:
+            yield from super().sleep(seconds)
+            return
+        yield from super().sleep(min(seconds, 0.05))
+        if not self._draining_mempool and not self.context.shared_state.get(
+            "lightning_lane_inflight"
+        ):
+            self._draining_mempool = True
+            try:
+                yield from self._drain_mempool(time.time())
+            finally:
+                self._draining_mempool = False
+
+    def clean_up(self) -> None:
+        """Close the private source when the behaviour is removed."""
+        if self._mempool is not None:
+            self._mempool.stop()
+            self._mempool = None
+        super().clean_up()
+
+    def stop(self) -> None:
+        """Close the source when the parent behaviour stops."""
+        self.clean_up()
+        super().stop()
+
+    def _take_head(self) -> None:
+        """Read the newest queued head without waiting for the source."""
+        if self._mempool is not None:
+            head = self._mempool.take_head()
+            if head is not None:
+                self._last_head = dict(head, _seen_at=head.get("_seen_at", time.time()))
+
+    def _pending_cancelled(self, pending: Any) -> bool:
+        """Keep a market available to the poller when its block arrives.
+
+        :param pending: decoded pending creation.
+        :return: whether the pending shot must not be sent.
+        """
+        self._take_head()
+        return (
+            pending.market["id"] in self._creation_seen
+            or self._last_head.get("_seen_at", 0) >= pending.seen_at
+        )
+
+    def _drain_mempool(self, now: float) -> Generator[None, None, None]:
+        """Drain pending work before this tick makes a polling request.
+
+        :param now: local Unix timestamp.
+        :yield: optional signing response and short send delay.
+        """
+        cfg = self.params.lightning
+        enabled = cfg.lightning_mempool and bool(cfg.lightning_wss_url)
+        if (
+            cfg.lightning_mempool
+            and not cfg.lightning_wss_url
+            and not self._mempool_off_logged
+        ):
+            self.context.logger.info("[LIGHTNING_MEMPOOL] off reason=missing_wss_url")
+            self._mempool_off_logged = True
+        inside = any(
+            self.params.fast.in_window(now + margin) for margin in (-300, 0, 300)
+        )
+        if not enabled or not inside or not self._enabled():
+            if self._mempool is not None:
+                self._mempool.stop()
+                self._mempool = None
+            return
+        if self._mempool is None:
+            self._mempool = MempoolSource(
+                cfg.lightning_wss_url,
+                cfg,
+                self.params.multisend_address,
+                self.context.logger,
+            )
+            self._mempool.start()
+        self._take_head()
+        candidates = self._mempool.drain()
+        if (
+            not self._checked
+            or not self._safe_ok
+            or not self.params.fast.in_window(now)
+        ):
+            return
+        night = preview_night(now, self.params.fast.active_window_utc)
+        if night != self._night:
+            self._night, self._shots = night, 0
+            self._pending_seen.clear()
+            self._persist()
+        for pending in candidates:
+            market = pending.market
+            market_id = market["id"]
+            if market_id in self._pending_seen:
+                continue
+            self._pending_seen.add(market_id)
+            reason = ""
+            if market_id in self.context.shared_state.get(
+                "lightning_mempool_sent_markets", set()
+            ):
+                continue
+            if self._pending_cancelled(pending):
+                reason = "creation_block_arrived"
+            elif 0 <= cfg.lightning_lane_max_per_night <= self._shots:
+                reason = "night_cap"
+            elif pending.priority_fee > cfg.lightning_mempool_max_prio_gwei * 10**9:
+                reason = "creator_priority_cap"
+            if reason:
+                self.context.logger.info(
+                    "[LIGHTNING_MEMPOOL] market=%s reason=%s", market_id, reason
+                )
+                continue
+            result, bounds, reason = lane_decision(
+                market,
+                [pending.initial_funds] * 2,
+                time.time(),
+                self.params.fast,
+                cfg,
+                BaseRateCache(self.params.store_path / "lightning_base_rate.json"),
+                self.durable_trade_count(),
+                self.params.max_trades,
+                self.params.placement_min_edge,
+            )
+            if reason or result is None or bounds is None:
+                self.context.logger.info(
+                    "[LIGHTNING_MEMPOOL] market=%s reason=%s", market_id, reason
+                )
+                continue
+            yield from self._send(
+                market, result, bounds, {}, pending.seen_at, pending=pending
+            )
 
     def _enabled(self) -> bool:
         """Require all explicit lane controls before any RPC work.
@@ -294,7 +451,18 @@ class LightningLaneBehaviour(FreshMarketPoller):
         if shared.get("lightning_lane_inflight") or not self._round_allowed():
             return
         nonce = shared.get("lightning_lane_eoa_nonce", {})
+        cached_nonce = shared.get("lightning_lane_eoa_nonce")
         settlement = shared.get("lightning_lane_last_fsm_settlement", 0)
+
+        def changed() -> bool:
+            """Discard reads that crossed a shot or an FSM settlement."""
+            return (
+                bool(shared.get("lightning_lane_inflight"))
+                or shared.get("lightning_lane_eoa_nonce") is not cached_nonce
+                or shared.get("lightning_lane_last_fsm_settlement", 0) != settlement
+                or not self._round_allowed()
+            )
+
         if (
             entered
             or now - nonce.get("read_at", 0) >= 30
@@ -303,17 +471,24 @@ class LightningLaneBehaviour(FreshMarketPoller):
             value = yield from self._rpc(
                 "eth_getTransactionCount", [self.context.agent_address, "pending"]
             )
+            if changed():
+                return
             shared["lightning_lane_eoa_nonce"] = {
                 "nonce": number(value),
                 "read_at": time.time(),
             }
+            cached_nonce = shared["lightning_lane_eoa_nonce"]
         if now - self._balance_at < 30 and self._balance_at > settlement:
             return
         safe = self.synchronized_data.safe_contract_address
         eoa = yield from self._rpc(
             "eth_getBalance", [self.context.agent_address, "latest"]
         )
+        if changed():
+            return
         native = yield from self._rpc("eth_getBalance", [safe, "latest"])
+        if changed():
+            return
         wrapped = yield from self._rpc(
             "eth_call",
             [
@@ -328,6 +503,8 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 "latest",
             ],
         )
+        if changed():
+            return
         self._balances = {
             "eoa": number(eoa),
             "native": number(native),
@@ -431,6 +608,7 @@ class LightningLaneBehaviour(FreshMarketPoller):
         bounds: Any,
         block: Dict[str, Any],
         seen: float,
+        pending: Any = None,
     ) -> Generator[None, None, bool]:
         """Sign locally encoded calldata and reserve both nonce domains.
 
@@ -439,12 +617,32 @@ class LightningLaneBehaviour(FreshMarketPoller):
         :param bounds: execution ceiling and minimum tokens.
         :param block: market creation block.
         :param seen: local block detection time.
+        :param pending: optional decoded pending creation with creator fees.
         :yield: decision-maker signing response.
         :return: whether both broadcast requests were issued.
         """
         shared = self.context.shared_state
         cfg = self.params.lightning
         nonce = shared.get("lightning_lane_eoa_nonce", {})
+        if pending is not None:
+            reason = ""
+            if not nonce or nonce.get("read_at", 0) <= shared.get(
+                "lightning_lane_last_fsm_settlement", 0
+            ):
+                reason = "cached_nonce_not_ready"
+            elif set(self._balances) != {
+                "eoa",
+                "native",
+                "wrapped",
+            } or self._balance_at <= shared.get(
+                "lightning_lane_last_fsm_settlement", 0
+            ):
+                reason = "cached_balances_not_ready"
+            if reason:
+                self.context.logger.info(
+                    "[LIGHTNING_MEMPOOL] market=%s reason=%s", market["id"], reason
+                )
+                return False
         if (
             shared.get("lightning_lane_inflight")
             or not self._round_allowed()
@@ -462,7 +660,7 @@ class LightningLaneBehaviour(FreshMarketPoller):
             > cfg.lightning_lane_max_age_s
         ):
             return False
-        if cfg.lightning_lane_gas_limit > number(block["gasLimit"]):
+        if pending is None and cfg.lightning_lane_gas_limit > number(block["gasLimit"]):
             self.context.logger.info(
                 "[LIGHTNING_LANE] market=%s reason=gas_limit_above_block",
                 market["id"],
@@ -486,17 +684,30 @@ class LightningLaneBehaviour(FreshMarketPoller):
                     market["id"],
                 )
                 return False
-            tx = fixed_transaction(
-                self.context.agent_address,
-                self.synchronized_data.safe_contract_address,
-                data,
-                nonce["nonce"],
-                number(block.get("baseFeePerGas", 0)),
-                cfg.lightning_lane_gas_limit,
-                cfg.lightning_lane_tip_gwei,
-                self._balances["eoa"],
-                cfg.lightning_lane_tip_cap_gwei,
-            )
+            if pending is not None:
+                tx = mempool_transaction(
+                    self.context.agent_address,
+                    self.synchronized_data.safe_contract_address,
+                    data,
+                    nonce["nonce"],
+                    cfg.lightning_lane_gas_limit,
+                    pending.priority_fee,
+                    pending.max_fee,
+                    self._balances["eoa"],
+                    cfg.lightning_mempool_max_prio_gwei,
+                )
+            else:
+                tx = fixed_transaction(
+                    self.context.agent_address,
+                    self.synchronized_data.safe_contract_address,
+                    data,
+                    nonce["nonce"],
+                    number(block.get("baseFeePerGas", 0)),
+                    cfg.lightning_lane_gas_limit,
+                    cfg.lightning_lane_tip_gwei,
+                    self._balances["eoa"],
+                    cfg.lightning_lane_tip_cap_gwei,
+                )
         except (KeyError, ValueError):
             self.context.logger.info(
                 "[LIGHTNING_LANE] market=%s reason=insufficient_funds_or_tip",
@@ -512,6 +723,13 @@ class LightningLaneBehaviour(FreshMarketPoller):
             amount=amount,
             probability=decision.p_hat,
         )
+        if pending is not None:
+            info.update(
+                source="mempool",
+                creation_tx=pending.creation_tx,
+                first_seen=pending.seen_at,
+                send_after=pending.seen_at + cfg.lightning_mempool_delay_ms / 1000,
+            )
         shared["lightning_lane_inflight"] = info
         try:
             self._persist()
@@ -558,17 +776,69 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 return False
             info["sent_at"] = time.time()
             self._shots += 1
+            if pending is not None:
+                shared.setdefault("lightning_mempool_sent_markets", set()).add(
+                    market["id"]
+                )
             try:
                 self._persist()
             except OSError:
                 shared.pop("lightning_lane_inflight", None)
                 self._shots -= 1
+                if pending is not None:
+                    shared["lightning_mempool_sent_markets"].discard(market["id"])
                 raise
+            if pending is not None:
+                due = info["send_after"]
+                while True:
+                    now = time.time()
+                    cancelled = self._pending_cancelled(pending)
+                    expired = (
+                        now - number(market["creationTimestamp"])
+                        > cfg.lightning_lane_max_age_s
+                        or not self.params.fast.in_window(now)
+                        or number(market["openingTimestamp"]) <= now
+                    )
+                    if cancelled or expired:
+                        shared.pop("lightning_lane_inflight", None)
+                        shared["lightning_mempool_sent_markets"].discard(market["id"])
+                        self._shots -= 1
+                        self._persist()
+                        self.context.logger.info(
+                            "[LIGHTNING_MEMPOOL] market=%s reason=%s",
+                            market["id"],
+                            (
+                                "creation_block_arrived"
+                                if cancelled
+                                else "pending_expired"
+                            ),
+                        )
+                        return False
+                    remaining = due - now
+                    if remaining <= 0:
+                        break
+                    yield from self.sleep(min(0.05, remaining))
+                info["sent_at"] = time.time()
             self._broadcast(response, raw)
         except (TimeoutException, ValueError, KeyError, TypeError):
             shared.pop("lightning_lane_inflight", None)
             self._persist()
             return False
+        if pending is not None:
+            self.context.logger.info(
+                "[LIGHTNING_MEMPOOL] market=%s creation_tx=%s seen_s=%.3f sent_ms=%.3f prio_gwei=%s max_fee_gwei=%s stake=%s ceiling=%s min_out=%s tx=%s",
+                market["id"],
+                pending.creation_tx,
+                seen - number(self._last_head["timestamp"]) if self._last_head else 0,
+                (info["sent_at"] - seen) * 1000,
+                pending.priority_fee / 10**9,
+                pending.max_fee / 10**9,
+                decision.stake,
+                bounds[0],
+                bounds[1],
+                info["tx"],
+            )
+            return True
         self.context.logger.info(
             "[LIGHTNING_LANE] market=%s block=%s seen_s=%.3f sent_s=%.3f tip_gwei=%s stake=%s local_price=%s ceiling=%s min_out=%s tx=%s",
             market["id"],
@@ -599,7 +869,13 @@ class LightningLaneBehaviour(FreshMarketPoller):
         gas = number(receipt.get("gasUsed", 0))
         fee = gas * number(receipt.get("effectiveGasPrice", 0)) / 10**18
         age = number(block["timestamp"]) - number(info["row"]["creationTimestamp"])
-        if number(receipt["status"]) == 1:
+        fill = buy_result(
+            receipt.get("logs", []),
+            info["market"],
+            self.synchronized_data.safe_contract_address,
+        )
+        status = number(receipt["status"])
+        if status == 1 and fill is not None:
             key = "omen:" + info["tx"]
             counted = key in self.read_counted_placement_keys()
             if not counted:
@@ -659,9 +935,8 @@ class LightningLaneBehaviour(FreshMarketPoller):
             queue.save()
             shared["fast_activity_status"] = None
             self.context.state.fast_activity_status = None
-            fill = buy_result(receipt.get("logs", []), info["market"]) or {}
             self.context.logger.info(
-                "[LIGHTNING_LANE_RESULT] market=%s tx=%s status=mined index=%s block_age=%s fill_price=%s tokens=%s gas_used=%s fee_xdai=%s",
+                "[LIGHTNING_LANE_RESULT] market=%s tx=%s status=mined index=%s block_age=%s fill_price=%s tokens=%s gas_used=%s fee_xdai=%s source=%s creation_index=%s block_delta=%s",
                 info["market"],
                 info["tx"],
                 number(receipt.get("transactionIndex", 0)),
@@ -670,21 +945,65 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 fill.get("tokens"),
                 gas,
                 fee,
+                info.get("source", "block"),
+                info.get("creation_index", "unknown"),
+                info.get("block_delta", "unknown"),
             )
         else:
             self.context.logger.info(
-                "[LIGHTNING_LANE_RESULT] market=%s tx=%s status=reverted gas_used=%s fee_xdai=%s index=%s block_age=%s",
+                "[LIGHTNING_LANE_RESULT] market=%s tx=%s "
+                f"status={'no_fill' if status == 1 else 'reverted'} "
+                "gas_used=%s fee_xdai=%s index=%s block_age=%s source=%s creation_index=%s block_delta=%s fill_price=None",
                 info["market"],
                 info["tx"],
                 gas,
                 fee,
                 number(receipt.get("transactionIndex", 0)),
                 age,
+                info.get("source", "block"),
+                info.get("creation_index", "unknown"),
+                info.get("block_delta", "unknown"),
             )
         shared.pop("lightning_lane_inflight", None)
         shared.pop("lightning_lane_eoa_nonce", None)
         self._balance_at = 0
         self._persist()
+
+    def _cancel_unsent_recovery(self, info: Dict[str, Any]) -> bool:
+        """Cancel an intent proved unsent when this process loaded its journal.
+
+        :param info: saved signed shot and market metadata.
+        :return: whether the saved intent was cancelled.
+        """
+        if info.get("tx") != self._unsent_recovery_tx:
+            return False
+        self._take_head()
+        now = time.time()
+        cancelled = (
+            info["market"] in self._creation_seen
+            or self._last_head.get("_seen_at", 0) >= info["first_seen"]
+        )
+        row = info["row"]
+        expired = (
+            now - number(row["creationTimestamp"])
+            > self.params.lightning.lightning_lane_max_age_s
+            or not self.params.fast.in_window(now)
+            or number(row["openingTimestamp"]) <= now
+        )
+        if not cancelled and not expired:
+            return False
+        shared = self.context.shared_state
+        shared.pop("lightning_lane_inflight", None)
+        shared.get("lightning_mempool_sent_markets", set()).discard(info["market"])
+        self._shots = max(0, self._shots - 1)
+        self._rebroadcast_tx = self._unsent_recovery_tx = None
+        self._persist()
+        self.context.logger.info(
+            "[LIGHTNING_MEMPOOL] market=%s reason=%s recovery=true",
+            info["market"],
+            "creation_block_arrived" if cancelled else "pending_expired",
+        )
+        return True
 
     def _watch_receipt(self, block: Dict[str, Any]) -> Generator[None, None, None]:
         """Keep a shot locked until its receipt or a confirmed replacement.
@@ -700,6 +1019,19 @@ class LightningLaneBehaviour(FreshMarketPoller):
         recover = (
             self._rebroadcast_tx is not None and info.get("tx") == self._rebroadcast_tx
         )
+        if recover and self._cancel_unsent_recovery(info):
+            return
+        if (
+            recover
+            and info.get("source") == "mempool"
+            and time.time()
+            < info.get(
+                "send_after",
+                info["first_seen"]
+                + self.params.lightning.lightning_mempool_delay_ms / 1000,
+            )
+        ):
+            return
         receipt = info.get("receipt")
         if receipt is None and info.get("tx"):
             receipt = yield from self._rpc("eth_getTransactionReceipt", [info["tx"]])
@@ -715,7 +1047,10 @@ class LightningLaneBehaviour(FreshMarketPoller):
             if shared.get("lightning_lane_inflight") is not info:
                 return
             if recover and number(nonce) == info["eoa_nonce"]:
+                if self._cancel_unsent_recovery(info):
+                    return
                 self._rebroadcast_tx = None
+                self._unsent_recovery_tx = None
                 if (
                     time.time() - number(info["row"]["creationTimestamp"])
                     > self.params.lightning.lightning_lane_max_age_s
@@ -762,6 +1097,30 @@ class LightningLaneBehaviour(FreshMarketPoller):
                     "eth_getBlockByNumber", [receipt["blockNumber"], False]
                 )
             if shared.get("lightning_lane_inflight") is info:
+                if info.get("source") == "mempool" and "creation_block" not in info:
+                    creation = yield from self._rpc(
+                        "eth_getTransactionReceipt", [info["creation_tx"]]
+                    )
+                    if creation and creation.get("blockNumber") is not None:
+                        creation_block = block
+                        if creation["blockNumber"] != receipt.get("blockNumber"):
+                            creation_block = yield from self._rpc(
+                                "eth_getBlockByNumber", [creation["blockNumber"], False]
+                            )
+                        if creation_block:
+                            info["row"]["creationTimestamp"] = number(
+                                creation_block["timestamp"]
+                            )
+                            info["creation_block"] = number(creation["blockNumber"])
+                            info["block_delta"] = (
+                                number(receipt["blockNumber"]) - info["creation_block"]
+                            )
+                            if info["block_delta"] == 0:
+                                info["creation_index"] = number(
+                                    receipt.get("transactionIndex", 0)
+                                ) - number(creation.get("transactionIndex", 0))
+                    if shared.get("lightning_lane_inflight") is not info:
+                        return
                 self._complete(info, receipt, block)
 
     def _market(
@@ -774,9 +1133,12 @@ class LightningLaneBehaviour(FreshMarketPoller):
         :param seen: local block detection time.
         :yield: receipt, optional balance read, and signing I/O.
         """
-        if self.context.shared_state.get("lightning_lane_inflight"):
-            return
         market = creation_details(log)
+        self._creation_seen[market["id"]] = block
+        if self.context.shared_state.get("lightning_lane_inflight") or market[
+            "id"
+        ] in self.context.shared_state.get("lightning_mempool_sent_markets", set()):
+            return
         if market["collateralToken"].lower() != WXDAI.lower():
             return
         if not self._round_allowed():
@@ -855,6 +1217,10 @@ class LightningLaneBehaviour(FreshMarketPoller):
         """Drive one slot-aligned step without a consensus payload."""
         now = time.time()
         cfg = self.params.lightning
+        try:
+            yield from self._drain_mempool(now)
+        except (LaneRPCError, OSError, ValueError, KeyError, TypeError):
+            self.context.logger.warning("[LIGHTNING_MEMPOOL] tick_failed=true")
         if not self._journal_ok:
             self._load_journal()
             if not self._journal_ok:

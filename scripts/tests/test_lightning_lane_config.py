@@ -35,6 +35,10 @@ ROOT = Path(__file__).resolve().parents[2]
 CONTROLS = {
     "lightning_lane": ("bool", False),
     "lightning_rpc_url": ("str", ""),
+    "lightning_mempool": ("bool", False),
+    "lightning_wss_url": ("str", ""),
+    "lightning_mempool_delay_ms": ("int", 150),
+    "lightning_mempool_max_prio_gwei": ("float", 2.0),
     "lightning_poll_offset_s": ("float", 0.3),
     "lightning_poll_step_s": ("float", 0.25),
     "lightning_lane_max_age_s": ("int", 6),
@@ -64,7 +68,7 @@ def test_lane_controls_declared_off(relative):
         if relative.startswith("skills/"):
             assert args[key] == default
         else:
-            encoded = "null" if key == "lightning_rpc_url" else json.dumps(default)
+            encoded = "null" if key.endswith("_url") else json.dumps(default)
             assert args[key] == "${" + key.upper() + ":" + kind + ":" + encoded + "}"
 
 
@@ -78,6 +82,7 @@ def test_lane_quickstart_defaults(name):
         raw = env[key.upper()]["value"]
         assert (raw if isinstance(default, str) else json.loads(raw)) == default
     assert env["LIGHTNING_RPC_URL"]["is_secret"] is True
+    assert env["LIGHTNING_WSS_URL"]["is_secret"] is True
 
 
 def test_lane_params_resolve_empty_endpoint_and_trade_cap(tmp_path):
@@ -141,6 +146,42 @@ def test_lane_migration_records_missing_defaults_and_rollback(tmp_path, existing
     assert not (expected & set(rolled_back))
     assert "LIGHTNING_LANE" not in rolled_back
     assert "LIGHTNING_RPC_URL" not in rolled_back
+
+
+@pytest.mark.parametrize("service", ["omenstrat_fast", "trader_pearl"])
+def test_mempool_rollback_removes_operator_values_without_provenance(tmp_path, service):
+    """Remove all mempool controls from each active config on rollback."""
+    paths = fixture(tmp_path)
+    controls = {
+        "LIGHTNING_MEMPOOL": "true",
+        "LIGHTNING_WSS_URL": "wss://key.invalid/private-mempool-token",
+        "LIGHTNING_MEMPOOL_DELAY_MS": "200",
+        "LIGHTNING_MEMPOOL_MAX_PRIO_GWEI": "1.5",
+    }
+    values = {
+        prefix + key: value
+        for prefix in ("", "SKILL_OMENSTRAT_FAST_ABCI_MODELS_PARAMS_ARGS_")
+        for key, value in controls.items()
+    }
+    for path in paths:
+        config = json.loads(path.read_text())
+        config["env_variables"].update(
+            {key: entry(value) for key, value in values.items()}
+        )
+        path.write_text(json.dumps(config))
+    saved = tmp_path / ".operate/Trader Agent-quickstart-config.json"
+    saved.write_text(json.dumps({"user_provided_args": values}))
+    deployments = []
+    for config in paths[1:]:
+        env = config.parent / "agent_0.env"
+        env.write_text("".join(f"{key}={value}\n" for key, value in values.items()))
+        build = config.parent / "build.yaml"
+        build.write_text(yaml.safe_dump({"environment": values}))
+        deployments.extend((env, build))
+    output = run(tmp_path, "--service", service)
+    assert controls["LIGHTNING_WSS_URL"] not in output
+    for path in (*paths, saved, *deployments):
+        assert all(key not in path.read_text() for key in controls), path
 
 
 @pytest.mark.parametrize("service", ["omenstrat_fast", "trader_pearl"])

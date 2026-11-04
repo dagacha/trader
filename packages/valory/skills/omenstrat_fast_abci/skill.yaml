@@ -36,7 +36,7 @@ skills:
 - valory/chatui_abci:0.1.0:bafybeihj5y6cecuw4iz2gshicoygghrgi5b6rzynnofx25ycsv56ehgdvq
 - valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
 - valory/trader_abci:0.1.0:bafybeifa4ovkakzqqekuuarirk4cdwsmzknuxvq4zwcmzmxf7r6jundrkm
-- valory/fresh_watch_abci:0.1.0:bafybeieqz6gqluvzpgnwdcj7ul7ziw4e56f2dogghsyjzhejjhlhrd4oye
+- valory/fresh_watch_abci:0.1.0:bafybeidn7vghdubyhm7rnfgns5xkwjwbwwxsoaiasqj7de26mqojnv4any
 behaviours:
   main:
     args: {}
@@ -386,6 +386,10 @@ models:
       min_stake: 0.1
       lightning_lane: false
       lightning_rpc_url: ''
+      lightning_mempool: false
+      lightning_wss_url: ''
+      lightning_mempool_delay_ms: 150
+      lightning_mempool_max_prio_gwei: 2.0
       lightning_poll_offset_s: 0.3
       lightning_poll_step_s: 0.25
       lightning_lane_max_age_s: 6

@@ -25,7 +25,8 @@ from fractions import Fraction
 from typing import Any, Dict, List, Optional, Tuple
 
 from eth_abi import decode, encode
-from eth_utils import keccak, to_checksum_address  # type: ignore[import-not-found]
+from eth_utils import keccak  # type: ignore[import-not-found]
+from eth_utils import to_checksum_address
 
 from packages.valory.skills.fresh_watch_abci.chain_discovery import CREATION_TOPIC
 from packages.valory.skills.fresh_watch_abci.lightning import (
@@ -426,6 +427,51 @@ def fixed_transaction(
     )
 
 
+def mempool_transaction(
+    owner: str,
+    safe: str,
+    data: bytes,
+    nonce: int,
+    gas_limit: int,
+    priority_fee: int,
+    max_fee: int,
+    eoa_balance: int,
+    max_prio_gwei: float,
+) -> Dict[str, Any]:
+    """Copy the creator's two fees without a tip increase.
+
+    :param owner: agent EOA.
+    :param safe: agent Safe.
+    :param data: encoded Safe call.
+    :param nonce: cached pending EOA nonce.
+    :param gas_limit: configured gas limit.
+    :param priority_fee: creator priority fee in wei.
+    :param max_fee: creator maximum fee in wei.
+    :param eoa_balance: cached native EOA balance.
+    :param max_prio_gwei: maximum accepted creator priority fee.
+    :return: unsigned type-2 transaction.
+    :raises ValueError: for invalid fees, a high tip, or insufficient gas funds.
+    """
+    if priority_fee < 0 or max_fee < priority_fee or max_fee <= 0:
+        raise ValueError("Invalid creator fee fields")
+    if priority_fee > Fraction(str(max_prio_gwei)) * 10**9:
+        raise ValueError("Creator priority fee exceeds mempool cap")
+    if eoa_balance < 3 * gas_limit * max_fee:
+        raise ValueError("EOA gas balance is below three shots")
+    return dict(
+        type=2,
+        chainId=100,
+        nonce=nonce,
+        gas=gas_limit,
+        maxPriorityFeePerGas=priority_fee,
+        maxFeePerGas=max_fee,
+        to=to_checksum_address(safe),
+        data="0x" + data.hex(),
+        value=0,
+        **{"from": to_checksum_address(owner)},
+    )
+
+
 def funding_balances(logs: List[Dict[str, Any]], market: str) -> Optional[List[int]]:
     """Read initial binary reserves from the creation receipt's funding logs.
 
@@ -451,11 +497,14 @@ def funding_balances(logs: List[Dict[str, Any]], market: str) -> Optional[List[i
     return balances if found and min(balances) > 0 else None
 
 
-def buy_result(logs: List[Dict[str, Any]], market: str) -> Optional[Dict[str, Any]]:
+def buy_result(
+    logs: List[Dict[str, Any]], market: str, buyer: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
     """Decode this market's buy for durable attribution and fill-price logs.
 
     :param logs: lane transaction receipt logs.
     :param market: FPMM address.
+    :param buyer: optional Safe address required for a placed bet.
     :return: buy amounts and indexed buyer/outcome, or None.
     """
     topic = "0x" + keccak(text="FPMMBuy(address,uint256,uint256,uint256,uint256)").hex()
@@ -465,6 +514,7 @@ def buy_result(logs: List[Dict[str, Any]], market: str) -> Optional[Dict[str, An
             log.get("address", "").lower() != market.lower()
             or len(topics) != 3
             or topics[0].lower() != topic
+            or (buyer is not None and topics[1][-40:].lower() != buyer[2:].lower())
         ):
             continue
         amount, fee, tokens = decode(

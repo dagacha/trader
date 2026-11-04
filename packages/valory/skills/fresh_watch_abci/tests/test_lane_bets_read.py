@@ -41,6 +41,7 @@ from packages.valory.skills.fresh_watch_abci.tests.test_lane_behaviour import (
     MARKET,
     MODULE,
     SAFE,
+    buy_logs,
     lane,
     prepared,
     reply_on_send,
@@ -158,7 +159,7 @@ def test_completion_keeps_positions_and_journal_after_bets_read_failure(
     path = Path(b.multi_bets_filepath)
     original_bets = path.read_bytes()
     info = settled(b, tmp_path)
-    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": buy_logs()}
     block = {"timestamp": hex(1005), "number": "0x2"}
     info.update(receipt=receipt, receipt_block=block)
     b.context.shared_state["lightning_lane_inflight"] = info

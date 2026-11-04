@@ -9,38 +9,45 @@ fingerprint:
   README.md: bafybeieurwex74dtimmmndedzrhznyfivsuaf27lteomz4cz23upjtv2pq
   __init__.py: bafybeihyphnywie3dyf7f7mmwm7yvcwekkgsa4mq5273ojuzbjsznvorv4
   behaviours.py: bafybeid4wsqv4bpc3ozzbfxjesxi4fqx3xl4ycw65jyfhdorfhyrjc2rzu
-  chain_discovery.py: bafybeie52tbc3p6homy6bfbws7kw5uxmqxywilxthfozcyffoqchvdeqpq
+  chain_discovery.py: bafybeie5ztb6kj3qhqhhcjhbeiaqxfij5tbduudvjdaspee24pm2y53icq
   dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
   fsm_specification.yaml: bafybeifhpatx5365ubtse2g6kqo6cjeuzoruf75dv5r5xg27n4wtyrtrbm
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
-  lane.py: bafybeihsgjhy6cnbv6e5qw2i2ci2crojshvclae5nk722snovuqfhbjs6e
-  lane_behaviour.py: bafybeick3tlfq4zezbngvetnnhtru34zqbe5xug4zyvs2vwnxgtfyxbrui
-  lightning.py: bafybeihn4cvdjajhnmrroc2svwlqy5e7ketxawnrpwu4o5gwms3gwqahoa
-  models.py: bafybeihe4e4wyusc6u4zlkmy4rurp7djl6w627i3xpo32l4ou47m2ec4q4
+  lane.py: bafybeiba4l463rzy7fshj2rrettrihpwjmhvr2i3kfrengo66nxluombei
+  lane_behaviour.py: bafybeibestc6zesapcqvfl42yipq2ni2itpznpo2eaikeypgzkwemwkxdm
+  lightning.py: bafybeieke7vkxnmxk7mbrgnvbh4m573mifnao3oiawi6byijebnlrnnlnu
+  mempool.py: bafybeibyzwltrujrxjepmf6vfmwok2n2zoie34sl63wa6pkixjfwttsmbi
+  mempool_ws.py: bafybeibfzy3lqx6afzq3da6s4hdsosmrk3fxnkw3c3lmtknmngjqoi3s5i
+  models.py: bafybeie2zx3gctqr36whbuj4ma27auj6kjea2sq5npopvml2qk7tvxddyu
   preview.py: bafybeic6uo6lpsva2dqly5omyzhhw5a7hzyvltz23z47q7lyhmvsjj3l4u
   rounds.py: bafybeigicry3yubpgnirrzyqahfdzllmus3aifpz4qfrvpak7ttkegf4ly
   rpc.py: bafybeia2tleciknj4jimflwqddp7cdcatv3g6sg6abjh5i5jxbkoqa2hgq
   strategy.py: bafybeibxapbr5xpnpuozb4yghys64cec6qqyz7vwnrromvqt3drnhgn2ry
   tests/__init__.py: bafybeiebuokdlpgmmm6orggvfnnm537acc3eogkkrn6jyjaxzqyb7t7yzy
   tests/fixtures/chain_creation.json: bafybeibsvrn4ppzzldhqqy4tziri47oxviicqocyoq7hmcs4hgaom7i5ui
+  tests/fixtures/create2_fixture.json: bafybeidxpyuotw5yc6znucsidj27kio7amk5l5irto4a36sz2ztdvwz2mm
+  tests/fixtures/create2_transactions.json: bafybeihqpadgwnw43grqmnb2muaadzgitrntbfisz3licezaib2nvlu2wu
   tests/fixtures/question_preview.json: bafybeie2ouuxhajfkeln7cgcjm3c3ngus64jtdg5rjz4pix5rcgrpj3hzq
   tests/fixtures/question_preview_metadata.json: bafybeihhtgcztco4xdf5zgeny6ldafa7pnshaeun74zppc4ygvuutyro3i
   tests/test_base_rate_deadlines.py: bafybeicsuzvhmbzhbeliuolk3mr7txrvvowayjr7g2ztj4r37pyel2i2ey
   tests/test_behaviours.py: bafybeiau7lsj75qmrecnb6p2xr36vzhouspfecj3v75unvtznssmm6av34
-  tests/test_chain_discovery.py: bafybeiewzhy5iwuztq32kdqcwjhe2cp4d4kc3uykeiimgjlugfladftt2u
+  tests/test_chain_discovery.py: bafybeig7bjaeu32zokugdhah5momnjsfwah5dyqqvjjdthb62qxbtormga
   tests/test_chain_pool_reads.py: bafybeiav26vusjg3nz7ve3ta43oxwnmvvnnfffaa6rayhuveaqj4suocdm
   tests/test_chain_title_reads.py: bafybeic42v2ivrufxfz364kxc745pzbx3c6sysdcdk766uv2k6vpv75glm
   tests/test_configured_prior.py: bafybeibmk7ilhbdlpprmzgg5muvqu7zdfhszcw25ks4asr7bevssusjpli
   tests/test_event_reader.py: bafybeib6wxe56sudyw4tz3gi5zvv2r3ofqjycwviscadkz2dawk3zieptq
-  tests/test_foreground_lane_races.py: bafybeigbvfol2tz6atvspbpyg666flh2brxkfsh3hrmywu52zsxmlvl5ly
-  tests/test_lane.py: bafybeial5gbqkihffjybsk5tp445whvds62bpzowwshor7sllsaiye4cqi
-  tests/test_lane_behaviour.py: bafybeievrz753vmqq5jrfpoairxko5x75ae467aavunzcxzscoq6ddktde
-  tests/test_lane_bets_read.py: bafybeig5iyfttxit7vq7kuvsvu7m5pxilb7pumjqiepgxwjnrsri44rp7i
-  tests/test_lane_journal_recovery.py: bafybeifkwuhnvqnh6cjxmmeoxthrcl6s3a3auej3mp6oiuxkbybhnol2ai
+  tests/test_foreground_lane_races.py: bafybeihis2avomce6ydsvwtdbca3mnwlvyhoex6lf56qm63jszmzunx4py
+  tests/test_lane.py: bafybeiddniacnr2dolrwq2lymllhnwvmiu6ykpro5yfagnwqitz6yvs4fm
+  tests/test_lane_behaviour.py: bafybeic5cursigzptet5ezkgwowojs3w5pobqj7vuv6x3lossowbovwo4e
+  tests/test_lane_bets_read.py: bafybeicf3igfhgcyeejmcy7pljlvt2avao2cdyjenlbuhjjao6yb4gu4ey
+  tests/test_lane_journal_recovery.py: bafybeif7vk23ocyvnet6lc6sjqi53gmbu5ksqquilpmqrm7ngjekc2ttfu
   tests/test_lane_limits.py: bafybeidjfi55egsiolcea6b2a4mdbmw5o6ntq3zfzgvfufsc6mdk5qsbta
-  tests/test_lane_rpc_backoff.py: bafybeig7qnjqomaoeymsos73ehwkhnrdyio76zdmwmf2dlfmhyg573e5ve
+  tests/test_lane_mempool.py: bafybeif4ym775ehwa2moke244ttci2wqj3ppiyodsms5xvpxwiaxmdp7ha
+  tests/test_lane_rpc_backoff.py: bafybeiduxmsvnwlksdwble5qrmxdfzvc34c7iaktfsydak4eyewxj663wm
   tests/test_lane_slot_resync.py: bafybeiea3vts2akhaz2qe47f3ihz6cju4npbegymtjhmexxju7zqds5d3i
-  tests/test_lightning.py: bafybeien77nbglafv7qtdxw2iemq33v53xs4k7ul7x4xzwsxeivcgbnz7y
+  tests/test_lightning.py: bafybeice4q4keo7etxajqklftozs5q3hox3sglnpsg6xkqyu6zp7pbt6fq
+  tests/test_mempool.py: bafybeififdy62ws4xrpvwyf6hjhzm7473u3yijcodzg7j5rodk6twxaqwe
+  tests/test_mempool_ws.py: bafybeigax7vldkew3br2ac7x6benkbp2qgotivqizen3jnbvze2nwpp3yq
   tests/test_models.py: bafybeifdtt2t3ozdvs624brr4jv6qfyxq5zte7mvidxunvcxw7feb65nqq
   tests/test_natural_yes.py: bafybeiexgxhvcuk2ebojr6bbh4odpmnpg7xqwcs7bls2hct37nh3lwmhaa
   tests/test_outcome_order.py: bafybeia3oraxwv6qlj5cdhlyzkab5btq2tb6ahanam2bo2ftsepwlpzis4
@@ -417,6 +424,10 @@ models:
       min_stake: 0.1
       lightning_lane: false
       lightning_rpc_url: ''
+      lightning_mempool: false
+      lightning_wss_url: ''
+      lightning_mempool_delay_ms: 150
+      lightning_mempool_max_prio_gwei: 2.0
       lightning_poll_offset_s: 0.3
       lightning_poll_step_s: 0.25
       lightning_lane_max_age_s: 6

@@ -35,6 +35,7 @@ from packages.valory.protocols.ledger_api import LedgerApiMessage
 from packages.valory.skills.fresh_watch_abci.tests.test_lane_behaviour import (
     MODULE,
     SAFE,
+    buy_logs,
     done,
     lane,
     prepared,
@@ -52,7 +53,7 @@ def test_journal_read_failure_blocks_guard_until_reconciled(
     """Retry journal reads and release Safe preparation after bookkeeping."""
     b = lane(tmp_path)
     info = settled(b, tmp_path)
-    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": buy_logs()}
     block = {"timestamp": hex(1005), "number": "0x2"}
     if saved_receipt:
         info.update(receipt=receipt, receipt_block=block)
@@ -211,7 +212,7 @@ def test_restart_after_signed_journal_write_rebroadcasts_once(
         logs = str(restarted.context.logger.method_calls)
         assert ("status=late" in logs) is (now == 1062)
         assert "private-key" not in logs
-        receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+        receipt = {"status": "0x1", "blockNumber": "0x2", "logs": buy_logs()}
         block = {"number": "0x2", "timestamp": hex(now)}
         restarted._rpc = MagicMock(side_effect=[done(receipt), done(block)])
         run(restarted.async_act())
@@ -236,7 +237,7 @@ def test_restored_raw_shot_checks_receipt_and_confirmed_nonce(
     b._persist()
     restarted = lane(tmp_path, lightning_lane=False)
     restarted._broadcast = MagicMock()
-    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": []}
+    receipt = {"status": "0x1", "blockNumber": "0x2", "logs": buy_logs()}
     block = {"number": "0x2", "timestamp": hex(1062)}
     restarted._rpc = MagicMock(
         side_effect=lambda method, _params: done(
