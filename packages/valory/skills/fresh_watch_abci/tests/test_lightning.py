@@ -305,3 +305,18 @@ def test_base_rate_window_and_clock_must_match(tmp_path: Any) -> None:
     assert cache.usable(1001 + 172800, cfg) == 1
     assert cache.usable(1001 + 172801, cfg) is None
     assert cache.usable(1001, replace(cfg, lightning_base_rate_window_days=20)) is None
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("lightning_mempool_delay_ms", -1),
+        ("lightning_mempool_max_prio_gwei", -1),
+        ("lightning_mempool_max_prio_gwei", float("nan")),
+    ],
+)
+def test_mempool_controls_reject_invalid_bounds(field: str, value: float) -> None:
+    """Reject unbounded delays and invalid fee caps."""
+    overrides: dict[str, Any] = {field: value}
+    with pytest.raises(ValueError, match="Mempool"):
+        LightningConfig(**overrides)

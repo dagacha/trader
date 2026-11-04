@@ -98,6 +98,10 @@ FAST_ENV = (
 LIGHTNING_ENV = (
     "LIGHTNING_LANE",
     "LIGHTNING_RPC_URL",
+    "LIGHTNING_MEMPOOL",
+    "LIGHTNING_WSS_URL",
+    "LIGHTNING_MEMPOOL_DELAY_MS",
+    "LIGHTNING_MEMPOOL_MAX_PRIO_GWEI",
     "LIGHTNING_POLL_OFFSET_S",
     "LIGHTNING_POLL_STEP_S",
     "LIGHTNING_LANE_MAX_AGE_S",
@@ -782,7 +786,16 @@ def rollback_fast_inputs(
 ):
     """Remove recorded fast inputs from quickstart, saved args, and caches."""
     lane_controls = (
-        {"LIGHTNING_LANE", "LIGHTNING_RPC_URL"} if kind == "lightning" else set()
+        {
+            "LIGHTNING_LANE",
+            "LIGHTNING_RPC_URL",
+            "LIGHTNING_MEMPOOL",
+            "LIGHTNING_WSS_URL",
+            "LIGHTNING_MEMPOOL_DELAY_MS",
+            "LIGHTNING_MEMPOOL_MAX_PRIO_GWEI",
+        }
+        if kind == "lightning"
+        else set()
     )
     names = {}
     for key in set(added) | lane_controls:

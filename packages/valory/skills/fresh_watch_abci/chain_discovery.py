@@ -38,6 +38,7 @@ from packages.valory.skills.abstract_round_abci.dialogues import (
     LedgerApiDialogues,
 )
 from packages.valory.skills.fresh_watch_abci.lightning import preview_enabled
+from packages.valory.skills.fresh_watch_abci.mempool import question_metadata
 from packages.valory.skills.fresh_watch_abci.rpc import request_with_timeout
 from packages.valory.skills.fresh_watch_abci.strategy import FreshQueue
 
@@ -141,21 +142,7 @@ def receipt_question(
             ["uint256", "string", "address", "uint32", "uint32", "uint256", "uint256"],
             bytes.fromhex(_hex(log["data"])[2:]),
         )
-        if template_id != 2:
-            return {}
-        parts = question.replace("\x1f", "␟").split("␟")
-        if len(parts) < 2:
-            return None
-        outcomes = json.loads("[" + parts[1] + "]")
-        if outcomes != ["Yes", "No"]:
-            return {}
-        return dict(
-            title=json.loads('"' + parts[0] + '"'),
-            openingTimestamp=opening,
-            outcomes=outcomes,
-            outcomeSlotCount=2,
-            question={"templateId": template_id},
-        )
+        return question_metadata(template_id, question, opening)
     return None
 
 

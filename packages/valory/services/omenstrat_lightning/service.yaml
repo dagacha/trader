@@ -5,9 +5,9 @@ description: A single-agent Omen service using base rates, chain events, and pre
 aea_version: '>=2.0.0, <3.0.0'
 license: Apache-2.0
 fingerprint:
-  README.md: bafybeif6umpcq5ktt2qowahif5dn7xboyfox6myzfy7shz6j5eg65y2j5a
+  README.md: bafybeigjc3dag42aewxq5qo5ntiqveuimxdu2thpgj6b7t7md76i6s4bum
 fingerprint_ignore_patterns: []
-agent: valory/omenstrat_lightning:0.1.0:bafybeihc6khbcdu3v7ywebuv5oaej54g6mjypoio274bv2v2pqg7ygwhau
+agent: valory/omenstrat_lightning:0.1.0:bafybeifv53ds7t2efuxmmxwyb4m64dk5bo4thjysll4gzonjoshurevepu
 number_of_agents: 1
 deployment:
   agent:
@@ -212,6 +212,10 @@ models:
       min_stake: ${MIN_STAKE:float:0.1}
       lightning_lane: ${LIGHTNING_LANE:bool:false}
       lightning_rpc_url: ${LIGHTNING_RPC_URL:str:null}
+      lightning_mempool: ${LIGHTNING_MEMPOOL:bool:false}
+      lightning_wss_url: ${LIGHTNING_WSS_URL:str:null}
+      lightning_mempool_delay_ms: ${LIGHTNING_MEMPOOL_DELAY_MS:int:150}
+      lightning_mempool_max_prio_gwei: ${LIGHTNING_MEMPOOL_MAX_PRIO_GWEI:float:2.0}
       lightning_poll_offset_s: ${LIGHTNING_POLL_OFFSET_S:float:0.3}
       lightning_poll_step_s: ${LIGHTNING_POLL_STEP_S:float:0.25}
       lightning_lane_max_age_s: ${LIGHTNING_LANE_MAX_AGE_S:int:6}

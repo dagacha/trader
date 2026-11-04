@@ -8,7 +8,7 @@ license: Apache-2.0
 fingerprint:
   README.md: bafybeihs5ilytm4mdzawnnklhtf4xrhvztcdcat6j3eq4jl7mphoqb6zdu
 fingerprint_ignore_patterns: []
-agent: valory/omenstrat_fast:0.1.0:bafybeidbxtj4cpscl73dblgnu6tneirngsgi4qnh2hngygdvu6nr7uwp2m
+agent: valory/omenstrat_fast:0.1.0:bafybeif7q3vyc5sv4fogrf2mtsjp3oveni6zoezkecguygykivxleev3ke
 number_of_agents: 1
 deployment:
   agent:
@@ -213,6 +213,10 @@ models:
       min_stake: ${MIN_STAKE:float:0.1}
       lightning_lane: ${LIGHTNING_LANE:bool:false}
       lightning_rpc_url: ${LIGHTNING_RPC_URL:str:null}
+      lightning_mempool: ${LIGHTNING_MEMPOOL:bool:false}
+      lightning_wss_url: ${LIGHTNING_WSS_URL:str:null}
+      lightning_mempool_delay_ms: ${LIGHTNING_MEMPOOL_DELAY_MS:int:150}
+      lightning_mempool_max_prio_gwei: ${LIGHTNING_MEMPOOL_MAX_PRIO_GWEI:float:2.0}
       lightning_poll_offset_s: ${LIGHTNING_POLL_OFFSET_S:float:0.3}
       lightning_poll_step_s: ${LIGHTNING_POLL_STEP_S:float:0.25}
       lightning_lane_max_age_s: ${LIGHTNING_LANE_MAX_AGE_S:int:6}

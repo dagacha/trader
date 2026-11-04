@@ -35,6 +35,7 @@ def request_with_timeout(
     dialogue: Dialogue,
     timeout: float,
     send: Optional[Callable[[Message], None]] = None,
+    poll_interval: float = 0.2,
 ) -> Generator[None, None, Any]:
     """Poll on scheduler ticks and retain a discard callback after expiry.
 
@@ -43,6 +44,7 @@ def request_with_timeout(
     :param dialogue: request dialogue.
     :param timeout: maximum response wait in seconds.
     :param send: optional sender for a decision-maker request.
+    :param poll_interval: seconds between response checks.
     :yield: control during short local sleeps.
     :return: response received by the request callback.
     :raises TimeoutException: when the response deadline expires.
@@ -69,6 +71,6 @@ def request_with_timeout(
             if nonce in callbacks:
                 callbacks[nonce] = lambda _response, _behaviour: None
             raise TimeoutException()
-        yield from behaviour.sleep(0.2)
+        yield from behaviour.sleep(poll_interval)
     callbacks.pop(nonce, None)
     return responses[0]

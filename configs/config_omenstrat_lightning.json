@@ -1,6 +1,6 @@
 {
     "name": "omenstrat_lightning",
-    "hash": "bafybeiflsvp5kk5ehuetk5cijckovbickhuip62d7ohnnzu5xgmw6iuwgm",
+    "hash": "bafybeiddec75rowm3sx4kplclgv2se32wxkb2bmpwwiujani6c32h5a5uu",
     "description": "Omen agent with still-hold base rates, chain discovery, and question previews.",
     "image": "https://operate.olas.network/_next/image?url=%2Fimages%2Fprediction-agent.png&w=3840&q=75",
     "service_version": "main",
@@ -525,6 +525,31 @@
             "name": "Lightning lane max per night",
             "description": "Limit lane shots per night, including reverts. Minus one uses MAX_TRADES.",
             "value": "-1",
+            "provision_type": "user"
+        },
+        "LIGHTNING_MEMPOOL": {
+            "name": "Lightning mempool",
+            "description": "Enable pending creation detection for the lane.",
+            "value": "false",
+            "provision_type": "user"
+        },
+        "LIGHTNING_WSS_URL": {
+            "name": "Lightning websocket URL",
+            "description": "Set the private websocket endpoint. Keep its key secret.",
+            "value": "",
+            "provision_type": "user",
+            "is_secret": true
+        },
+        "LIGHTNING_MEMPOOL_DELAY_MS": {
+            "name": "Lightning mempool delay ms",
+            "description": "Send this many milliseconds after first sight of a creation.",
+            "value": "150",
+            "provision_type": "user"
+        },
+        "LIGHTNING_MEMPOOL_MAX_PRIO_GWEI": {
+            "name": "Lightning mempool max priority fee gwei",
+            "description": "Skip creator fees above this limit in gwei.",
+            "value": "2.0",
             "provision_type": "user"
         }
     }

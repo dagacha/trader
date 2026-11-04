@@ -71,6 +71,10 @@ trade counter with `omen:<tx>`. Queue removal prevents a second FSM bet.
 | --- | --- | --- |
 | `LIGHTNING_LANE` | `false` | Enable the optional lane. |
 | `LIGHTNING_RPC_URL` | empty | Private raw JSON-RPC endpoint; secret. |
+| `LIGHTNING_MEMPOOL` | `false` | Enable pending creation detection. Requires the lane. |
+| `LIGHTNING_WSS_URL` | empty | Private full-transaction websocket endpoint; secret. |
+| `LIGHTNING_MEMPOOL_DELAY_MS` | `150` | Send delay from first sight, in milliseconds. |
+| `LIGHTNING_MEMPOOL_MAX_PRIO_GWEI` | `2` | Skip creator priority fees above this limit. |
 | `LIGHTNING_POLL_OFFSET_S` | `0.3` | Delay after the next slot starts. |
 | `LIGHTNING_POLL_STEP_S` | `0.25` | Retry interval for a missing block. |
 | `LIGHTNING_LANE_MAX_AGE_S` | `6` | Maximum creation age at send. |
@@ -80,7 +84,7 @@ trade counter with `omen:<tx>`. Queue removal prevents a second FSM bet.
 | `LIGHTNING_LANE_INFLIGHT_TIMEOUT_S` | `60` | Receipt deadline before nonce refresh. |
 | `LIGHTNING_LANE_MAX_PER_NIGHT` | `MAX_TRADES` | Shot budget, including reverts; `-1` selects `MAX_TRADES`. |
 
-Add all ten names above to olas-scripts `patch_agent_env_passthrough.py`
+Add all fourteen names above to olas-scripts `patch_agent_env_passthrough.py`
 `_NAMED_VARS`, in addition to the existing names below. Keep the endpoint secret.
 The fixed tip never uses another trader's transaction or tip. The EOA must cover
 three shots at the configured gas limit and maximum fee.
@@ -108,6 +112,111 @@ After merge, DG selects at most two lightning traders on different hosts, a
 private endpoint for each host, and the fixed nightly tip. Compare against the
 31 October #39 baseline. Roll back the lane by setting `LIGHTNING_LANE=false`
 and running `release_service.sh --quickstart N`.
+
+## Optional pending creation source
+
+`LIGHTNING_MEMPOOL` is off in every config. It requires `LIGHTNING_LANE`,
+`LIGHTNING_RPC_URL`, `LIGHTNING_WSS_URL`, and the existing positive lane-tip guard.
+An empty websocket URL logs one off reason and leaves the next-block lane active.
+The websocket subscribes to full pending transactions and new heads. It runs in a
+daemon thread with a bounded queue. It closes outside the active window plus five
+minutes on each side. Connection logs contain the host and error class only.
+
+The decoder checks the known creator EOA/Safe pair, configured creator Safe,
+Safe delegatecall to MultiSend, factory target, wxDAI, template 2, exact Yes/No
+order, one condition, positive funds, and a `distributionHint` of `[]` or `[1,1]`.
+It also needs one binary `prepareCondition` whose condition ID follows from the
+Realitio question in the same batch. It checks the configured ConditionalTokens
+contract and Realitio proxy. It reuses the receipt question parser. The lane uses
+the pending funds as both pool balances.
+It uses cached Safe balances and EOA nonce. Missing cache data skips the shot.
+
+The lane copies both creator EIP-1559 fee fields without change. The next-block
+lane tip does not set these fees. The priority-fee limit rejects an expensive
+creator replacement. There is no fee increase or resend at a higher fee.
+Startup recovery can broadcast the same signed bytes again.
+
+The lane signs before the send deadline. It drains pending candidates at the top
+of its tick and uses waits of at most 50 ms while mempool mode is active. The
+default 150 ms delay aims to put the buy after the creator at the same fee.
+It does not guarantee proposer arrival order. A new head or observed creation
+before send cancels the pending shot and leaves next-block discovery available.
+Replacement transactions share a market key. Once sent, that market cannot get a
+second lane shot. A revert or no fill leaves it available to the normal FSM.
+
+A status-1 receipt alone does not prove a buy. Completion requires an `FPMMBuy`
+event from the predicted market with this agent's Safe as buyer. A status-1
+receipt without that event logs `status=no_fill`, writes no bet, counts no trade,
+and leaves the market in the queue. The stored creation time comes from mined
+creation data when available, or first sight otherwise.
+
+Run the local call-order proof with:
+
+```sh
+bash scripts/lightning_mempool_anvil.sh
+```
+
+This script needs Anvil at `/opt/homebrew/bin/anvil`, Node/npm, and the repo's
+Python environment. It compiles small test contracts with a temporary Solidity
+compiler. It uses real Safe and MultiSend bytecode, no fork, no live keys, and
+localhost only. It removes its temporary files and stops Anvil on exit.
+The test market checks transfers and minimum output. It does not model FPMM
+prices. One local run gave these results:
+
+| Order or case | Receipt status | Buy events | Gas used |
+| --- | --- | --- | --- |
+| Creation, then shot, same block | 1 | 1 | 135,373 |
+| Shot, then creation, same block | 1 | 0 | 122,662 |
+| Creation, then shot at wrong address | 1 | 0 | 91,483 |
+| Creation dropped | 1 | 0 | 91,483 |
+| Creation, then minimum-output failure | 0 | 0 | 90,504 |
+
+An empty-code `CALL` succeeds. The approval remains after a no fill. The buy
+event check prevents false bet records. These gas values describe the small
+local contracts, not live Omen execution.
+
+```sh
+grep '\[LIGHTNING_MEMPOOL_WS\]' agent.log
+grep '\[LIGHTNING_MEMPOOL\]' agent.log
+grep '\[LIGHTNING_LANE_RESULT\].*source=mempool' agent.log
+```
+
+Check `sent_ms`, `block_delta`, `creation_index`, `fill_price`, and gas per shot.
+DG controls rollout to the two trial agents. No service is changed by this work.
+Rollback sets `LIGHTNING_MEMPOOL=false`; the next-block lane remains available.
+The four new environment names must also enter olas-scripts `_NAMED_VARS` before
+rollout. That repository is outside this checkout.
+
+The tests include the supplied 108-row fixture without changes and the matching
+raw transactions read from the public Gnosis RPC. ABI decoding matches all 108
+rows. Address prediction matches all 108 markets. The factory uses more than a
+plain EIP-1167 clone hash. Its constructor payload is part of the init code.
+The formula follows the verified
+[Gnosis Create2CloneFactory source](https://github.com/gnosis/conditional-tokens-market-makers/blob/master/contracts/Create2CloneFactory.sol)
+and
+[FPMMDeterministicFactory source](https://github.com/gnosis/conditional-tokens-market-makers/blob/master/contracts/FPMMDeterministicFactory.sol):
+
+```text
+C = abi.encode(conditionalTokens, collateralToken, conditionIds, fee)
+P = selector("cloneConstructor(bytes)") || abi.encode(bytes(C))
+I = hex"3d3d606380380380913d393d73" || factory
+    || hex"5af4602a57600080fd5b602d8060366000396000f3363d3d373d3d3d363d73"
+    || implementationMaster
+    || hex"5af43d82803e903d91602b57fd5bf3" || P
+S = keccak256(abi.encode(creatorSafe, saltNonce))
+market = last20(keccak256(0xff || factory || S || keccak256(I)))
+implementationMaster = 0x907e5e6e8391395f6d518ae29bfe593051bbec52
+```
+
+The supplied evidence has two differences from the brief. All 108 historical
+calls use the factory's empty distribution hint, `[]`, which also gives equal
+reserves, so the decoder accepts it. Of the 108 calls, 107 decode to a pending
+market. Of those, 83 pass the still-hold rule and can produce a shot when
+`LIGHTNING_STILL_HOLD` is on and the lane tip is above 0. The final
+36 titles contain 30 matches for the existing still-hold phrase rule, not 28.
+One matched title also fails the existing JSON title parser. The tests retain
+these facts. They do not alter historical calldata or the phrase rule to make
+the stated counts pass.
 
 ## Parameters
 
