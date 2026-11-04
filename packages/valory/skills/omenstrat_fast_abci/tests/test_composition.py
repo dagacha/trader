@@ -127,6 +127,7 @@ def test_settlement_drops_previous_transaction_state(vote: bool) -> None:
                 tx_submitter=["bet_placement_round"],
                 most_voted_tx_hash=["new"],
                 fast_finalization_failures=[3],
+                fast_finalization_may_be_sent=[True],
             )
         )
     )
@@ -145,6 +146,7 @@ def test_settlement_drops_previous_transaction_state(vote: bool) -> None:
     assert result.db.get("blacklisted_keepers") == ""
     assert result.db.get("final_tx_hash") is None
     assert result.db.get("fast_finalization_failures") == 0
+    assert result.db.get("fast_finalization_may_be_sent") is False
     assert result.db.get("most_voted_tx_hash") == "new"
     assert result.db.get("tx_submitter") == "bet_placement_round"
 
@@ -269,8 +271,14 @@ def test_settled_fast_bets_reach_durable_cap(tmp_path: Any) -> None:
     watch._fetch_fresh.assert_not_called()
 
 
-def _finalization_round(failures: Any = None, history: str = "") -> Any:
-    """Build a fast finalization round with a keeper that sent nothing."""
+def _finalization_round(
+    failures: Any = None,
+    history: str = "",
+    not_sent: bool = True,
+    may_be_sent: bool = False,
+    missed: int = 0,
+) -> Any:
+    """Build a fast finalization round with a keeper that got no hash."""
     from packages.valory.skills.abstract_round_abci.base import AbciAppDB
     from packages.valory.skills.omenstrat_fast_abci.composition import (
         FastFinalizationRound,
@@ -287,29 +295,39 @@ def _finalization_round(failures: Any = None, history: str = "") -> Any:
         all_participants=[("agent",)],
         participants=[("agent",)],
         consensus_threshold=[1],
+        missed_messages=[{"agent": missed}],
+        fast_finalization_may_be_sent=[may_be_sent],
     )
     if failures is not None:
         setup["fast_finalization_failures"] = [failures]
     data = SynchronizedData(AbciAppDB(setup_data=setup))
     round_ = FastFinalizationRound(data, MagicMock())
-    round_.keeper_payload = FinalizationTxPayload(
-        "agent",
-        tx_data=dict(
-            status_value=VerificationStatus.PENDING.value,
-            serialized_keepers="",
-            blacklisted_keepers="",
-            tx_hashes_history=history,
-            received_hash=False,
-        ),
+    tx_data: Dict[str, Any] = dict(
+        status_value=VerificationStatus.PENDING.value,
+        serialized_keepers="",
+        blacklisted_keepers="",
+        tx_hashes_history=history,
+        received_hash=False,
     )
+    if not_sent:
+        tx_data["not_sent"] = True
+    round_.keeper_payload = FinalizationTxPayload("agent", tx_data=tx_data)
     return round_
+
+
+def _limit() -> int:
+    """Get the failure limit."""
+    from packages.valory.skills.omenstrat_fast_abci.composition import (
+        MAX_FINALIZATION_FAILURES,
+    )
+
+    return MAX_FINALIZATION_FAILURES
 
 
 def test_repeated_finalization_failures_return_to_the_watch() -> None:
     """A transaction that was never sent must not block the agent forever."""
     from packages.valory.skills.omenstrat_fast_abci.composition import (
         FastFinalizationRound,
-        MAX_FINALIZATION_FAILURES,
     )
     from packages.valory.skills.transaction_settlement_abci.rounds import (
         Event as Settlement,
@@ -318,20 +336,17 @@ def test_repeated_finalization_failures_return_to_the_watch() -> None:
     transitions = OmenstratFastAbciApp.transition_function
     assert transitions[FastFinalizationRound][Settlement.NONE] == FreshWatchRound
     failures = 0
-    for _ in range(MAX_FINALIZATION_FAILURES - 1):
+    for _ in range(_limit() - 1):
         result, event = _finalization_round(failures).end_block()
         assert event == Settlement.FINALIZATION_FAILED
         failures = result.db.get("fast_finalization_failures")
-    assert failures == MAX_FINALIZATION_FAILURES - 1
+    assert failures == _limit() - 1
     _, event = _finalization_round(failures).end_block()
     assert event == Settlement.NONE
 
 
-def test_finalization_failure_without_a_payload_counts() -> None:
-    """A keeper with no raw transaction fails the same way."""
-    from packages.valory.skills.omenstrat_fast_abci.composition import (
-        MAX_FINALIZATION_FAILURES,
-    )
+def test_finalization_passes_a_received_hash() -> None:
+    """A sent transaction goes to validation and adds no failure."""
     from packages.valory.skills.transaction_settlement_abci.payloads import (
         FinalizationTxPayload,
     )
@@ -339,26 +354,167 @@ def test_finalization_failure_without_a_payload_counts() -> None:
         Event as Settlement,
     )
 
-    round_ = _finalization_round(MAX_FINALIZATION_FAILURES - 1)
+    round_ = _finalization_round(0)
+    tx_data = {**round_.keeper_payload.tx_data, "received_hash": True}
+    round_.keeper_payload = FinalizationTxPayload("agent", tx_data=tx_data)
+    result, event = round_.end_block()
+    assert event == Settlement.DONE
+    assert result.db.get("fast_finalization_failures") == 0
+
+
+def test_finalization_waits_for_a_keeper_payload() -> None:
+    """The round continues until the keeper reports."""
+    round_ = _finalization_round()
     round_.keeper_payload = None
     assert round_.end_block() is None
-    round_.keeper_payload = FinalizationTxPayload("agent", tx_data=None)
-    _, event = round_.end_block()
-    assert event == Settlement.NONE
 
 
-def test_finalization_keeps_a_transaction_that_may_be_sent() -> None:
-    """Never abandon a settlement that has a transaction hash."""
-    from packages.valory.skills.omenstrat_fast_abci.composition import (
-        MAX_FINALIZATION_FAILURES,
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        dict(history="a" * 64),
+        dict(not_sent=False),
+        dict(may_be_sent=True),
+        dict(missed=1),
+    ],
+)
+def test_finalization_keeps_a_transaction_that_may_be_sent(kwargs: Any) -> None:
+    """Never abandon a settlement that can still have a live transaction."""
+    from packages.valory.skills.transaction_settlement_abci.rounds import (
+        Event as Settlement,
+    )
+
+    result, event = _finalization_round(_limit(), **kwargs).end_block()
+    assert event == Settlement.FINALIZATION_FAILED
+    assert result.db.get("fast_finalization_may_be_sent") is True
+
+
+def test_finalization_without_transaction_data_is_not_proof() -> None:
+    """A keeper that reports no data has not proved that nothing was sent."""
+    from packages.valory.skills.transaction_settlement_abci.payloads import (
+        FinalizationTxPayload,
     )
     from packages.valory.skills.transaction_settlement_abci.rounds import (
         Event as Settlement,
     )
 
-    round_ = _finalization_round(MAX_FINALIZATION_FAILURES, history="a" * 64)
+    round_ = _finalization_round(_limit())
+    round_.keeper_payload = FinalizationTxPayload("agent", tx_data=None)
     _, event = round_.end_block()
     assert event == Settlement.FINALIZATION_FAILED
+
+
+def _finished(generator: Any) -> Any:
+    """Run a generator that must finish without waiting."""
+    with pytest.raises(StopIteration) as stop:
+        next(generator)
+    return stop.value.value
+
+
+def _sender(gas: int) -> Any:
+    """Run the fast sender for a raw transaction and get its payload."""
+    from types import SimpleNamespace
+
+    from packages.valory.skills.abstract_round_abci.behaviour_utils import (
+        RPCResponseStatus,
+    )
+    from packages.valory.skills.omenstrat_fast_abci.behaviours import (
+        FastFinalizeBehaviour,
+    )
+    from packages.valory.skills.transaction_settlement_abci.behaviours import (
+        FinalizeBehaviour,
+    )
+    from packages.valory.skills.transaction_settlement_abci.payloads import (
+        FinalizationTxPayload,
+    )
+
+    def send(*_: Any, **__: Any) -> Any:
+        """Accept a broadcast with a failed RPC response."""
+        return "0xbackup", RPCResponseStatus.UNCLASSIFIED_ERROR
+        yield  # pylint: disable=unreachable
+
+    def consensus(*args: Any, **__: Any) -> Any:
+        """Capture the payload."""
+        sent.append(args[1])
+        return None
+        yield  # pylint: disable=unreachable
+
+    sent: List[Any] = []
+    behaviour = FastFinalizeBehaviour(name="finalize", skill_context=MagicMock())
+    with (
+        patch.object(FinalizeBehaviour, "send_raw_transaction", send) as _,
+        patch(
+            "packages.valory.skills.abstract_round_abci.behaviour_utils."
+            "BaseBehaviour.send_a2a_transaction",
+            consensus,
+        ),
+    ):
+        status = _finished(
+            behaviour.send_raw_transaction(SimpleNamespace(body={"gas": gas}))
+        )
+        payload = FinalizationTxPayload("agent", tx_data={"received_hash": False})
+        _finished(behaviour.send_a2a_transaction(payload))
+    return status, sent[0]
+
+
+def test_sender_does_not_broadcast_a_transaction_with_no_gas() -> None:
+    """A node can not accept gas 0, so the attempt is known as not sent."""
+    from packages.valory.skills.abstract_round_abci.behaviour_utils import (
+        RPCResponseStatus,
+    )
+
+    status, payload = _sender(0)
+    assert status == (None, RPCResponseStatus.UNCLASSIFIED_ERROR)
+    assert payload.tx_data["not_sent"] is True
+
+
+def test_accepted_broadcast_with_failed_response_is_kept() -> None:
+    """After gas 0 failures, an ambiguous broadcast blocks the exit for good."""
+    from packages.valory.skills.transaction_settlement_abci.rounds import (
+        Event as Settlement,
+    )
+
+    _, payload = _sender(21000)
+    assert "not_sent" not in payload.tx_data
+    round_ = _finalization_round(_limit() - 1, not_sent=False)
+    result, event = round_.end_block()
+    assert event == Settlement.FINALIZATION_FAILED
+    assert result.db.get("fast_finalization_may_be_sent") is True
+    later = _finalization_round(_limit() - 1, may_be_sent=True)
+    _, event = later.end_block()
+    assert event == Settlement.FINALIZATION_FAILED
+
+
+def test_sender_with_no_raw_transaction_reports_not_sent() -> None:
+    """A keeper that did not reach the broadcast step has sent nothing."""
+    from packages.valory.skills.omenstrat_fast_abci.behaviours import (
+        FastFinalizeBehaviour,
+    )
+    from packages.valory.skills.transaction_settlement_abci.payloads import (
+        FinalizationTxPayload,
+    )
+
+    sent: List[Any] = []
+
+    def consensus(*args: Any, **__: Any) -> Any:
+        """Capture the payload."""
+        sent.append(args[1])
+        return None
+        yield  # pylint: disable=unreachable
+
+    behaviour = FastFinalizeBehaviour(name="finalize", skill_context=MagicMock())
+    with patch(
+        "packages.valory.skills.abstract_round_abci.behaviour_utils."
+        "BaseBehaviour.send_a2a_transaction",
+        consensus,
+    ):
+        payload = FinalizationTxPayload("agent", tx_data={"received_hash": False})
+        _finished(behaviour.send_a2a_transaction(payload))
+        _finished(
+            behaviour.send_a2a_transaction(FinalizationTxPayload("agent", tx_data=None))
+        )
+    assert sent[0].tx_data["not_sent"] is True
+    assert sent[1].tx_data is None
 
 
 def test_fast_agent_finalizes_with_the_bounded_round() -> None:

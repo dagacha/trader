@@ -73,6 +73,9 @@ from packages.valory.skills.staking_abci.rounds import (
     StakingAbciApp,
 )
 from packages.valory.skills.trader_abci.composition import termination_config
+from packages.valory.skills.transaction_settlement_abci.payloads import (
+    FinalizationTxPayload,
+)
 from packages.valory.skills.transaction_settlement_abci.rounds import (
     Event as SettlementEvent,
 )
@@ -141,25 +144,35 @@ class FastPreTxSettlementRound(tx.PreTxSettlementRound):
                 late_arriving_tx_hashes="{}",
                 suspects=(),
                 fast_finalization_failures=0,
+                fast_finalization_may_be_sent=False,
             )
         return data, event
 
 
 class FastFinalizationRound(FinalizationRound):
-    """Stop a settlement that repeatedly fails before it sends a transaction."""
+    """Stop a settlement that repeatedly fails with nothing sent."""
 
     def end_block(self) -> Optional[Tuple[BaseSynchronizedData, Enum]]:
-        """Count failed attempts and abandon the transaction at the limit."""
+        """Count attempts known as not sent and abandon the transaction at the limit."""
         result = super().end_block()
         if result is None:
             return None
         data, event = result
-        synchronized_data = cast(SynchronizedData, data)
-        # A transaction hash means the transaction can still be mined.
+        if event != SettlementEvent.FINALIZATION_FAILED:
+            return data, event
+        settlement = cast(SynchronizedData, data)
+        tx_data = cast(FinalizationTxPayload, self.keeper_payload).tx_data or {}
+        # A hash, a missed message or an unclear attempt can be a live transaction.
         if (
-            event != SettlementEvent.FINALIZATION_FAILED
-            or synchronized_data.tx_hashes_history
+            data.db.get("fast_finalization_may_be_sent", False)
+            or not tx_data.get("not_sent")
+            or settlement.tx_hashes_history
+            or settlement.should_check_late_messages
         ):
+            data = data.update(
+                synchronized_data_class=self.synchronized_data_class,
+                fast_finalization_may_be_sent=True,
+            )
             return data, event
         failures = cast(int, data.db.get("fast_finalization_failures", 0)) + 1
         data = data.update(
