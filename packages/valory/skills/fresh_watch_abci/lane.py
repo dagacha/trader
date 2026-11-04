@@ -25,8 +25,7 @@ from fractions import Fraction
 from typing import Any, Dict, List, Optional, Tuple
 
 from eth_abi import decode, encode
-from eth_utils import keccak  # type: ignore[import-not-found]
-from eth_utils import to_checksum_address
+from eth_utils import keccak, to_checksum_address  # type: ignore[import-not-found]
 
 from packages.valory.skills.fresh_watch_abci.chain_discovery import CREATION_TOPIC
 from packages.valory.skills.fresh_watch_abci.lightning import (

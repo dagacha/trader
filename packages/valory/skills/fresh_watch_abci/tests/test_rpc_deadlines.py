@@ -38,6 +38,7 @@ from packages.valory.skills.fresh_watch_abci.chain_discovery import (
     ChainDiscoveryMixin,
     ChainRPCError,
 )
+from packages.valory.skills.staking_abci.rpc import request_with_timeout
 
 
 class ScheduledRPC(ChainDiscoveryMixin, AsyncBehaviour):
@@ -98,6 +99,35 @@ class ScheduledRPC(ChainDiscoveryMixin, AsyncBehaviour):
         except ChainRPCError as exc:
             self.result = exc
         self.completed = True
+
+
+@pytest.mark.parametrize("interval", [None, 0.05])
+def test_request_uses_default_or_explicit_poll_interval(interval: Any) -> None:
+    """Use short polls only when the caller asks for them."""
+    behaviour = ScheduledRPC(False)
+    response = MagicMock()
+    waits = []
+
+    def sleep(seconds: float) -> Generator:
+        waits.append(seconds)
+        behaviour.context.requests.request_id_to_callback["nonce"](response, behaviour)
+        yield
+
+    message, dialogue = behaviour.context.ledger_api_dialogues.create.return_value
+    with patch.object(behaviour, "sleep", side_effect=sleep):
+        request = request_with_timeout(
+            behaviour,
+            message,
+            dialogue,
+            timeout=2.0,
+            **({} if interval is None else {"poll_interval": interval}),
+        )
+        next(request)
+        with pytest.raises(StopIteration) as result:
+            next(request)
+    assert result.value.value is response
+    assert waits == [0.2 if interval is None else interval]
+    assert behaviour.context.requests.request_id_to_callback == {}
 
 
 @pytest.mark.parametrize("preflight", [False, True])

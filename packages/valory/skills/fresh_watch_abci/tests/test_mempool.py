@@ -29,10 +29,13 @@ import pytest
 from eth_abi import decode, encode
 from eth_utils import keccak  # type: ignore[import-not-found]
 
+from packages.valory.skills.fresh_watch_abci.lane import lane_decision
 from packages.valory.skills.fresh_watch_abci.lightning import (
+    BaseRateCache,
     LightningConfig,
     still_hold_rule,
 )
+from packages.valory.skills.fresh_watch_abci.strategy import FastConfig
 from packages.valory.skills.market_manager_abci.bets import Bet
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -40,7 +43,7 @@ ROWS = json.loads((FIXTURES / "create2_fixture.json").read_text())
 HISTORY = json.loads((FIXTURES / "create2_transactions.json").read_text())
 TRANSACTIONS = HISTORY["transactions"]
 FACTORY = LightningConfig().omen_fpmm_factory
-MULTISEND = "0xa238cbeb142c10ef7ad8442c6d1f9e89e07e7761"
+MULTISEND = "0xA238CBeb142c10Ef7Ad8442C6D1f9E89e07e7761"
 SAFE_TYPES = [
     "address",
     "uint256",
@@ -106,16 +109,6 @@ def repack(
     return dict(tx, input="0x6a761202" + encode(SAFE_TYPES, outer).hex())
 
 
-def valid_tx(**changes: Any) -> Dict[str, Any]:
-    """Use an explicit equal hint for strict pending qualification."""
-    tx = TRANSACTIONS[0].copy()
-    outer, entries = unpack(tx)
-    values = list(decode(FACTORY_TYPES, entries[3][3][4:]))
-    values[6] = [1, 1]
-    entries[3][3] = bytes.fromhex("82e90fa0") + encode(FACTORY_TYPES, values)
-    return dict(repack(tx, outer, entries), **changes)
-
-
 @pytest.mark.parametrize("row,tx", list(zip(ROWS, TRANSACTIONS)))
 def test_decode_historical_calldata(row: Dict[str, Any], tx: Dict[str, Any]) -> None:
     """Decode all 108 historical Safe, MultiSend, factory and question calls."""
@@ -153,10 +146,116 @@ def test_still_hold_fixture_count() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "hint,accepted",
+    [
+        ([], True),
+        ([1, 1], True),
+        ([0, 0], False),
+        ([2, 2], False),
+        ([1], False),
+        ([1, 2], False),
+        ([1, 1, 1], False),
+    ],
+)
+def test_pending_distribution_hints(hint: List[int], accepted: bool) -> None:
+    """Accept only empty hints and the explicit equal binary hint."""
+    tx = TRANSACTIONS[0]
+    outer, entries = unpack(tx)
+    values = list(decode(FACTORY_TYPES, entries[3][3][4:]))
+    values[6] = hint
+    entries[3][3] = entries[3][3][:4] + encode(FACTORY_TYPES, values)
+    candidate = subject().decode_pending(
+        repack(tx, outer, entries), LightningConfig(), MULTISEND, SEEN
+    )
+    assert (candidate is not None) == accepted
+    if candidate is not None:
+        assert candidate.market["outcomeTokenAmounts"] == [7 * 10**18] * 2
+
+
+@pytest.mark.parametrize(
+    "tip,enabled,skip_reason",
+    [
+        pytest.param(0.0, False, "zero_tip", id="default-controls"),
+        pytest.param(1.0, False, "still_hold_off", id="positive-tip-only"),
+        pytest.param(1.0, True, "", id="enabled-shot-controls"),
+    ],
+)
+def test_real_pending_transactions_reach_lane(
+    tmp_path: Path, tip: float, enabled: bool, skip_reason: str
+) -> None:
+    """Use real calldata with default guards and with shot controls enabled."""
+    cfg = LightningConfig(
+        lightning_lane=True,
+        lightning_rpc_url="https://rpc.invalid",
+        lightning_lane_tip_gwei=tip,
+        lightning_still_hold=enabled,
+    )
+    fast = FastConfig()
+    cache = BaseRateCache(tmp_path / "rate.json")
+    rejected, decoded, still_hold, shots = [], 0, 0, 0
+    for row, tx in zip(ROWS, TRANSACTIONS):
+        now = row["opening_ts"] - 86400 + 3600
+        assert now < row["opening_ts"]
+        assert fast.in_window(now)
+        cache.data = dict(
+            n=100,
+            rate=0.946,
+            refreshed_at=now,
+            template_id=2,
+            window_days=cfg.lightning_base_rate_window_days,
+            creators=sorted(cfg.lightning_creators),
+        )
+        assert cache.usable(now, cfg) == 0.946
+        try:
+            metadata = subject().question_metadata(
+                row["template_id"], row["question"], row["opening_ts"]
+            )
+        except ValueError:
+            metadata = None
+        candidate = subject().decode_pending(tx, cfg, MULTISEND, now)
+        if not metadata:
+            assert candidate is None
+            rejected.append(row["market"])
+            continue
+        assert candidate is not None, row["market"]
+        assert candidate.market["id"] == row["market"]
+        assert candidate.market["outcomeTokenAmounts"] == [row["initial_funds_wei"]] * 2
+        decoded += 1
+        if not still_hold_rule(metadata["title"], row["creator_safe"], cfg):
+            continue
+        still_hold += 1
+        decision, bounds, reason = lane_decision(
+            candidate.market,
+            candidate.market["outcomeTokenAmounts"],
+            now,
+            fast,
+            cfg,
+            cache,
+            trade_count=0,
+            max_trades=3,
+            placement_min_edge=fast.min_edge,
+        )
+        assert reason == skip_reason, row["market"]
+        if skip_reason:
+            assert decision is None
+            assert bounds is None
+        else:
+            assert decision is not None, row["market"]
+            assert decision.stake > 0, row["market"]
+            assert bounds is not None, row["market"]
+            shots += 1
+    assert rejected == ["0x15c1a4842ae2295304e0ec19c8d02981c0b20d61"]
+    assert (decoded, still_hold) == (107, 83)
+    assert shots == (0 if skip_reason else 83)
+
+
 def test_pending_row_and_fees_are_complete() -> None:
     """Build a real Bet row and preserve both creator fee fields."""
     module = subject()
-    candidate = module.decode_pending(valid_tx(), LightningConfig(), MULTISEND, SEEN)
+    candidate = module.decode_pending(
+        TRANSACTIONS[0], LightningConfig(), MULTISEND, SEEN
+    )
     assert candidate is not None
     with pytest.raises(dataclasses.FrozenInstanceError):
         candidate.seen_at = 0
@@ -214,7 +313,9 @@ def test_pending_row_and_fees_are_complete() -> None:
 def test_invalid_pending_transaction_is_ignored(change: Dict[str, Any]) -> None:
     """Ignore unsupported transactions without raising in the websocket thread."""
     assert (
-        subject().decode_pending(valid_tx(**change), LightningConfig(), MULTISEND, SEEN)
+        subject().decode_pending(
+            dict(TRANSACTIONS[0], **change), LightningConfig(), MULTISEND, SEEN
+        )
         is None
     )
 
@@ -225,7 +326,7 @@ def test_invalid_pending_transaction_is_ignored(change: Dict[str, Any]) -> None:
 )
 def test_missing_pending_field_is_ignored(field: str) -> None:
     """Require complete EIP-1559 and creation data."""
-    tx = valid_tx()
+    tx = TRANSACTIONS[0].copy()
     tx.pop(field)
     assert subject().decode_pending(tx, LightningConfig(), MULTISEND, SEEN) is None
 
@@ -240,7 +341,6 @@ def test_missing_pending_field_is_ignored(field: str) -> None:
         ("factory", 3, [b"\x01" * 32, b"\x02" * 32]),
         ("factory", 5, 0),
         ("factory", 6, [2, 1]),
-        ("factory", 6, []),
         ("question", 0, 0),
         ("question", 1, 'Will it still hold?␟"No","Yes"'),
         ("question", 1, 'Will it still hold?␟"Yes","No","Maybe"'),
@@ -250,7 +350,7 @@ def test_missing_pending_field_is_ignored(field: str) -> None:
 )
 def test_strict_creation_fields(field: str, index: int, value: Any) -> None:
     """Require the exact supported Safe, market and question forms."""
-    tx = valid_tx()
+    tx = TRANSACTIONS[0].copy()
     outer, entries = unpack(tx)
     if field == "outer":
         outer[index] = value
@@ -285,7 +385,7 @@ def test_strict_creation_fields(field: str, index: int, value: Any) -> None:
 )
 def test_invalid_multisend_is_ignored(mode: str) -> None:
     """Reject wrong targets, duplicate entries and truncated packed calls."""
-    tx = valid_tx()
+    tx = TRANSACTIONS[0].copy()
     outer, entries = unpack(tx)
     if mode == "factory_target":
         entries[3][1] = "0x" + "11" * 20
@@ -317,7 +417,7 @@ def test_invalid_multisend_is_ignored(mode: str) -> None:
 def test_configured_factory_and_creator_are_required() -> None:
     """Read the configured factory and Safe allowlist for each pending call."""
     module = subject()
-    tx = valid_tx()
+    tx = TRANSACTIONS[0].copy()
     assert (
         module.decode_pending(
             tx,
@@ -366,7 +466,7 @@ def test_question_metadata(template: int, question: str, expected: Any) -> None:
 
 def test_integer_fees_and_case_normalization() -> None:
     """Accept RPC numbers and checksum addresses without changing fees."""
-    tx = valid_tx(type=2, maxPriorityFeePerGas=123, maxFeePerGas=456)
+    tx = dict(TRANSACTIONS[0], type=2, maxPriorityFeePerGas=123, maxFeePerGas=456)
     tx["from"] = tx["from"].upper().replace("0X", "0x")
     tx["to"] = tx["to"].upper().replace("0X", "0x")
     candidate = subject().decode_pending(tx, LightningConfig(), MULTISEND.upper(), SEEN)

@@ -28,6 +28,7 @@ import pytest
 from eth_abi import encode
 from eth_utils import keccak  # type: ignore[import-not-found]
 
+from packages.valory.skills.fresh_watch_abci.lane_behaviour import LaneRPCError
 from packages.valory.skills.fresh_watch_abci.tests.test_behaviours import (
     done,
     raw_market,
@@ -353,6 +354,8 @@ def test_pending_queue_guards_and_night_reset(tmp_path: Any, reason: str) -> Non
         b._night = "yesterday"
         b._shots = 3
         b._pending_seen.add(MARKET)
+        b._creation_seen[MARKET] = {"number": "0x1"}
+        b.context.shared_state["lightning_mempool_sent_markets"] = {MARKET}
     with (
         patch(MODULE + ".time.time", return_value=1002),
         patch(MODULE + ".lane_decision", return_value=result),
@@ -362,22 +365,58 @@ def test_pending_queue_guards_and_night_reset(tmp_path: Any, reason: str) -> Non
     if reason == "reset":
         assert b._shots == 0
         assert b._night == "1970-01-01"
+        assert not b._creation_seen
+        assert not b.context.shared_state["lightning_mempool_sent_markets"]
+        saved = json.loads((tmp_path / "lightning_lane_state.json").read_text())
+        assert saved["mempool_sent"] == []
 
 
-@pytest.mark.parametrize("active", [False, True])
-def test_sleep_retains_normal_wait_and_caps_pending_signing(
-    tmp_path: Any, active: bool
+@pytest.mark.parametrize(
+    "active,inflight", [(False, False), (True, False), (True, True)]
+)
+def test_sleep_keeps_requested_wait_and_drains_candidates(
+    tmp_path: Any, active: bool, inflight: bool
 ) -> None:
-    """Keep flags-off waits and limit active signing waits to 50 milliseconds."""
+    """Keep the full wait and drain candidates between short source waits."""
     from packages.valory.skills.fresh_watch_abci.behaviours import FreshMarketPoller
 
-    b = lane(tmp_path)
+    b = lane(tmp_path, lightning_mempool=True, lightning_wss_url="wss://rpc.test/key")
+    prepared(b)
+    b._checked = b._safe_ok = True
+    clock = [1002.0]
+    waits = []
+    sent = []
     if active:
         b._mempool = MagicMock()
-        b.context.shared_state["lightning_lane_inflight"] = {"tx": None}
-    with patch.object(FreshMarketPoller, "sleep", return_value=done(None)) as sleep:
-        run(type(b).sleep(b, 0.2))
-    sleep.assert_called_once_with(0.05 if active else 0.2)
+        b._mempool.take_head.return_value = None
+        b._mempool.drain.side_effect = lambda: [pending()]
+    if inflight:
+        b.context.shared_state["lightning_lane_inflight"] = {"tx": "0xshot"}
+
+    def sleep(seconds: float) -> Any:
+        waits.append(seconds)
+        clock[0] += seconds
+        return done(None)
+
+    def send(*args: Any, **kwargs: Any) -> Any:
+        sent.append(clock[0])
+        return done(False)
+
+    b._send = send
+    decision = (SimpleNamespace(stake=4.0, p_hat=0.95), (0.9, 5 * 10**18), "")
+    with (
+        patch.object(FreshMarketPoller, "sleep", side_effect=sleep),
+        patch(MODULE + ".time.time", side_effect=lambda: clock[0]),
+        patch(MODULE + ".lane_decision", return_value=decision),
+    ):
+        run(type(b).sleep(b, 0.5))
+    assert clock[0] - 1002 == pytest.approx(0.5)
+    assert sum(waits) == pytest.approx(0.5)
+    if active:
+        assert max(waits) <= 0.05
+        assert sent == ([] if inflight else [pytest.approx(1002.05)])
+    else:
+        assert waits == [0.5]
     b.clean_up()
     b.clean_up()
     b._take_head()
@@ -413,11 +452,11 @@ def test_pending_completion_uses_mined_creation_data_when_available(
     from packages.valory.skills.fresh_watch_abci.mempool import decode_pending
     from packages.valory.skills.fresh_watch_abci.tests.test_mempool import (
         MULTISEND,
-        valid_tx,
+        TRANSACTIONS,
     )
 
     b = lane(tmp_path)
-    candidate = decode_pending(valid_tx(), b.params.lightning, MULTISEND, 1002.125)
+    candidate = decode_pending(TRANSACTIONS[0], b.params.lightning, MULTISEND, 1002.125)
     assert candidate is not None
     info = dict(
         tx="0xshot",
@@ -561,6 +600,43 @@ def test_queue_failure_stays_inside_lane_tick(tmp_path: Any) -> None:
     assert "[LIGHTNING_MEMPOOL] tick_failed=true" in str(
         b.context.logger.warning.call_args
     )
+
+
+@pytest.mark.parametrize(
+    "error", [LaneRPCError, OSError, ValueError, KeyError, TypeError]
+)
+def test_sleep_drain_failure_stays_inside_async_act(tmp_path: Any, error: Any) -> None:
+    """Log a failed sleep drain and keep the lane tick running."""
+    from packages.valory.skills.fresh_watch_abci.behaviours import FreshMarketPoller
+
+    b = lane(tmp_path, lightning_lane=False)
+    b._mempool = MagicMock()
+    b.sleep = lambda seconds: type(b).sleep(b, seconds)
+    clock = [1002.0]
+
+    def sleep(seconds: float) -> Any:
+        clock[0] += seconds
+        return done(None)
+
+    b._persist = MagicMock(side_effect=error("full disk"))
+    calls = [0]
+
+    def drain(now: float) -> Any:
+        calls[0] += 1
+        if calls[0] > 1:
+            b._persist()
+        return done(None)
+
+    b._drain_mempool = drain
+    with (
+        patch.object(FreshMarketPoller, "sleep", side_effect=sleep),
+        patch(MODULE + ".time.time", side_effect=lambda: clock[0]),
+    ):
+        run(b.async_act())
+    assert clock[0] == pytest.approx(1003.0)
+    b._persist.assert_called()
+    b.context.logger.warning.assert_called_with("[LIGHTNING_MEMPOOL] tick_failed=true")
+    assert not b._draining_mempool
 
 
 @pytest.mark.parametrize("read", ["nonce", "eoa", "native", "wrapped"])

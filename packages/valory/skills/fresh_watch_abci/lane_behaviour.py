@@ -168,15 +168,21 @@ class LightningLaneBehaviour(FreshMarketPoller):
         if self._mempool is None:
             yield from super().sleep(seconds)
             return
-        yield from super().sleep(min(seconds, 0.05))
-        if not self._draining_mempool and not self.context.shared_state.get(
-            "lightning_lane_inflight"
-        ):
-            self._draining_mempool = True
-            try:
-                yield from self._drain_mempool(time.time())
-            finally:
-                self._draining_mempool = False
+        deadline = time.time() + seconds
+        remaining = seconds
+        while remaining > 0:
+            yield from super().sleep(min(remaining, 0.05))
+            if not self._draining_mempool and not self.context.shared_state.get(
+                "lightning_lane_inflight"
+            ):
+                self._draining_mempool = True
+                try:
+                    yield from self._drain_mempool(time.time())
+                except (LaneRPCError, OSError, ValueError, KeyError, TypeError):
+                    self.context.logger.warning("[LIGHTNING_MEMPOOL] tick_failed=true")
+                finally:
+                    self._draining_mempool = False
+            remaining = deadline - time.time()
 
     def clean_up(self) -> None:
         """Close the private source when the behaviour is removed."""
@@ -252,6 +258,8 @@ class LightningLaneBehaviour(FreshMarketPoller):
         if night != self._night:
             self._night, self._shots = night, 0
             self._pending_seen.clear()
+            self._creation_seen.clear()
+            self.context.shared_state["lightning_mempool_sent_markets"] = set()
             self._persist()
         for pending in candidates:
             market = pending.market
@@ -757,6 +765,7 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 dialogue,
                 timeout=2.0,
                 send=self.context.decision_maker_message_queue.put_nowait,
+                poll_interval=0.05 if self._mempool is not None else 0.2,
             )
             if response.performative != SigningMessage.Performative.SIGNED_TRANSACTION:
                 raise ValueError("Signing failed")

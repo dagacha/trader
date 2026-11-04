@@ -13,7 +13,7 @@ cleanup() {
 trap cleanup EXIT
 npm_config_cache="$work_dir/npm" npx --yes --package solc@0.8.30 solcjs \
     --bin --abi --optimize -o "$work_dir/contracts" scripts/fixtures/lightning_mempool.sol
-/opt/homebrew/bin/anvil --silent --no-mining --order fifo --chain-id 100 \
+anvil --silent --no-mining --order fifo --chain-id 100 \
     --port 18546 >"$work_dir/anvil.log" 2>&1 &
 anvil_pid=$!
 export LIGHTNING_ANVIL_ARTIFACTS="$work_dir/contracts"

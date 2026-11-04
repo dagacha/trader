@@ -273,7 +273,7 @@ def decode_pending(
             or call.creator not in {value.lower() for value in cfg.lightning_creators}
             or call.collateral_token != WXDAI
             or len(call.condition_ids) != 1
-            or call.distribution_hint != (1, 1)
+            or call.distribution_hint not in ((), (1, 1))
             or call.initial_funds <= 0
         ):
             return None
