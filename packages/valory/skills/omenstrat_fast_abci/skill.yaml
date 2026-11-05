@@ -8,14 +8,14 @@ aea_version: '>=2.0.0, <3.0.0'
 fingerprint:
   README.md: bafybeihpik4c2q3n7gu236hnc6uzbgdgqst4xmrdloycr352cglbu2gtkq
   __init__.py: bafybeib3ysnyfp5g7wqqopddtqp3vrod5hlfhyjekrdasrbpexa6fc4eoq
-  behaviours.py: bafybeigy3iip2gdp6gotx4rcebihn7fucun7utv47fdckf3gnpren37uau
-  composition.py: bafybeid4mxycmyb6jflihmflreamsakytajqmt6zrq5bcr4p27d34di7vq
+  behaviours.py: bafybeihy23qwia2vxjy323qye4tuhlih6okaiz5tth4g7dyqei6umkroca
+  composition.py: bafybeid3uqyy6kl5b2zorn6u4uxqrvfdeevrtcvvctofapc4afyovhjhum
   dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
-  fsm_specification.yaml: bafybeifbfhecigg6pyjfoti7rcvaoflgxliycif66aaaptdumyhl2zyy4i
+  fsm_specification.yaml: bafybeidd3trtjyakf33o5vgcxha2dc5t2betoarftngafpa7575jdjfozu
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
   models.py: bafybeicihpfeq66ahhuboojdrf7f33xu6tmktmskzodh7oiqvxtggka4om
   tests/__init__.py: bafybeifx5qa3c7rsjbe4ujuif363osh23mvgprcd5jwv67t5kl3kgqrszu
-  tests/test_composition.py: bafybeif73yo7ty5as3rvfc6u5yozco5noi2ucotbvu6ufhsxztxtdw7hqy
+  tests/test_composition.py: bafybeieiqimkiwmz2frsw5pa7nd3cywz2efk7vcaohumx4anxdw6rvle3q
   tests/test_config.py: bafybeiarzoasntaniabzvyazi2owk3hskrpyismcootdecdd4get22q2fa
   tests/test_direct_settlement.py: bafybeiazmd5sh7cdjuoidreg7mjxjdtwuck36joeaievxwi7hkelhmczkq
   tests/test_lane_lifecycle.py: bafybeifbdcpevfgq6r627vjhl2b66c6dxshdfqfpfeas27kg67qcfc4mwi

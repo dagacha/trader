@@ -19,8 +19,15 @@
 
 """Behaviours for the composed fast Omen agent."""
 
-from typing import List, Optional
+from dataclasses import replace
+from typing import Any, Generator, List, Optional, Tuple, cast
 
+from aea.helpers.transaction.base import RawTransaction
+
+from packages.valory.skills.abstract_round_abci.base import BaseTxPayload
+from packages.valory.skills.abstract_round_abci.behaviour_utils import (
+    RPCResponseStatus,
+)
 from packages.valory.skills.fresh_watch_abci.behaviours import (
     FastMechRequestBehaviour,
     FastMechResponseBehaviour,
@@ -34,6 +41,7 @@ from packages.valory.skills.mech_interact_abci.behaviours.mech_info import (
     MechInformationBehaviour,
 )
 from packages.valory.skills.omenstrat_fast_abci.composition import (
+    FastFinalizationRound,
     FastPreTxSettlementRound,
     OmenstratFastAbciApp,
 )
@@ -43,7 +51,11 @@ from packages.valory.skills.trader_abci.behaviours import (
     TraderConsensusBehaviour,
 )
 from packages.valory.skills.transaction_settlement_abci.behaviours import (
+    FinalizeBehaviour,
     ValidateTransactionBehaviour,
+)
+from packages.valory.skills.transaction_settlement_abci.payloads import (
+    FinalizationTxPayload,
 )
 from packages.valory.skills.tx_settlement_multiplexer_abci.behaviours import (
     PreTxSettlementBehaviour,
@@ -69,6 +81,51 @@ class FastPreTxSettlementBehaviour(PreTxSettlementBehaviour):
     matching_round = FastPreTxSettlementRound
 
 
+class FastFinalizeBehaviour(FinalizeBehaviour):
+    """Use the fast finalization round with the existing sender logic."""
+
+    matching_round = FastFinalizationRound
+
+    def __init__(self, **kwargs: Any) -> None:
+        """Start the attempt with nothing sent."""
+        super().__init__(**kwargs)
+        self._broadcast_attempted = False
+
+    def send_raw_transaction(
+        self, transaction: RawTransaction, *args: Any, **kwargs: Any
+    ) -> Generator[Any, Any, Tuple[Optional[str], RPCResponseStatus]]:
+        """Do not broadcast gas 0, because a node can not accept it.
+
+        :param transaction: the raw transaction.
+        :param args: the upstream positional arguments.
+        :param kwargs: the upstream keyword arguments.
+        :yield: signing and ledger messages.
+        :return: the transaction hash and the response status.
+        """
+        if transaction.body.get("gas") == 0:
+            self.context.logger.warning("Not sending a transaction with gas 0.")
+            return None, RPCResponseStatus.UNCLASSIFIED_ERROR
+        self._broadcast_attempted = True
+        return (yield from super().send_raw_transaction(transaction, *args, **kwargs))
+
+    def send_a2a_transaction(
+        self, payload: BaseTxPayload, resetting: bool = False
+    ) -> Generator:
+        """Tell the round when this attempt is known as not sent.
+
+        :param payload: the finalization payload.
+        :param resetting: the upstream flag for a resetting round.
+        :yield: consensus messages.
+        """
+        tx_data = cast(FinalizationTxPayload, payload).tx_data
+        if tx_data is not None and not self._broadcast_attempted:
+            payload = replace(
+                cast(FinalizationTxPayload, payload),
+                tx_data={**tx_data, "not_sent": True},
+            )
+        yield from super().send_a2a_transaction(payload, resetting)
+
+
 _REPLACED = {b.matching_round for b in FreshWatchRoundBehaviour.behaviours} | {
     FastMechInformationBehaviour.matching_round,
     FastMechRequestBehaviour.matching_round,
@@ -92,6 +149,7 @@ class OmenstratFastConsensusBehaviour(TraderConsensusBehaviour):
         FastMechRequestBehaviour,
         FastMechResponseBehaviour,
         FastPreTxSettlementBehaviour,
+        FastFinalizeBehaviour,
         *TerminationAbciBehaviours.behaviours,
     }
     # Termination also supplies the upstream validator; keep the trader's

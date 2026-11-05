@@ -20,7 +20,7 @@
 """Compose the fast trading lane and the periodic housekeeping lane."""
 
 from enum import Enum
-from typing import Optional, Set, Tuple
+from typing import Dict, Optional, Set, Tuple, cast
 
 from packages.valory.skills.abstract_round_abci.abci_app_chain import (
     AbciAppTransitionMapping,
@@ -73,13 +73,24 @@ from packages.valory.skills.staking_abci.rounds import (
     StakingAbciApp,
 )
 from packages.valory.skills.trader_abci.composition import termination_config
+from packages.valory.skills.transaction_settlement_abci.payloads import (
+    FinalizationTxPayload,
+)
+from packages.valory.skills.transaction_settlement_abci.rounds import (
+    Event as SettlementEvent,
+)
 from packages.valory.skills.transaction_settlement_abci.rounds import (
     FailedRound,
+    FinalizationRound,
     FinishedTransactionSubmissionRound,
     RandomnessTransactionSubmissionRound,
+    SynchronizedData,
     TransactionSubmissionAbciApp,
 )
 from packages.valory.skills.tx_settlement_multiplexer_abci import rounds as tx
+
+# One failed attempt takes about 2 seconds, so this stops a settlement in 20 seconds.
+MAX_FINALIZATION_FAILURES = 10
 
 _MECH_ROUNDS: Set[AppState] = {
     MechInformationRound,
@@ -132,8 +143,67 @@ class FastPreTxSettlementRound(tx.PreTxSettlementRound):
                 missed_messages=dict.fromkeys(data.all_participants, 0),
                 late_arriving_tx_hashes="{}",
                 suspects=(),
+                fast_finalization_failures=0,
+                fast_finalization_may_be_sent=False,
             )
         return data, event
+
+
+class FastFinalizationRound(FinalizationRound):
+    """Stop a settlement that repeatedly fails with nothing sent."""
+
+    def end_block(self) -> Optional[Tuple[BaseSynchronizedData, Enum]]:
+        """Count attempts known as not sent and abandon the transaction at the limit."""
+        result = super().end_block()
+        if result is None:
+            return None
+        data, event = result
+        if event != SettlementEvent.FINALIZATION_FAILED:
+            return data, event
+        settlement = cast(SynchronizedData, data)
+        tx_data = cast(FinalizationTxPayload, self.keeper_payload).tx_data or {}
+        # A hash, a missed message or an unclear attempt can be a live transaction.
+        if (
+            data.db.get("fast_finalization_may_be_sent", False)
+            or not tx_data.get("not_sent")
+            or settlement.tx_hashes_history
+            or settlement.should_check_late_messages
+        ):
+            data = data.update(
+                synchronized_data_class=self.synchronized_data_class,
+                fast_finalization_may_be_sent=True,
+            )
+            return data, event
+        failures = cast(int, data.db.get("fast_finalization_failures", 0)) + 1
+        data = data.update(
+            synchronized_data_class=self.synchronized_data_class,
+            fast_finalization_failures=failures,
+        )
+        if failures < MAX_FINALIZATION_FAILURES:
+            return data, event
+        self.context.logger.warning(
+            f"Abandoning a transaction after {failures} failed finalizations."
+        )
+        return data, SettlementEvent.NONE
+
+
+def _fast_settlement_transitions() -> Dict[AppState, Dict[Enum, AppState]]:
+    """Use the fast finalization round, with an exit to the failed state."""
+    function = {
+        (FastFinalizationRound if state == FinalizationRound else state): {
+            event: FastFinalizationRound if target == FinalizationRound else target
+            for event, target in transitions.items()
+        }
+        for state, transitions in TransactionSubmissionAbciApp.transition_function.items()
+    }
+    function[FastFinalizationRound][SettlementEvent.NONE] = FailedRound
+    return function
+
+
+class FastTransactionSubmissionAbciApp(TransactionSubmissionAbciApp):
+    """Submit transactions without an endless finalization retry."""
+
+    transition_function = _fast_settlement_transitions()
 
 
 class FastTxSettlementMultiplexerAbciApp(tx.TxSettlementMultiplexerAbciApp):
@@ -195,7 +265,7 @@ OmenstratFastAbciApp = chain(
         AgentRegistrationAbciApp,
         FreshWatchAbciApp,
         FastMechInteractAbciApp,
-        TransactionSubmissionAbciApp,
+        FastTransactionSubmissionAbciApp,
         FastTxSettlementMultiplexerAbciApp,
         StakingAbciApp,
         AgentPerformanceSummaryAbciApp,

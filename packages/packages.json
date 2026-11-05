@@ -22,14 +22,14 @@
         "skill/valory/abstract_round_abci/0.1.0": "bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4",
         "skill/valory/funds_manager/0.1.0": "bafybeia3ercbrdugw36ji2d5cl46ed5y623ju7qztek3eqzvtsueos5nu4",
         "skill/valory/fresh_watch_abci/0.1.0": "bafybeihoa4hadsumptslbsvtkr7tl5y2ruv6hdfuvrvuotrtnrmt3donwm",
-        "skill/valory/omenstrat_fast_abci/0.1.0": "bafybeib2bwgkkhuknt565yjrmkhjspnbupebl4qrxml3mw5dcgecmbt2t4",
+        "skill/valory/omenstrat_fast_abci/0.1.0": "bafybeieqd4ngwk2apbrcjt4dojxxnhxmfafcbpsdwtw3w2z5yck5htxyii",
         "agent/valory/trader/0.1.0": "bafybeic5anqofk6gezergcopj23pazgrlk4qgn2tbiqw6if4u4d6etlfge",
-        "agent/valory/omenstrat_fast/0.1.0": "bafybeif7q3vyc5sv4fogrf2mtsjp3oveni6zoezkecguygykivxleev3ke",
-        "agent/valory/omenstrat_lightning/0.1.0": "bafybeifv53ds7t2efuxmmxwyb4m64dk5bo4thjysll4gzonjoshurevepu",
+        "agent/valory/omenstrat_fast/0.1.0": "bafybeigddd526ycbmfij3w4y3mlioptq6zzjwevn2sso6ks4qmqpagxpim",
+        "agent/valory/omenstrat_lightning/0.1.0": "bafybeicwjkpcacckrgpnu2pgcebjsh4km7e3ig7kxryz2kznxdbtwu4wgm",
         "service/valory/trader_pearl/0.1.0": "bafybeiaykhx4vwqcduhdc5numedgbggw33ejwgmyuis2pqqoyxis4g5qii",
         "service/valory/polymarket_trader/0.1.0": "bafybeiberkro2u2t6svnmxs5pi5c4asszdxsrlnqvvpnzvmqqmva6nolse",
-        "service/valory/omenstrat_fast/0.1.0": "bafybeigpbskztnypxtei6cwz2meh4e5k7xpqbe6xgmrcauvqrajxkghp3a",
-        "service/valory/omenstrat_lightning/0.1.0": "bafybeiddec75rowm3sx4kplclgv2se32wxkb2bmpwwiujani6c32h5a5uu"
+        "service/valory/omenstrat_fast/0.1.0": "bafybeifkmgi67o3lnbixpfgxtr65k4wj2i5d73h4bzbzoqjxzdhgjo6dcq",
+        "service/valory/omenstrat_lightning/0.1.0": "bafybeib5h42v4fvut2amkwtpjccdjhlpyomllwgrtt3ct7ixtzcgipjfcy"
     },
     "third_party": {
         "protocol/valory/acn_data_share/0.1.0": "bafybeieqisfr6lhaaesq37lk7vyaxza2h6nucshksgyo2djqfyf2saqo4i",
