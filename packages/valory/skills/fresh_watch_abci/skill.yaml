@@ -47,7 +47,7 @@ fingerprint:
   tests/test_lane_slot_resync.py: bafybeiea3vts2akhaz2qe47f3ihz6cju4npbegymtjhmexxju7zqds5d3i
   tests/test_lightning.py: bafybeice4q4keo7etxajqklftozs5q3hox3sglnpsg6xkqyu6zp7pbt6fq
   tests/test_mempool.py: bafybeibseggjhiikyfsetvyebfsufgf53nszhenxinwhfrnrri3znrdgri
-  tests/test_mempool_ws.py: bafybeihf6d6sziug7tpzenyvofhzwr42vjsnmpqexhyhqngljga3hxznky
+  tests/test_mempool_ws.py: bafybeic6ogdakq5i756pmhdokjxp5q4zgaj5lwxwymzmrsjfbqvas5olsa
   tests/test_models.py: bafybeidm77x5r6gpfim2nmuxg5emgcsyzr7m5jia4r65rdx62mkka2cxvq
   tests/test_natural_yes.py: bafybeiexgxhvcuk2ebojr6bbh4odpmnpg7xqwcs7bls2hct37nh3lwmhaa
   tests/test_outcome_order.py: bafybeia3oraxwv6qlj5cdhlyzkab5btq2tb6ahanam2bo2ftsepwlpzis4
