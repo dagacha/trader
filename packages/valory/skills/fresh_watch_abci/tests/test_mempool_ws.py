@@ -574,7 +574,12 @@ async def test_mock_server_reconnects_and_restores_both_subscriptions(
                 )
             )
             await writer.drain()
-            await asyncio.sleep(0.01)
+            # Wait for the client to read the head, also on a slow runner.
+            deadline = asyncio.get_running_loop().time() + 1.5
+            while source._head is None and (
+                asyncio.get_running_loop().time() < deadline
+            ):
+                await asyncio.sleep(0.001)
             source.stop()
         writer.close()
 
