@@ -1014,7 +1014,10 @@ def test_creation_receipt_reaches_signed_send_in_one_tick(
     creation = fixture["logs"][-1]
     market = creation_details(creation)
     created = fixture["blockTimestamp"]
-    b = lane(tmp_path, lightning_still_hold=True)
+    b = lane(
+        tmp_path, lightning_still_hold=True, lightning_still_hold_min_entry_price=0
+    )
+    b.context.params.fast = replace(b.context.params.fast, still_hold_min_price=0)
     prepared(b)
     (tmp_path / "lightning_base_rate.json").write_text(
         json.dumps(

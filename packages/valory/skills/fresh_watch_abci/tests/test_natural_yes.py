@@ -73,7 +73,7 @@ def test_unknown_and_noncanonical_markets_do_not_use_shortcuts(tmp_path: Path) -
         watch.context.params.lightning = cfg
         watch.context.state.fast_background_running = True
         watch._fast_tool = lambda: "superforcaster"
-        watch._get_pool_balances = lambda *_args: done([100 * 10**18] * 2)
+        watch._get_pool_balances = lambda *_args: done([30 * 10**18, 70 * 10**18])
         BaseRateCache(store_path / "lightning_base_rate.json").update(
             [{**raw_market(), "question": {"templateId": 2}, "payouts": [1, 0]}],
             1050,

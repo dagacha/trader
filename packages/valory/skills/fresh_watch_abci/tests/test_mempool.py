@@ -342,8 +342,9 @@ def test_real_pending_transactions_reach_lane(
         lightning_rpc_url="https://rpc.invalid",
         lightning_lane_tip_gwei=tip,
         lightning_still_hold=enabled,
+        lightning_still_hold_min_entry_price=0,
     )
-    fast = FastConfig()
+    fast = dataclasses.replace(FastConfig(), still_hold_min_price=0)
     cache = BaseRateCache(tmp_path / "rate.json")
     rejected, decoded, still_hold, shots = [], 0, 0, 0
     for row, tx in zip(ROWS, TRANSACTIONS):

@@ -125,9 +125,10 @@ def decision_inputs(tmp_path: Any) -> Any:
         lightning_lane_tip_gwei=550.0,
         lightning_still_hold=True,
         lightning_lane_max_age_s=6,
+        lightning_still_hold_min_entry_price=0,
     )
     cfg = SimpleNamespace(**values)
-    fast = FastConfig()
+    fast = replace(FastConfig(), still_hold_min_price=0)
     cache = BaseRateCache(tmp_path / "rate.json")
     cache.data = dict(
         n=100,

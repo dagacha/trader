@@ -737,6 +737,16 @@ class FreshWatchBehaviour(
         prices = [balances[1] / sum(balances), balances[0] / sum(balances)]
         if probability is not None:
             probability = base_rate.usable(time.time(), lightning)
+        if (
+            probability is not None
+            and prices[0] < lightning.lightning_still_hold_min_entry_price
+        ):
+            self.context.logger.info(
+                "[LIGHTNING_STILL_HOLD] skipped_direct market=%s yes_price=%s",
+                bet.id,
+                prices[0],
+            )
+            probability = None
         if probability is not None:
             self.context.logger.info(
                 "[LIGHTNING_STILL_HOLD] market=%s rule=%s p_yes=%s",

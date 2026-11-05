@@ -1924,7 +1924,7 @@ def test_lightning_select_without_mech(tmp_path: Any) -> None:
         [{**raw_market(), "payouts": [1, 0]}], 1050, b.context.params.lightning
     )
     b._fetch_fresh = lambda cursor, now: done([raw_market()])
-    b._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
+    b._get_pool_balances = lambda *args: done([30 * 10**18, 70 * 10**18])
     with (
         patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
         patch(
@@ -1956,7 +1956,7 @@ def test_lightning_evaluate_direct_probability(tmp_path: Any) -> None:
     values = dict(
         question_template_id=2,
         requested_at=1050,
-        request_prices=[0.5, 0.5],
+        request_prices=[0.65, 0.35],
         lightning_probability=0.95,
         lightning_rule="still_hold_phrase",
         lightning_preview_title=None,
@@ -1965,7 +1965,7 @@ def test_lightning_evaluate_direct_probability(tmp_path: Any) -> None:
     b._get_decision_prediction = MagicMock(
         side_effect=AssertionError("Direct bets must not read a mech response.")
     )
-    b._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
+    b._get_pool_balances = lambda *args: done([35 * 10**18, 65 * 10**18])
     with (
         patch.object(
             type(b), "sampled_bet", new_callable=PropertyMock, return_value=bet

@@ -228,6 +228,9 @@ Other values below are the lightning defaults.
 | Environment name | Lightning default | Purpose |
 | --- | --- | --- |
 | `FAST_TOPUP_LEAD_S` | `1800` | Start activity top-up with this lead plus 90 seconds per missing request. |
+| `STILL_HOLD_MIN_PRICE` | `0.60` | Reject still-hold YES below this live pool price. Set `STILL_HOLD_MIN_PRICE=0` to disable. |
+| `MAX_PRICE_DROP` | `0.15` | Reject a drop above this amount since the request, on any chosen side. Set `MAX_PRICE_DROP=1.0` to disable. |
+| `LIGHTNING_STILL_HOLD_MIN_ENTRY_PRICE` | `0.55` | Require this YES pool price for direct base-rate entry. Set `LIGHTNING_STILL_HOLD_MIN_ENTRY_PRICE=0` to disable. |
 | `LIGHTNING_STILL_HOLD` | `true` | Enable direct still-hold YES decisions. |
 | `LIGHTNING_STILL_HOLD_MAX_PRICE` | `0.93` | Direct still-hold price ceiling. |
 | `LIGHTNING_BASE_RATE_WINDOW_DAYS` | `21` | Creation-time sample window. |

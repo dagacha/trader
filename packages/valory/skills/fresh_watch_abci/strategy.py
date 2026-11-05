@@ -42,6 +42,8 @@ class FastConfig:
     poll_s: int = 15
     active_window_utc: str = "00:00-05:30"
     fast_topup_lead_s: int = 1800
+    still_hold_min_price: float = 0.60
+    max_price_drop: float = 0.15
     housekeeping_interval_s: int = 600
     tools: List[str] = field(
         default_factory=lambda: [
@@ -201,6 +203,10 @@ def decide(
         """
         if price > cfg.max_price - cfg.price_margin:
             return "max_price"
+        if yes_only and prices[0] < cfg.still_hold_min_price:
+            return "still_hold_price_floor"
+        if requested[side] - prices[side] > cfg.max_price_drop + 1e-12:
+            return "price_dropped"
         if side == 1 and probability < cfg.no_min_p:
             return "no_min_p"
         if probability - price + 1e-12 < cfg.min_edge + cfg.price_margin:

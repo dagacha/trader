@@ -277,6 +277,8 @@ def lane_decision(
         return None, None, "invalid_price"
     total = sum(balances)
     requested = [balances[1] / total, balances[0] / total]
+    if requested[0] < lightning.lightning_still_hold_min_entry_price:
+        return None, None, "entry_price"
     cfg = replace(
         fast, prior_weight=1.0, max_price=lightning.lightning_still_hold_max_price
     )

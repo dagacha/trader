@@ -36,7 +36,7 @@ skills:
 - valory/chatui_abci:0.1.0:bafybeihj5y6cecuw4iz2gshicoygghrgi5b6rzynnofx25ycsv56ehgdvq
 - valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
 - valory/trader_abci:0.1.0:bafybeifizcskbmjawbskkhztzpv4rbpdotnmtwwvfl4oucv5twcqirzmqm
-- valory/fresh_watch_abci:0.1.0:bafybeigj2pyg34tzmxg4lk4qv7p64kdime4erjpqcdtx4ygtmfcn2qpiuy
+- valory/fresh_watch_abci:0.1.0:bafybeigecmzy4rat7ogondb3p6vsff7oeo2pshh5c3q5ujpsqnarfafcua
 behaviours:
   main:
     args: {}
@@ -367,6 +367,8 @@ models:
       poll_s: 15
       active_window_utc: 00:00-05:30
       fast_topup_lead_s: 1800
+      still_hold_min_price: 0.6
+      max_price_drop: 0.15
       housekeeping_interval_s: 600
       tools:
       - superforcaster_calibrated_full_search
@@ -400,6 +402,7 @@ models:
       lightning_lane_max_per_night: -1
       lightning_still_hold: false
       lightning_still_hold_max_price: 0.93
+      lightning_still_hold_min_entry_price: 0.55
       lightning_base_rate_window_days: 21
       lightning_base_rate_min_n: 60
       lightning_base_rate_floor: 0.9
