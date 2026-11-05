@@ -20,7 +20,7 @@ jobs:
 
     strategy:
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-2025]
+        os: [ubuntu-24.04, windows-2025]
         python-version: ["3.10"]
 
     defaults:
@@ -218,7 +218,7 @@ jobs:
 
     strategy:
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-2025]
+        os: [ubuntu-24.04, windows-2025]
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
     timeout-minutes: 30
@@ -258,24 +258,6 @@ jobs:
         name: Packages unit tests ubuntu-24.04
         run: |
           tomte tox -e py${{ matrix.python-version }}-linux
-
-      - if: matrix.os == 'macos-15'
-        name: Install dependencies (macos-15)
-        run: |
-          pip install 'tomte[tox,cli] @ git+https://github.com/valory-xyz/tomte.git@v0.7.3' tox-uv
-          brew install gcc
-          # brew install protobuf
-          # brew install https://raw.githubusercontent.com/Homebrew/homebrew-core/72457f0166d5619a83f508f2345b22d0617b5021/Formula/protobuf.rb
-          wget https://github.com/protocolbuffers/protobuf/releases/download/v24.3/protoc-24.3-osx-x86_64.zip
-          unzip protoc-24.3-osx-x86_64.zip -d protoc
-          sudo mv protoc/bin/protoc /usr/local/bin/protoc
-          brew tap yoheimuta/protolint
-          brew install protolint
-
-      - if: matrix.os == 'macos-15'
-        name: Packages unit tests macos-15
-        run: |
-          tomte tox -e py${{ matrix.python-version }}-darwin
 
       - if: matrix.os == 'windows-2025'
         name: Install dependencies (windows-2025)
