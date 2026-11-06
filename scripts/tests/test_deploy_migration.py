@@ -3560,71 +3560,93 @@ def user_entry(**fields):
     return {"name": "Input", "description": "", "provision_type": "user", **fields}
 
 
-def test_every_user_key_is_saved_for_unattended_start(tmp_path):
-    """Unattended quickstart stops on a user key missing from the saved inputs."""
+def lightning_saved_inputs(tmp_path, saved_inputs, env=None):
+    """Run a lightning release and return the saved inputs and the report."""
     source = fixture(tmp_path)[0]
-    secret = "wss://key.invalid/private-token"
-    source.write_text(
-        json.dumps(
-            {
-                "env_variables": {
-                    "EMPTY_INPUT": user_entry(value=""),
-                    "NO_VALUE": user_entry(),
-                    "NULL_VALUE": user_entry(value=None),
-                    "NEW_INPUT": user_entry(value=secret),
-                    "KEPT": user_entry(value="template"),
-                    "KEPT_EMPTY": user_entry(value="template"),
-                    "EMPTY_SOURCE_KEPT": user_entry(value=""),
-                    "COMPUTED": entry(""),
-                    "FIXED": {"value": "", "provision_type": "fixed"},
-                }
-            }
-        )
+    config = json.loads(source.read_text())
+    config["env_variables"].update(env or {})
+    source.write_text(json.dumps(config))
+    saved = tmp_path / ".operate" / "Trader Agent-quickstart-config.json"
+    saved.write_text(json.dumps({"user_provided_args": saved_inputs}))
+    output = run(tmp_path, "--service", "omenstrat_lightning")
+    return json.loads(saved.read_text())["user_provided_args"], output
+
+
+def test_empty_websocket_key_is_saved_once(tmp_path):
+    """Unattended quickstart stops when this optional key has no saved input."""
+    source = fixture(tmp_path)[0]
+    saved = tmp_path / ".operate" / "Trader Agent-quickstart-config.json"
+    original = json.dumps({"user_provided_args": {}}) + "\n"
+    saved.write_text(original)
+    preview = run(tmp_path, "--service", "omenstrat_lightning", "--dry-run")
+    assert saved.read_text() == original
+    assert "add saved input LIGHTNING_WSS_URL" in preview
+    run(tmp_path, "--service", "omenstrat_lightning")
+    assert (
+        json.loads(saved.read_text())["user_provided_args"]["LIGHTNING_WSS_URL"] == ""
     )
-    path = tmp_path / ".operate" / "Trader Agent-quickstart-config.json"
-    original = (
-        json.dumps(
-            {
-                "user_provided_args": {
-                    "KEPT": "operator",
-                    "KEPT_EMPTY": "",
-                    "EMPTY_SOURCE_KEPT": "operator",
-                }
-            }
-        )
-        + "\n"
+    assert (
+        json.loads(source.read_text())["env_variables"]["LIGHTNING_WSS_URL"]["value"]
+        == ""
     )
-    path.write_text(original)
-    preview = run(tmp_path, "--dry-run")
-    assert path.read_text() == original
-    assert "add saved input EMPTY_INPUT" in preview
-    output = run(tmp_path)
-    assert secret not in preview + output
-    assert json.loads(path.read_text())["user_provided_args"] == {
-        "EMPTY_INPUT": "",
-        "NO_VALUE": "",
-        "NULL_VALUE": "",
-        "NEW_INPUT": secret,
-        "KEPT": "operator",
-        "KEPT_EMPTY": "",
-        "EMPTY_SOURCE_KEPT": "operator",
-    }
-    after = path.read_bytes()
-    run(tmp_path)
-    assert path.read_bytes() == after
+    after = saved.read_bytes()
+    run(tmp_path, "--service", "omenstrat_lightning")
+    assert saved.read_bytes() == after
+
+
+def test_saved_websocket_url_is_kept_and_not_printed(tmp_path):
+    """An empty template key must not erase the operator's endpoint."""
+    url = "wss://key.invalid/private-token"
+    inputs, output = lightning_saved_inputs(tmp_path, {"LIGHTNING_WSS_URL": url})
+    assert inputs["LIGHTNING_WSS_URL"] == url
+    assert url not in output
+
+
+def test_configured_websocket_url_reaches_saved_inputs(tmp_path):
+    """A later configured endpoint replaces the saved empty value."""
+    url = "wss://key.invalid/private-token"
+    inputs, output = lightning_saved_inputs(
+        tmp_path,
+        {"LIGHTNING_WSS_URL": ""},
+        {"LIGHTNING_WSS_URL": user_entry(value=url)},
+    )
+    assert inputs["LIGHTNING_WSS_URL"] == url
+    assert url not in output
+
+
+@pytest.mark.parametrize(
+    "key, value",
+    [
+        ("SUBGRAPH_API_KEY", ""),
+        ("USE_MECH_MARKETPLACE", False),
+        ("SOME_COUNT", 0),
+        ("OTHER_INPUT", "template"),
+    ],
+)
+def test_other_user_keys_stay_with_the_middleware(tmp_path, key, value):
+    """A saved value would stop quickstart from reading the process environment."""
+    inputs, _ = lightning_saved_inputs(tmp_path, {}, {key: user_entry(value=value)})
+    assert key not in inputs
+
+
+def test_websocket_key_is_not_saved_for_another_provision_type(tmp_path):
+    """Quickstart does not ask for a key that is not a user key."""
+    inputs, _ = lightning_saved_inputs(
+        tmp_path, {}, {"LIGHTNING_WSS_URL": dict(entry(""))}
+    )
+    assert "LIGHTNING_WSS_URL" not in inputs
 
 
 def test_saving_user_keys_leaves_service_configs_alone(tmp_path):
     """Only saved inputs get the empty key; cached env values do not change."""
     paths = fixture(tmp_path)
-    paths[0].write_text(
-        json.dumps({"env_variables": {"EMPTY_INPUT": user_entry(value="")}})
-    )
     saved = tmp_path / ".operate" / "Trader Agent-quickstart-config.json"
     saved.write_text(json.dumps({"user_provided_args": {}}))
-    run(tmp_path)
-    assert all("EMPTY_INPUT" not in path.read_text() for path in paths[1:])
-    assert json.loads(saved.read_text())["user_provided_args"] == {"EMPTY_INPUT": ""}
+    run(tmp_path, "--service", "omenstrat_lightning")
+    assert all("LIGHTNING_WSS_URL" not in path.read_text() for path in paths[1:])
+    assert (
+        json.loads(saved.read_text())["user_provided_args"]["LIGHTNING_WSS_URL"] == ""
+    )
 
 
 @pytest.mark.parametrize("service", ["omenstrat_fast", "trader_pearl"])
@@ -3640,14 +3662,3 @@ def test_rollback_does_not_save_removed_user_keys(tmp_path, service):
     run(tmp_path, "--service", service)
     assert "LIGHTNING_WSS_URL" not in paths[0].read_text()
     assert "LIGHTNING_WSS_URL" not in saved.read_text()
-
-
-def test_lightning_release_saves_the_empty_websocket_key(tmp_path):
-    """The real template key reaches the saved inputs on a lightning release."""
-    fixture(tmp_path)
-    saved = tmp_path / ".operate" / "Trader Agent-quickstart-config.json"
-    saved.write_text(json.dumps({"user_provided_args": {}}))
-    run(tmp_path, "--service", "omenstrat_lightning")
-    assert (
-        json.loads(saved.read_text())["user_provided_args"]["LIGHTNING_WSS_URL"] == ""
-    )

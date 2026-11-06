@@ -128,6 +128,9 @@ LIGHTNING_FLAGS = (
     "LIGHTNING_CHAIN_DETECT",
     "LIGHTNING_PREVIEW",
 )
+# Unattended quickstart stops on a user key with no saved input. Save only
+# optional keys: a saved value stops quickstart from reading the environment.
+EMPTY_USER_INPUTS = ("LIGHTNING_WSS_URL",)
 SERVICE_CHOICES = ("omenstrat_fast", "omenstrat_lightning", "trader_pearl")
 PRIORITY_ENV = {
     "PRIORITY_MECH_ADDRESS": "priority_mech_address",
@@ -587,8 +590,8 @@ def sync_cached_json(text, desired, upgrade_slip=False):
     return text, changes
 
 
-def save_user_inputs(text, inputs):
-    """Add user inputs missing from the saved inputs. Keep the existing inputs."""
+def save_empty_inputs(text, inputs):
+    """Add empty inputs missing from the saved inputs. Keep the existing inputs."""
     data = json.loads(text)
     changes = []
     for obj in list(objects(data)):
@@ -1271,7 +1274,7 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
     removed = set(recorded or []) - {"MAX_TRADES"}
     stored = []
     desired = {}
-    user_inputs = {}
+    empty_inputs = {}
     for path in paths:
         if not path.is_file():
             print(f">> {path}: missing; skipping")
@@ -1400,11 +1403,13 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                 and entry.get("value") not in (None, "")
             }
         if path == paths[0]:
-            # Unattended quickstart stops on a user key with no saved input.
-            user_inputs = {
-                key: entry.get("value") or ""
-                for key, entry in json.loads(updated).get("env_variables", {}).items()
-                if isinstance(entry, dict) and entry.get("provision_type") == "user"
+            final_env = json.loads(updated).get("env_variables", {})
+            empty_inputs = {
+                key: ""
+                for key in EMPTY_USER_INPUTS
+                if isinstance(final_env.get(key), dict)
+                and final_env[key].get("provision_type") == "user"
+                and final_env[key].get("value") in (None, "")
             }
         if rollback and recorded is None:
             desired = {
@@ -1437,7 +1442,7 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                     updated, priorities, hashes, []
                 )
         if path.suffix == ".json" and not rollback:
-            updated, saved_inputs = save_user_inputs(updated, user_inputs)
+            updated, saved_inputs = save_empty_inputs(updated, empty_inputs)
             changes.extend(saved_inputs)
         for warning in warnings:
             print(f"WARNING: {path}: {warning}")
