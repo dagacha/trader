@@ -1,6 +1,6 @@
 {
     "name": "omenstrat_lightning",
-    "hash": "bafybeidrfzznrlksmjfpjbwhdzqoxznpgpjhj73n4nbdzfezwnf4ofk2wi",
+    "hash": "bafybeihahhi3hrjvlaxh7x4lp5uky6k6a2uo4xhussic4u2ihsp2dok6c4",
     "description": "Omen agent with still-hold base rates, chain discovery, and question previews.",
     "image": "https://operate.olas.network/_next/image?url=%2Fimages%2Fprediction-agent.png&w=3840&q=75",
     "service_version": "main",

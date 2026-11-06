@@ -8,7 +8,7 @@ aea_version: '>=2.0.0, <3.0.0'
 fingerprint:
   README.md: bafybeieurwex74dtimmmndedzrhznyfivsuaf27lteomz4cz23upjtv2pq
   __init__.py: bafybeihyphnywie3dyf7f7mmwm7yvcwekkgsa4mq5273ojuzbjsznvorv4
-  behaviours.py: bafybeick6fkeb5tm6gf7scu3dzedl3si22quogtuy5ozksq7kzvc5hs74m
+  behaviours.py: bafybeie5mm3luu6xgdoutmhj5ivizksaidsvxbdukcuedjd5hawcu5qwki
   chain_discovery.py: bafybeie5ztb6kj3qhqhhcjhbeiaqxfij5tbduudvjdaspee24pm2y53icq
   dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
   fsm_specification.yaml: bafybeifhpatx5365ubtse2g6kqo6cjeuzoruf75dv5r5xg27n4wtyrtrbm
@@ -22,7 +22,7 @@ fingerprint:
   preview.py: bafybeic6uo6lpsva2dqly5omyzhhw5a7hzyvltz23z47q7lyhmvsjj3l4u
   rounds.py: bafybeigicry3yubpgnirrzyqahfdzllmus3aifpz4qfrvpak7ttkegf4ly
   rpc.py: bafybeia2tleciknj4jimflwqddp7cdcatv3g6sg6abjh5i5jxbkoqa2hgq
-  strategy.py: bafybeiabcpr5yvimpe4r63r23qoagas62r2wr57lkv2lxcywccczuqzs2u
+  strategy.py: bafybeianoqevhd2356ozarkihx22q4ptrouhvj7nm7ytkcrmwajrmpyzee
   tests/__init__.py: bafybeiebuokdlpgmmm6orggvfnnm537acc3eogkkrn6jyjaxzqyb7t7yzy
   tests/fixtures/chain_creation.json: bafybeibsvrn4ppzzldhqqy4tziri47oxviicqocyoq7hmcs4hgaom7i5ui
   tests/fixtures/create2_fixture.json: bafybeidxpyuotw5yc6znucsidj27kio7amk5l5irto4a36sz2ztdvwz2mm
@@ -30,7 +30,7 @@ fingerprint:
   tests/fixtures/question_preview.json: bafybeie2ouuxhajfkeln7cgcjm3c3ngus64jtdg5rjz4pix5rcgrpj3hzq
   tests/fixtures/question_preview_metadata.json: bafybeihhtgcztco4xdf5zgeny6ldafa7pnshaeun74zppc4ygvuutyro3i
   tests/test_base_rate_deadlines.py: bafybeicsuzvhmbzhbeliuolk3mr7txrvvowayjr7g2ztj4r37pyel2i2ey
-  tests/test_behaviours.py: bafybeich6ea2pnccczqqhdocpt74zknnrykuksl6mgkv5vj45ar6ax5gau
+  tests/test_behaviours.py: bafybeihjkdl2umyrusgo3cfcw57v3yg34zqex2r4esunhaczqwtl5cg554
   tests/test_chain_discovery.py: bafybeig7bjaeu32zokugdhah5momnjsfwah5dyqqvjjdthb62qxbtormga
   tests/test_chain_pool_reads.py: bafybeiav26vusjg3nz7ve3ta43oxwnmvvnnfffaa6rayhuveaqj4suocdm
   tests/test_chain_title_reads.py: bafybeic42v2ivrufxfz364kxc745pzbx3c6sysdcdk766uv2k6vpv75glm
@@ -51,6 +51,7 @@ fingerprint:
   tests/test_models.py: bafybeidm77x5r6gpfim2nmuxg5emgcsyzr7m5jia4r65rdx62mkka2cxvq
   tests/test_natural_yes.py: bafybeib5jxduqexwjnbbs5pqolrn5f2ukpmilxxfheh7dchqixi7kdetva
   tests/test_outcome_order.py: bafybeia3oraxwv6qlj5cdhlyzkab5btq2tb6ahanam2bo2ftsepwlpzis4
+  tests/test_placement_price_guards.py: bafybeigzmxlxw54lu54aokxncwnk6tfdwkdcwlcyj4fqemk2dzh2tinnxy
   tests/test_preview.py: bafybeiefldvrtx5fxp4wjyvw6rhd7yxblpnhimwt67ohpelrdvoxpcrzgm
   tests/test_preview_deadline.py: bafybeiag2ti4yfzf57ap5b52mcb5rwl2xeqqbspzgsqq7kf2mghkaxxhc4
   tests/test_preview_restart.py: bafybeic6t4uvhruohtdwfokj2bk6fdvrfwkzkm6ukcrodstjzbfq2jvls4

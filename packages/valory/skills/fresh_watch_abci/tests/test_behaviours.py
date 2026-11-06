@@ -617,12 +617,14 @@ def test_execution_quote(
     )
 
     b = make(FastBetPlacementBehaviour, tmp_path)
+    b._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
     b.quoted_tokens = amount
     with (
         patch.object(
             BetPlacementBehaviour, "_calc_buy_amount", return_value=done(success)
         ),
         patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch.object(type(b), "sampled_bet", new_callable=PropertyMock),
     ):
         sd.return_value.bet_amount = 50
         sd.return_value.vote = 0
@@ -1174,6 +1176,7 @@ def test_placement_failure_reason(
     from packages.valory.skills.decision_maker_abci.payloads import BetPlacementPayload
 
     b = make(FastBetPlacementBehaviour, tmp_path)
+    b._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
     b.quoted_tokens = tokens
     with (
         patch.object(
@@ -1220,6 +1223,7 @@ def test_placement_quote_retry(tmp_path: Any) -> None:
     from packages.valory.skills.decision_maker_abci.payloads import BetPlacementPayload
 
     b = make(FastBetPlacementBehaviour, tmp_path)
+    b._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
     b.quoted_tokens = 100
     with (
         patch.object(
@@ -1363,6 +1367,7 @@ def test_decided_amount_passes_placement(
     assert synced.bet_amount == int(decision.stake * 10**18)
     assert synced.vote is not None
     b = make(FastBetPlacementBehaviour, tmp_path)
+    b._get_pool_balances = lambda *args: done(reserves)
     b.context.params.fast = cfg
     from packages.valory.protocols.contract_api.message import ContractApiMessage
 
@@ -1381,7 +1386,12 @@ def test_decided_amount_passes_placement(
             type(b),
             "sampled_bet",
             new_callable=PropertyMock,
-            return_value=SimpleNamespace(id="market", creationTimestamp=1000),
+            return_value=SimpleNamespace(
+                id="market",
+                creationTimestamp=1000,
+                collateralToken="token",
+                condition_id="condition",
+            ),
         ),
     ):
         allowed = run(b._calc_buy_amount())
@@ -1403,6 +1413,7 @@ def test_decided_amount_passes_placement(
         net = other_buy - other_buy * fee // 10**18
         moved = [reserve + net for reserve in reserves]
         moved[synced.vote] -= other_tokens
+        b._get_pool_balances = lambda *args: done(moved)
         response.raw_transaction.body = {
             "amount": buy_amount(synced.bet_amount, moved, synced.vote, fee)
         }
@@ -1452,6 +1463,7 @@ def test_placement_edge_recheck_log(tmp_path: Any, missing_prediction: bool) -> 
     from packages.valory.skills.decision_maker_abci.payloads import BetPlacementPayload
 
     b = make(FastBetPlacementBehaviour, tmp_path)
+    b._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
     b.context.params.is_running_on_polymarket = False
     b.context.params.placement_min_edge = 0.03
     b.context.params.slippage = 0.01
@@ -1467,7 +1479,12 @@ def test_placement_edge_recheck_log(tmp_path: Any, missing_prediction: bool) -> 
             type(b),
             "sampled_bet",
             new_callable=PropertyMock,
-            return_value=SimpleNamespace(id="market", creationTimestamp=1000),
+            return_value=SimpleNamespace(
+                id="market",
+                creationTimestamp=1000,
+                collateralToken="token",
+                condition_id="condition",
+            ),
         ),
         patch.object(
             BetPlacementBehaviour,
@@ -1634,6 +1651,7 @@ def test_ceiling_replaces_quote_slippage(tmp_path: Any, side: int) -> None:
     )
 
     b = make(FastBetPlacementBehaviour, tmp_path)
+    b._get_pool_balances = lambda *args: done([100 * 10**18, 100 * 10**18])
     b.context.params.placement_min_edge = 0.03
     b.quoted_tokens = 100
     b.buy_amount = 97
@@ -1642,6 +1660,7 @@ def test_ceiling_replaces_quote_slippage(tmp_path: Any, side: int) -> None:
             BetPlacementBehaviour, "_calc_buy_amount", return_value=done(True)
         ),
         patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch.object(type(b), "sampled_bet", new_callable=PropertyMock),
     ):
         sd.return_value.bet_amount = 50
         sd.return_value.vote = side
