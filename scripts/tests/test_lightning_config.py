@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CONTROLS = {
     "lightning_still_hold": ("bool", False),
     "lightning_still_hold_max_price": ("float", 0.93),
+    "lightning_still_hold_min_entry_price": ("float", 0.55),
     "lightning_base_rate_window_days": ("int", 21),
     "lightning_base_rate_min_n": ("int", 60),
     "lightning_base_rate_floor": ("float", 0.90),
@@ -164,4 +165,27 @@ def test_topup_lead_declared(relative: str) -> None:
     """Declare the top-up lead in each fast deployment entry point."""
     assert params(relative)["fast_topup_lead_s"] == (
         1800 if relative.startswith("skills/") else "${FAST_TOPUP_LEAD_S:int:1800}"
+    )
+
+
+@pytest.mark.parametrize(
+    "name,default", [("still_hold_min_price", 0.6), ("max_price_drop", 0.15)]
+)
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "skills/fresh_watch_abci/skill.yaml",
+        "skills/omenstrat_fast_abci/skill.yaml",
+        "agents/omenstrat_fast/aea-config.yaml",
+        "agents/omenstrat_lightning/aea-config.yaml",
+        "services/omenstrat_fast/service.yaml",
+        "services/omenstrat_lightning/service.yaml",
+    ],
+)
+def test_fast_price_guards_declared(name, default, relative):
+    """Declare both shared price guards in every deployment entry point."""
+    assert params(relative)[name] == (
+        default
+        if relative.startswith("skills/")
+        else "${" + name.upper() + ":float:" + str(default) + "}"
     )
