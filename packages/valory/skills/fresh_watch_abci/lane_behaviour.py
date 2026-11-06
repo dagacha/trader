@@ -1142,7 +1142,7 @@ class LightningLaneBehaviour(FreshMarketPoller):
         :param log: raw factory creation event.
         :param block: creation block.
         :param seen: local block detection time.
-        :yield: receipt, optional balance read, and signing I/O.
+        :yield: receipt, current balance read, and signing I/O.
         """
         market = creation_details(log)
         self._creation_seen[market["id"]] = block
@@ -1173,18 +1173,20 @@ class LightningLaneBehaviour(FreshMarketPoller):
             block_hash=block["hash"],
             block_number=number(block["number"]),
         )
-        balances = funding_balances(receipt["logs"], market["id"])
-        if balances is None:
-            target, data = pool_balances_call(
-                market["id"],
-                market["conditional_tokens"],
-                market["collateralToken"],
-                market["condition"]["id"],
-            )
-            raw = yield from self._rpc(
-                "eth_call", [{"to": target, "data": data}, "latest"]
-            )
-            balances = list(decode(["uint256[]"], bytes.fromhex(raw[2:]))[0])
+        funding = funding_balances(receipt["logs"], market["id"])
+        requested = (
+            [funding[1] / sum(funding), funding[0] / sum(funding)]
+            if funding is not None
+            else None
+        )
+        target, data = pool_balances_call(
+            market["id"],
+            market["conditional_tokens"],
+            market["collateralToken"],
+            market["condition"]["id"],
+        )
+        raw = yield from self._rpc("eth_call", [{"to": target, "data": data}, "latest"])
+        balances = list(decode(["uint256[]"], bytes.fromhex(raw[2:]))[0])
         if len(balances) != 2 or min(balances) <= 0:
             return
         market.update(
@@ -1216,6 +1218,7 @@ class LightningLaneBehaviour(FreshMarketPoller):
             self.durable_trade_count(),
             self.params.max_trades,
             self.params.placement_min_edge,
+            requested=requested,
         )
         if reason or result is None or bounds is None:
             self.context.logger.info(

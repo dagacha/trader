@@ -42,6 +42,8 @@ class FastConfig:
     poll_s: int = 15
     active_window_utc: str = "00:00-05:30"
     fast_topup_lead_s: int = 1800
+    still_hold_min_price: float = 0.60
+    max_price_drop: float = 0.15
     housekeeping_interval_s: int = 600
     tools: List[str] = field(
         default_factory=lambda: [
@@ -158,6 +160,29 @@ def buy_amount(investment: int, balances: List[int], side: int, fee: int) -> int
     return balances[side] + net - (ending + one - 1) // one
 
 
+def raw_price_skip_reason(
+    prices: List[float],
+    requested: List[float],
+    side: int,
+    cfg: FastConfig,
+    yes_only: bool,
+) -> str:
+    """Name the first failed raw pool price guard.
+
+    :param prices: live YES and NO pool prices, without fees or impact.
+    :param requested: YES and NO prices at request time.
+    :param side: chosen outcome index.
+    :param cfg: strategy controls.
+    :param yes_only: restrict the strategy to YES.
+    :return: skip reason, or an empty string.
+    """
+    if yes_only and prices[0] < cfg.still_hold_min_price:
+        return "still_hold_price_floor"
+    if requested[side] - prices[side] > cfg.max_price_drop + 1e-12:
+        return "price_dropped"
+    return ""
+
+
 def decide(
     title: str,
     p_tool: float,
@@ -201,6 +226,9 @@ def decide(
         """
         if price > cfg.max_price - cfg.price_margin:
             return "max_price"
+        raw_reason = raw_price_skip_reason(prices, requested, side, cfg, yes_only)
+        if raw_reason:
+            return raw_reason
         if side == 1 and probability < cfg.no_min_p:
             return "no_min_p"
         if probability - price + 1e-12 < cfg.min_edge + cfg.price_margin:

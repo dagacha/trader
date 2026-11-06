@@ -125,9 +125,10 @@ def decision_inputs(tmp_path: Any) -> Any:
         lightning_lane_tip_gwei=550.0,
         lightning_still_hold=True,
         lightning_lane_max_age_s=6,
+        lightning_still_hold_min_entry_price=0,
     )
     cfg = SimpleNamespace(**values)
-    fast = FastConfig()
+    fast = replace(FastConfig(), still_hold_min_price=0)
     cache = BaseRateCache(tmp_path / "rate.json")
     cache.data = dict(
         n=100,
@@ -190,6 +191,34 @@ def test_zero_global_trade_cap_allows_lane_shots(tmp_path: Any) -> None:
     assert reason == ""
     assert decision is not None and decision.stake > 0
     assert bounds is not None
+
+
+def test_lane_decision_defaults_to_live_discovery_prices(tmp_path: Any) -> None:
+    """Keep the existing decision when discovery prices are absent."""
+    inputs = decision_inputs(tmp_path)
+    expected = lane_decision(**inputs)
+    assert lane_decision(**inputs, requested=None) == expected
+    assert lane_decision(**inputs, requested=[0.5, 0.5]) == expected
+
+
+@pytest.mark.parametrize(
+    "requested,reason",
+    [
+        ([0.8, 0.2], "price_dropped"),
+        ([0.4, 0.6], "max_slip"),
+        ([0, 1], "invalid_price"),
+    ],
+)
+def test_lane_decision_uses_discovery_price_guards(
+    tmp_path: Any, requested: list, reason: str
+) -> None:
+    """Apply the existing strategy checks to the discovery prices."""
+    inputs = decision_inputs(tmp_path)
+    inputs["balances"] = [38 * 10**18, 62 * 10**18]
+    decision, bounds, actual = lane_decision(**inputs, requested=requested)
+    assert actual == reason
+    assert decision is not None and decision.stake == 0
+    assert bounds is None
 
 
 @pytest.mark.parametrize(

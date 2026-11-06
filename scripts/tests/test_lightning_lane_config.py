@@ -197,7 +197,11 @@ def test_lane_rollback_removes_operator_controls(
     run(tmp_path, "--service", "omenstrat_lightning")
     url = "https://key.invalid/private-rollback-token"
     controls = {"LIGHTNING_LANE": "true", "LIGHTNING_RPC_URL": url}
-    values = {**controls, "LIGHTNING_STILL_HOLD_MAX_PRICE": "0.87"}
+    values = {
+        **controls,
+        "LIGHTNING_STILL_HOLD_MAX_PRICE": "0.87",
+        "LIGHTNING_STILL_HOLD_MIN_ENTRY_PRICE": "0.61",
+    }
     prefixes = (
         "",
         "SKILL_TRADER_ABCI_MODELS_PARAMS_ARGS_",
@@ -246,12 +250,15 @@ def test_lane_rollback_removes_operator_controls(
         assert all(key not in text for key in controls), path
         assert "LIGHTNING_STILL_HOLD_MAX_PRICE" in text
         assert "0.87" in text
+        assert "LIGHTNING_STILL_HOLD_MIN_ENTRY_PRICE" in text
+        assert "0.61" in text
         for report in (preview, output):
             line = next(line for line in report.splitlines() if f"{path}:" in line)
             if path != paths[0] or source_controls:
                 for key in controls:
                     assert f"remove lightning lane control {key}" in line
     assert "keep operator value LIGHTNING_STILL_HOLD_MAX_PRICE" in output
+    assert "keep operator value LIGHTNING_STILL_HOLD_MIN_ENTRY_PRICE" in output
 
 
 @pytest.mark.parametrize("service", ["omenstrat_fast", "trader_pearl"])

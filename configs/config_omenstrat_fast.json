@@ -1,6 +1,6 @@
 {
     "name": "omenstrat_fast",
-    "hash": "bafybeia7wi6trz6mr25osjxzcepo4zhoxlt2gk2dhfxtf6eh4ac5h72pt4",
+    "hash": "bafybeiaidhufwh7sdia4ljpdh4dta33y2jv7rgjflzr3vtf56ej2l37iky",
     "description": "Fresh-watch Omen agent with the fixed fast strategy.",
     "image": "https://operate.olas.network/_next/image?url=%2Fimages%2Fprediction-agent.png&w=3840&q=75",
     "service_version": "main",
@@ -244,6 +244,18 @@
             "value": "1800",
             "provision_type": "user"
         },
+        "STILL_HOLD_MIN_PRICE": {
+            "name": "Still hold min price",
+            "description": "Reject still-hold YES below this live pool price. Set 0 to disable.",
+            "value": "0.6",
+            "provision_type": "user"
+        },
+        "MAX_PRICE_DROP": {
+            "name": "Max price drop",
+            "description": "Reject a price drop above this amount since the request. Set 1.0 to disable.",
+            "value": "0.15",
+            "provision_type": "user"
+        },
         "HOUSEKEEPING_INTERVAL_S": {
             "name": "Housekeeping interval s",
             "description": "",
@@ -404,6 +416,12 @@
             "name": "Lightning still hold max price",
             "description": "Set the price cap for direct still-hold bets.",
             "value": "0.93",
+            "provision_type": "user"
+        },
+        "LIGHTNING_STILL_HOLD_MIN_ENTRY_PRICE": {
+            "name": "Lightning still hold min entry price",
+            "description": "Require this YES pool price for direct base-rate entry. Set 0 to disable.",
+            "value": "0.55",
             "provision_type": "user"
         },
         "LIGHTNING_BASE_RATE_WINDOW_DAYS": {

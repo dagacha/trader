@@ -1014,7 +1014,10 @@ def test_creation_receipt_reaches_signed_send_in_one_tick(
     creation = fixture["logs"][-1]
     market = creation_details(creation)
     created = fixture["blockTimestamp"]
-    b = lane(tmp_path, lightning_still_hold=True)
+    b = lane(
+        tmp_path, lightning_still_hold=True, lightning_still_hold_min_entry_price=0
+    )
+    b.context.params.fast = replace(b.context.params.fast, still_hold_min_price=0)
     prepared(b)
     (tmp_path / "lightning_base_rate.json").write_text(
         json.dumps(
@@ -1043,11 +1046,10 @@ def test_creation_receipt_reaches_signed_send_in_one_tick(
                 ).hex(),
             )
         )
-    responses = [done({"logs": logs})]
-    if not funding:
-        responses.append(
-            done("0x" + encode(["uint256[]"], [[7 * 10**18, 7 * 10**18]]).hex())
-        )
+    responses = [
+        done({"logs": logs}),
+        done("0x" + encode(["uint256[]"], [[7 * 10**18, 7 * 10**18]]).hex()),
+    ]
     b._rpc = MagicMock(side_effect=responses)
     reply_on_send(
         b,
@@ -1091,14 +1093,138 @@ def test_creation_receipt_reaches_signed_send_in_one_tick(
         assert (
             b.context.shared_state["lightning_lane_inflight"]["market"] == market["id"]
         )
-        assert b._rpc.call_count == 1 + int(not funding) + 2 * int(tick)
+        assert b._rpc.call_count == 2 + 2 * int(tick)
         run(b._market(creation, block, created + 0.3))
-    assert b._rpc.call_count == 1 + int(not funding) + 2 * int(tick)
+    assert b._rpc.call_count == 2 + 2 * int(tick)
     assert b._shots == 1
     tx = b.context.signing_dialogues.create.call_args.kwargs["raw_transaction"].body
     assert tx["maxPriorityFeePerGas"] == 550 * 10**9
     assert tx["data"].startswith("0x6a761202")
     b._broadcast.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "funded_yes,live_yes,rpc_error,reason",
+    [
+        (70, 45, False, "entry_price"),
+        (50, 65, False, ""),
+        (80, 62, False, "price_dropped"),
+        (None, 65, False, ""),
+        (70, 65, True, "tick_failed"),
+    ],
+)
+def test_mined_lane_reads_current_reserves_before_decision(
+    tmp_path: Any, funded_yes: Any, live_yes: int, rpc_error: bool, reason: str
+) -> None:
+    """Use live reserves for entry and funding prices for execution bounds."""
+    from pathlib import Path
+
+    from packages.valory.skills.fresh_watch_abci.chain_discovery import creation_details
+    from packages.valory.skills.fresh_watch_abci.lane import (
+        SlotPoller,
+        pool_balances_call,
+    )
+    from packages.valory.skills.fresh_watch_abci.lane_behaviour import LaneRPCError
+
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures" / "chain_creation.json").read_text()
+    )
+    creation = fixture["logs"][-1]
+    market = creation_details(creation)
+    created = fixture["blockTimestamp"]
+    b = lane(tmp_path, lightning_still_hold=True)
+    prepared(b)
+    (tmp_path / "lightning_base_rate.json").write_text(
+        json.dumps(
+            dict(
+                n=100,
+                rate=0.95,
+                template_id=2,
+                creators=sorted(b.params.lightning.lightning_creators),
+                window_days=21,
+                refreshed_at=created,
+            )
+        )
+    )
+    logs = fixture["logs"].copy()
+    if funded_yes is not None:
+        logs.append(
+            dict(
+                address=market["id"],
+                topics=[
+                    "0x"
+                    + keccak(text="FPMMFundingAdded(address,uint256[],uint256)").hex()
+                ],
+                data="0x"
+                + encode(
+                    ["uint256[]", "uint256"],
+                    [[(100 - funded_yes) * 10**18, funded_yes * 10**18], 10**18],
+                ).hex(),
+            )
+        )
+    balances = [(100 - live_yes) * 10**18, live_yes * 10**18]
+    block = {
+        "number": hex(creation["blockNumber"]),
+        "hash": "0xblock",
+        "timestamp": hex(created),
+    }
+    b._checked = b._safe_ok = b._was_fresh = True
+    b._poller = SlotPoller()
+    b._poller.height(block["number"], created + 0.4)
+    b._rpc = MagicMock(
+        side_effect=[
+            done(block),
+            done([creation]),
+            done({"logs": logs}),
+            (
+                LaneRPCError("Lane RPC request failed")
+                if rpc_error
+                else done("0x" + encode(["uint256[]"], [balances]).hex())
+            ),
+        ]
+    )
+    b._send = MagicMock(return_value=done(True))
+    b._refresh_idle = MagicMock(return_value=done(None))
+    with patch(MODULE + ".time.time", return_value=created + 0.4):
+        run(b.async_act())
+    assert [call.args[0] for call in b._rpc.call_args_list] == [
+        "eth_getBlockByNumber",
+        "eth_getLogs",
+        "eth_getTransactionReceipt",
+        "eth_call",
+    ]
+    target, data = pool_balances_call(
+        market["id"],
+        market["conditional_tokens"],
+        market["collateralToken"],
+        market["condition"]["id"],
+    )
+    assert b._rpc.call_args.args == (
+        "eth_call",
+        [{"to": target, "data": data}, "latest"],
+    )
+    if reason:
+        b._send.assert_not_called()
+        if rpc_error:
+            b.context.logger.warning.assert_called_once_with(
+                "[LIGHTNING_LANE] tick_failed=true"
+            )
+        else:
+            b.context.logger.info.assert_any_call(
+                "[LIGHTNING_LANE] market=%s reason=%s", market["id"], reason
+            )
+        assert "lightning_lane_inflight" not in b.context.shared_state
+        assert b._shots == 0
+        return
+    b._send.assert_called_once()
+    row, decision, bounds, _, _ = b._send.call_args.args
+    assert row["outcomeTokenAmounts"] == balances
+    assert row["outcomeTokenMarginalPrices"] == [live_yes / 100, 1 - live_yes / 100]
+    assert row["scaledLiquidityMeasure"] == min(balances) / 10**18
+    assert decision.stake > 0
+    assert decision.price >= live_yes / 100
+    discovery_yes = (funded_yes if funded_yes is not None else live_yes) / 100
+    assert bounds[0] == pytest.approx(discovery_yes + b.params.fast.max_slip)
 
 
 def test_missing_receipt_title_stays_with_fsm(tmp_path: Any) -> None:

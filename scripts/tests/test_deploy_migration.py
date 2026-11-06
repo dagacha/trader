@@ -3553,3 +3553,36 @@ def test_topup_lead_migration(tmp_path: Path, service: str, existing: bool) -> N
         env = json.loads(path.read_text())["env_variables"]
         assert env["FAST_TOPUP_LEAD_S"]["value"] == ("1200" if existing else "1800")
         assert not any(k.endswith("_ARGS_FAST_TOPUP_LEAD_S") for k in env)
+
+
+@pytest.mark.parametrize("service", ["omenstrat_fast", "omenstrat_lightning"])
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize(
+    "name,default,override",
+    [
+        ("STILL_HOLD_MIN_PRICE", "0.6", "0.65"),
+        ("MAX_PRICE_DROP", "0.15", "0.10"),
+        ("LIGHTNING_STILL_HOLD_MIN_ENTRY_PRICE", "0.55", "0.60"),
+    ],
+)
+def test_price_guard_migration(
+    tmp_path: Path, service: str, existing: bool, name: str, default: str, override: str
+) -> None:
+    """Add price guard defaults and keep the operator's values in all copies."""
+    paths = fixture(tmp_path)
+    data = json.loads(paths[0].read_text())
+    if existing:
+        data["env_variables"][name] = entry(override)
+    paths[0].write_text(json.dumps(data))
+    run(tmp_path, "--service", service)
+    for path in paths:
+        env = json.loads(path.read_text())["env_variables"]
+        if (
+            name.startswith("LIGHTNING_")
+            and service == "omenstrat_fast"
+            and not existing
+        ):
+            assert name not in env
+        else:
+            assert env[name]["value"] == (override if existing else default)
+        assert not any(k.endswith("_ARGS_" + name) for k in env)

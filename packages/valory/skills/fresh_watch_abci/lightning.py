@@ -35,6 +35,7 @@ class LightningConfig:
 
     lightning_still_hold: bool = False
     lightning_still_hold_max_price: float = 0.93
+    lightning_still_hold_min_entry_price: float = 0.55
     lightning_base_rate_window_days: int = 21
     lightning_base_rate_min_n: int = 60
     lightning_base_rate_floor: float = 0.90
@@ -93,6 +94,7 @@ class LightningConfig:
             raise ValueError("Require valid factory and creator addresses.")
         if not (
             0 < self.lightning_still_hold_max_price < 1
+            and 0 <= self.lightning_still_hold_min_entry_price <= 1
             and 0 <= self.still_hold_prior <= 1
             and 0 <= self.lightning_base_rate_floor <= 1
         ):

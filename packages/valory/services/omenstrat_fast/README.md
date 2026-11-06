@@ -93,6 +93,9 @@ settlement logs for that result.
 | `POLL_S` | `15` |
 | `ACTIVE_WINDOW_UTC` | `00:00-05:30` (start included, end excluded) |
 | `FAST_TOPUP_LEAD_S` | `1800`; start activity top-up with this lead plus 90 seconds per missing request |
+| `STILL_HOLD_MIN_PRICE` | `0.60`; reject still-hold YES below this live pool price. Set `STILL_HOLD_MIN_PRICE=0` to disable. |
+| `MAX_PRICE_DROP` | `0.15`; reject a drop above this amount since the request, on any chosen side. Set `MAX_PRICE_DROP=1.0` to disable. |
+| `LIGHTNING_STILL_HOLD_MIN_ENTRY_PRICE` | `0.55`; require this YES pool price for direct base-rate entry. Set `LIGHTNING_STILL_HOLD_MIN_ENTRY_PRICE=0` to disable. |
 | `HOUSEKEEPING_INTERVAL_S` | `600` |
 | `FAST_TOOLS` | `superforcaster_calibrated_full_search`, then `superforcaster` |
 | `PRIOR_WEIGHT` | `0.5` (tool weight; prior weight is its complement) |

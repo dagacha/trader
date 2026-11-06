@@ -99,6 +99,7 @@ from packages.valory.skills.fresh_watch_abci.strategy import (
     FreshQueue,
     decide,
     housekeeping_due,
+    raw_price_skip_reason,
     template,
 )
 from packages.valory.skills.market_manager_abci.bets import (
@@ -155,6 +156,24 @@ def lightning_controls(behaviour: DecisionMakerBaseBehaviour) -> LightningConfig
     if controls.lightning_preview and not preview_enabled(behaviour):
         return replace(controls, lightning_preview=False)
     return controls
+
+
+def is_still_hold(bet: Bet, template_id: Any, cfg: LightningConfig) -> bool:
+    """Use the same YES-only rule at decision and placement.
+
+    :param bet: sampled market.
+    :param template_id: Realitio question template.
+    :param cfg: lightning controls.
+    :return: whether this market uses the YES-only still-hold rule.
+    """
+    return bool(
+        cfg.lightning_still_hold
+        and natural_yes_index(
+            {"outcomes": bet.outcomes, "question": {"templateId": template_id}}
+        )
+        is not None
+        and still_hold_rule(bet.title, bet.creator, cfg)
+    )
 
 
 def remove_preview_bets(behaviour: DecisionMakerBaseBehaviour) -> None:
@@ -737,6 +756,16 @@ class FreshWatchBehaviour(
         prices = [balances[1] / sum(balances), balances[0] / sum(balances)]
         if probability is not None:
             probability = base_rate.usable(time.time(), lightning)
+        if (
+            probability is not None
+            and prices[0] < lightning.lightning_still_hold_min_entry_price
+        ):
+            self.context.logger.info(
+                "[LIGHTNING_STILL_HOLD] skipped_direct market=%s yes_price=%s",
+                bet.id,
+                prices[0],
+            )
+            probability = None
         if probability is not None:
             self.context.logger.info(
                 "[LIGHTNING_STILL_HOLD] market=%s rule=%s p_yes=%s",
@@ -1040,11 +1069,7 @@ class FastDecisionBehaviour(PreviewMixin, DecisionMakerBaseBehaviour):
             )
             is not None
         )
-        still_hold = bool(
-            lightning.lightning_still_hold
-            and canonical
-            and still_hold_rule(bet.title, bet.creator, lightning)
-        )
+        still_hold = is_still_hold(bet, db.get("question_template_id", None), lightning)
         direct = db.get("lightning_probability", None) if still_hold else None
         direct = direct if isinstance(direct, (int, float)) else None
         preview_probability = (
@@ -1220,9 +1245,9 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
         )
 
     def _calc_buy_amount(self) -> Generator[None, None, bool]:
-        """Abort when the execution quote exceeds the price or slip bounds.
+        """Recheck execution bounds and raw pool prices before a buy.
 
-        :yield: control during the contract quote.
+        :yield: control during the contract quote and reserve read.
         :return: whether the quoted buy satisfies the bounds.
         """
         self._placement_failure = "quote"
@@ -1230,16 +1255,37 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
         self._price_ceiling = None
         self._min_tokens_out = None
         success = yield from super()._calc_buy_amount()
+        # The parent sets a provisional amount. Keep it only after all guards pass.
+        self.buy_amount = 0
         if not success or self.quoted_tokens <= 0:
             return False
         price = self.investment_amount / self.quoted_tokens
         self._executed_price = price
-        requested = self.synchronized_data.db.get_strict("request_prices")[
-            self.outcome_index
-        ]
+        db = self.synchronized_data.db
+        requested_prices = db.get_strict("request_prices")
+        requested = requested_prices[self.outcome_index]
         cfg = self.params.fast
         if price > self._execution_max_price():
             self._placement_failure = "max_price"
+            return False
+        bet = self.sampled_bet
+        balances = yield from self._get_pool_balances(
+            bet.id, bet.collateralToken, bet.condition_id
+        )
+        if balances is None or min(balances) <= 0:
+            return False
+        prices = [balances[1] / sum(balances), balances[0] / sum(balances)]
+        reason = raw_price_skip_reason(
+            prices,
+            requested_prices,
+            self.outcome_index,
+            cfg,
+            is_still_hold(
+                bet, db.get("question_template_id", None), lightning_controls(self)
+            ),
+        )
+        if reason:
+            self._placement_failure = reason
             return False
         if price - requested > cfg.max_slip + 1e-12:
             self._placement_failure = "max_slip"
