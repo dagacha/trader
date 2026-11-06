@@ -3553,3 +3553,101 @@ def test_topup_lead_migration(tmp_path: Path, service: str, existing: bool) -> N
         env = json.loads(path.read_text())["env_variables"]
         assert env["FAST_TOPUP_LEAD_S"]["value"] == ("1200" if existing else "1800")
         assert not any(k.endswith("_ARGS_FAST_TOPUP_LEAD_S") for k in env)
+
+
+def user_entry(**fields):
+    """Make a quickstart env entry that the middleware asks the user for."""
+    return {"name": "Input", "description": "", "provision_type": "user", **fields}
+
+
+def test_every_user_key_is_saved_for_unattended_start(tmp_path):
+    """Unattended quickstart stops on a user key missing from the saved inputs."""
+    source = fixture(tmp_path)[0]
+    secret = "wss://key.invalid/private-token"
+    source.write_text(
+        json.dumps(
+            {
+                "env_variables": {
+                    "EMPTY_INPUT": user_entry(value=""),
+                    "NO_VALUE": user_entry(),
+                    "NULL_VALUE": user_entry(value=None),
+                    "NEW_INPUT": user_entry(value=secret),
+                    "KEPT": user_entry(value="template"),
+                    "KEPT_EMPTY": user_entry(value="template"),
+                    "EMPTY_SOURCE_KEPT": user_entry(value=""),
+                    "COMPUTED": entry(""),
+                    "FIXED": {"value": "", "provision_type": "fixed"},
+                }
+            }
+        )
+    )
+    path = tmp_path / ".operate" / "Trader Agent-quickstart-config.json"
+    original = (
+        json.dumps(
+            {
+                "user_provided_args": {
+                    "KEPT": "operator",
+                    "KEPT_EMPTY": "",
+                    "EMPTY_SOURCE_KEPT": "operator",
+                }
+            }
+        )
+        + "\n"
+    )
+    path.write_text(original)
+    preview = run(tmp_path, "--dry-run")
+    assert path.read_text() == original
+    assert "add saved input EMPTY_INPUT" in preview
+    output = run(tmp_path)
+    assert secret not in preview + output
+    assert json.loads(path.read_text())["user_provided_args"] == {
+        "EMPTY_INPUT": "",
+        "NO_VALUE": "",
+        "NULL_VALUE": "",
+        "NEW_INPUT": secret,
+        "KEPT": "operator",
+        "KEPT_EMPTY": "",
+        "EMPTY_SOURCE_KEPT": "operator",
+    }
+    after = path.read_bytes()
+    run(tmp_path)
+    assert path.read_bytes() == after
+
+
+def test_saving_user_keys_leaves_service_configs_alone(tmp_path):
+    """Only saved inputs get the empty key; cached env values do not change."""
+    paths = fixture(tmp_path)
+    paths[0].write_text(
+        json.dumps({"env_variables": {"EMPTY_INPUT": user_entry(value="")}})
+    )
+    saved = tmp_path / ".operate" / "Trader Agent-quickstart-config.json"
+    saved.write_text(json.dumps({"user_provided_args": {}}))
+    run(tmp_path)
+    assert all("EMPTY_INPUT" not in path.read_text() for path in paths[1:])
+    assert json.loads(saved.read_text())["user_provided_args"] == {"EMPTY_INPUT": ""}
+
+
+@pytest.mark.parametrize("service", ["omenstrat_fast", "trader_pearl"])
+def test_rollback_does_not_save_removed_user_keys(tmp_path, service):
+    """A rollback removes the lightning controls. It must not save them again."""
+    paths = fixture(tmp_path)
+    for path in paths:
+        config = json.loads(path.read_text())
+        config["env_variables"]["LIGHTNING_WSS_URL"] = user_entry(value="")
+        path.write_text(json.dumps(config))
+    saved = tmp_path / ".operate" / "Trader Agent-quickstart-config.json"
+    saved.write_text(json.dumps({"user_provided_args": {}}))
+    run(tmp_path, "--service", service)
+    assert "LIGHTNING_WSS_URL" not in paths[0].read_text()
+    assert "LIGHTNING_WSS_URL" not in saved.read_text()
+
+
+def test_lightning_release_saves_the_empty_websocket_key(tmp_path):
+    """The real template key reaches the saved inputs on a lightning release."""
+    fixture(tmp_path)
+    saved = tmp_path / ".operate" / "Trader Agent-quickstart-config.json"
+    saved.write_text(json.dumps({"user_provided_args": {}}))
+    run(tmp_path, "--service", "omenstrat_lightning")
+    assert (
+        json.loads(saved.read_text())["user_provided_args"]["LIGHTNING_WSS_URL"] == ""
+    )

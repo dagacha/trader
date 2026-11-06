@@ -587,6 +587,22 @@ def sync_cached_json(text, desired, upgrade_slip=False):
     return text, changes
 
 
+def save_user_inputs(text, inputs):
+    """Add user inputs missing from the saved inputs. Keep the existing inputs."""
+    data = json.loads(text)
+    changes = []
+    for obj in list(objects(data)):
+        saved = obj.get("user_provided_args")
+        if not isinstance(saved, dict):
+            continue
+        for key, value in inputs.items():
+            if key not in saved:
+                saved[key] = value
+                text = edit_json(text, data, addition=(key, value))
+                changes.append(f"add saved input {key} from quickstart")
+    return text, changes
+
+
 def cached_env_blocks(lines, values, env_file):
     """Locate separate agent env blocks in deployment files."""
     blocks = [(0, len(lines), None)] if env_file else []
@@ -1255,6 +1271,7 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
     removed = set(recorded or []) - {"MAX_TRADES"}
     stored = []
     desired = {}
+    user_inputs = {}
     for path in paths:
         if not path.is_file():
             print(f">> {path}: missing; skipping")
@@ -1382,6 +1399,13 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                 and isinstance(entry, dict)
                 and entry.get("value") not in (None, "")
             }
+        if path == paths[0]:
+            # Unattended quickstart stops on a user key with no saved input.
+            user_inputs = {
+                key: entry.get("value") or ""
+                for key, entry in json.loads(updated).get("env_variables", {}).items()
+                if isinstance(entry, dict) and entry.get("provision_type") == "user"
+            }
         if rollback and recorded is None:
             desired = {
                 key: entry
@@ -1412,6 +1436,9 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                 (migrate_json if path.suffix == ".json" else migrate_env)(
                     updated, priorities, hashes, []
                 )
+        if path.suffix == ".json" and not rollback:
+            updated, saved_inputs = save_user_inputs(updated, user_inputs)
+            changes.extend(saved_inputs)
         for warning in warnings:
             print(f"WARNING: {path}: {warning}")
         for mech in priorities:
