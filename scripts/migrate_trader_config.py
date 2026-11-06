@@ -28,6 +28,7 @@ With --service, permit a public ID change when an Omen cache has another ID.
 
 import argparse
 import json
+import os
 import re
 import shutil
 from datetime import datetime, timezone
@@ -1410,6 +1411,7 @@ def migrate(quickstart, dry_run=False, warn_only=False, service=None):
                 if isinstance(final_env.get(key), dict)
                 and final_env[key].get("provision_type") == "user"
                 and final_env[key].get("value") in (None, "")
+                and not os.environ.get(key, "").strip()
             }
         if rollback and recorded is None:
             desired = {

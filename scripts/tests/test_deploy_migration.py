@@ -3594,6 +3594,28 @@ def test_empty_websocket_key_is_saved_once(tmp_path):
     assert saved.read_bytes() == after
 
 
+def test_environment_websocket_url_stays_with_the_middleware(tmp_path, monkeypatch):
+    """Quickstart reads the environment only when the key has no saved input."""
+    url = "wss://key.invalid/private-token"
+    monkeypatch.setenv("LIGHTNING_WSS_URL", f" {url} ")
+    inputs, output = lightning_saved_inputs(tmp_path, {})
+    assert "LIGHTNING_WSS_URL" not in inputs
+    assert url not in output
+    saved = tmp_path / ".operate" / "Trader Agent-quickstart-config.json"
+    after = saved.read_bytes()
+    assert url not in after.decode()
+    run(tmp_path, "--service", "omenstrat_lightning")
+    assert saved.read_bytes() == after
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_blank_environment_websocket_url_is_still_saved(tmp_path, monkeypatch, value):
+    """A blank value gives quickstart no endpoint, so the saved input stays useful."""
+    monkeypatch.setenv("LIGHTNING_WSS_URL", value)
+    inputs, _ = lightning_saved_inputs(tmp_path, {})
+    assert inputs["LIGHTNING_WSS_URL"] == ""
+
+
 def test_saved_websocket_url_is_kept_and_not_printed(tmp_path):
     """An empty template key must not erase the operator's endpoint."""
     url = "wss://key.invalid/private-token"

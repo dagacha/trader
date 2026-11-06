@@ -72,7 +72,7 @@ trade counter with `omen:<tx>`. Queue removal prevents a second FSM bet.
 | `LIGHTNING_LANE` | `false` | Enable the optional lane. |
 | `LIGHTNING_RPC_URL` | empty | Private raw JSON-RPC endpoint; secret. |
 | `LIGHTNING_MEMPOOL` | `false` | Enable pending creation detection. Requires the lane. |
-| `LIGHTNING_WSS_URL` | empty | Private full-transaction websocket endpoint; secret. |
+| `LIGHTNING_WSS_URL` | empty | Private full-transaction websocket endpoint; secret. Set it in `configs/config_predict_trader.json`, not only in the environment. |
 | `LIGHTNING_MEMPOOL_DELAY_MS` | `150` | Send delay from first sight, in milliseconds. |
 | `LIGHTNING_MEMPOOL_MAX_PRIO_GWEI` | `2` | Skip creator priority fees above this limit. |
 | `LIGHTNING_POLL_OFFSET_S` | `0.3` | Delay after the next slot starts. |
