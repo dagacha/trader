@@ -231,6 +231,7 @@ def lane_decision(
     trade_count: int,
     max_trades: int,
     placement_min_edge: float,
+    requested: Optional[List[float]] = None,
 ) -> Tuple[Optional[Decision], Optional[Tuple[float, int]], str]:
     """Use the existing direct still-hold strategy for one eligible shot.
 
@@ -243,6 +244,7 @@ def lane_decision(
     :param trade_count: durable settled trade count.
     :param max_trades: configured trade cap.
     :param placement_min_edge: edge enforced by placement.
+    :param requested: discovery prices, or None to use current pool prices.
     :return: strategy result, execution bounds, and explicit skip reason.
     """
     if not lightning.lightning_lane or not lightning.lightning_rpc_url:
@@ -276,9 +278,11 @@ def lane_decision(
     if len(balances) != 2 or min(balances) <= 0:
         return None, None, "invalid_price"
     total = sum(balances)
-    requested = [balances[1] / total, balances[0] / total]
-    if requested[0] < lightning.lightning_still_hold_min_entry_price:
+    prices = [balances[1] / total, balances[0] / total]
+    if prices[0] < lightning.lightning_still_hold_min_entry_price:
         return None, None, "entry_price"
+    if requested is None:
+        requested = prices
     cfg = replace(
         fast, prior_weight=1.0, max_price=lightning.lightning_still_hold_max_price
     )

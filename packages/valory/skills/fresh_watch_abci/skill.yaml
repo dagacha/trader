@@ -13,8 +13,8 @@ fingerprint:
   dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
   fsm_specification.yaml: bafybeifhpatx5365ubtse2g6kqo6cjeuzoruf75dv5r5xg27n4wtyrtrbm
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
-  lane.py: bafybeicxwbwupqhpwdkvjc3uyuoe2n3h4jkfj5vtpmf7vlvdvxm3zx5gnm
-  lane_behaviour.py: bafybeics3qfz7g2o24qfc3nfstpqmba77fpr7olxp3itlqvvbikytwu5ji
+  lane.py: bafybeidyifx2v2avdpvgni43n2rywy67jz7k7kgkezsma6k6blj2cuzop4
+  lane_behaviour.py: bafybeigrkuwz36fzeiqfn7rvvxolac54l6h52sgse53s6ik6j37qqxdcfm
   lightning.py: bafybeigfofqr2xfqnw776y6h42gl2rl55zj7kfodhs5lh4sckojhule6eu
   mempool.py: bafybeihxi7vs5xudtd6tdkxpm6jrlninvgjbv4dynr6rffirzefjquqvlq
   mempool_ws.py: bafybeigoxte3evulaikdbhj7ljmbpt7oqbgarku4gbhw7hfc5isdhczzmq
@@ -37,8 +37,8 @@ fingerprint:
   tests/test_configured_prior.py: bafybeibmk7ilhbdlpprmzgg5muvqu7zdfhszcw25ks4asr7bevssusjpli
   tests/test_event_reader.py: bafybeib6wxe56sudyw4tz3gi5zvv2r3ofqjycwviscadkz2dawk3zieptq
   tests/test_foreground_lane_races.py: bafybeihis2avomce6ydsvwtdbca3mnwlvyhoex6lf56qm63jszmzunx4py
-  tests/test_lane.py: bafybeiea2r4pzqyoin64ksbhnvu4gwkzhp6lubyctb5ds77l6oebx5dn7y
-  tests/test_lane_behaviour.py: bafybeig2bwdguujy4sagr44kzytezhijimztuflrdz6yxmvy5wefb4qncq
+  tests/test_lane.py: bafybeigxfm4yywpz4nupb7mlszch6ilfdglelfpbolrdaf5h6q5zr2sljm
+  tests/test_lane_behaviour.py: bafybeigk25cg3ijion3jpcipzh6b75z57swll64o3dua3wmwlrdlxomn5y
   tests/test_lane_bets_read.py: bafybeicf3igfhgcyeejmcy7pljlvt2avao2cdyjenlbuhjjao6yb4gu4ey
   tests/test_lane_journal_recovery.py: bafybeif7vk23ocyvnet6lc6sjqi53gmbu5ksqquilpmqrm7ngjekc2ttfu
   tests/test_lane_limits.py: bafybeidjfi55egsiolcea6b2a4mdbmw5o6ntq3zfzgvfufsc6mdk5qsbta
