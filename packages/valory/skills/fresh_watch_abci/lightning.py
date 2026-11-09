@@ -47,6 +47,7 @@ class LightningConfig:
     lightning_preview_max_per_night: int = 15
     lightning_creators: List[str] = field(default_factory=lambda: FastConfig().creators)
     lightning_lane: bool = False
+    lightning_lane_exempt_max_trades: bool = False
     lightning_rpc_url: str = field(default="", repr=False)
     lightning_poll_offset_s: float = 0.3
     lightning_poll_step_s: float = 0.25

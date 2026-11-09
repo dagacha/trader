@@ -1,6 +1,6 @@
 {
     "name": "omenstrat_lightning",
-    "hash": "bafybeifzsgziiw3udoph2rgupwynwpwdbfl56hzddtabvyru7o36akcbt4",
+    "hash": "bafybeihe2galc627t3leyw3vyqp3rl2nq33clcv77yckrydrm2eo4ebcqu",
     "description": "Omen agent with still-hold base rates, chain discovery, and question previews.",
     "image": "https://operate.olas.network/_next/image?url=%2Fimages%2Fprediction-agent.png&w=3840&q=75",
     "service_version": "main",
@@ -248,6 +248,12 @@
             "name": "Still hold min price",
             "description": "Reject still-hold YES below this live pool price. Set 0 to disable.",
             "value": "0.6",
+            "provision_type": "user"
+        },
+        "STILL_HOLD_MIN_EDGE": {
+            "name": "Still hold min edge",
+            "description": "Minimum edge for direct still-hold YES decisions. Must be at least 0 and below 1.",
+            "value": "0.04",
             "provision_type": "user"
         },
         "MAX_PRICE_DROP": {
@@ -543,6 +549,12 @@
             "name": "Lightning lane max per night",
             "description": "Limit lane shots per night, including reverts. Minus one uses MAX_TRADES.",
             "value": "-1",
+            "provision_type": "user"
+        },
+        "LIGHTNING_LANE_EXEMPT_MAX_TRADES": {
+            "name": "Lightning lane exempt max trades",
+            "description": "Exclude lane fills from MAX_TRADES. Lane fills still count toward activity through the trade ledger.",
+            "value": "false",
             "provision_type": "user"
         },
         "LIGHTNING_MEMPOOL": {

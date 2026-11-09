@@ -65,8 +65,8 @@ protocols:
 - valory/acn_data_share:0.1.0:bafybeieqisfr6lhaaesq37lk7vyaxza2h6nucshksgyo2djqfyf2saqo4i
 - valory/srr:0.1.0:bafybeibfs6osw7guctdpollf4iwt4vhd6yk7ai34tqk5djuxtgowjwdjb4
 skills:
-- valory/trader_abci:0.1.0:bafybeifizcskbmjawbskkhztzpv4rbpdotnmtwwvfl4oucv5twcqirzmqm
-- valory/fresh_watch_abci:0.1.0:bafybeif7gh6v4wdmb4s6ukjyacrbosbet3bkc6todx6no5w7qxiqmlsxee
+- valory/trader_abci:0.1.0:bafybeiegkp2ben6bxmnkq6rirb7wfxqjrohbz273jkrwkhjm5th3ikrzcy
+- valory/fresh_watch_abci:0.1.0:bafybeiaescldap5ys3keti73reqsdrxvhk6ux4v4hud4kvzswbqpkfnj4q
 - valory/abstract_abci:0.1.0:bafybeie5et43th2nta76cd3kpm3fmurd7oyzk3qxim76octvt56m6r2poi
 - valory/abstract_round_abci:0.1.0:bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4
 - valory/registration_abci:0.1.0:bafybeicwfwrzdu5kjcjh4ntzgo7dghy5rs4o6ddbwgo2vz7bomi67gn5wa
@@ -76,7 +76,7 @@ skills:
 - valory/tx_settlement_multiplexer_abci:0.1.0:bafybeibloowytygfctwzbklqdvitgzbyh7atki4byhoen47ek47smlunbq
 - valory/market_manager_abci:0.1.0:bafybeidsapj2dqxjcndhhtn5my7gjoq66oyhmty4zl6mg4trkjkewnss3e
 - valory/decision_maker_abci:0.1.0:bafybeifybxivsrppz4vkujqjzjqiiwfbnm7agqikhuwz3enrshdvrxbtzy
-- valory/omenstrat_fast_abci:0.1.0:bafybeih42rd7xlwxhgrgwcbya6qdjdo6qdputzewfarms4d2rv774ycnei
+- valory/omenstrat_fast_abci:0.1.0:bafybeigb6vojzdecstzztk77pehhd46ngihjtg3hptav3pte4ilc2jmdru
 - valory/staking_abci:0.1.0:bafybeig4okradpfhtdyawxltl3roq4heqlsyu232i5gyhavszoqa6frpym
 - valory/check_stop_trading_abci:0.1.0:bafybeidwmrttdpjef55ukfdikazo3k5422puktsephe2djjoqtkz4ucdm4
 - valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m
@@ -336,6 +336,7 @@ models:
       active_window_utc: ${ACTIVE_WINDOW_UTC:str:00:00-05:30}
       fast_topup_lead_s: ${FAST_TOPUP_LEAD_S:int:1800}
       still_hold_min_price: ${STILL_HOLD_MIN_PRICE:float:0.6}
+      still_hold_min_edge: ${STILL_HOLD_MIN_EDGE:float:0.04}
       max_price_drop: ${MAX_PRICE_DROP:float:0.15}
       housekeeping_interval_s: ${HOUSEKEEPING_INTERVAL_S:int:600}
       tools: ${FAST_TOOLS:list:["superforcaster_calibrated_full_search","superforcaster"]}
@@ -363,6 +364,7 @@ models:
       lightning_lane_tip_cap_gwei: ${LIGHTNING_LANE_TIP_CAP_GWEI:float:1000.0}
       lightning_lane_inflight_timeout_s: ${LIGHTNING_LANE_INFLIGHT_TIMEOUT_S:int:60}
       lightning_lane_max_per_night: ${LIGHTNING_LANE_MAX_PER_NIGHT:int:-1}
+      lightning_lane_exempt_max_trades: ${LIGHTNING_LANE_EXEMPT_MAX_TRADES:bool:false}
       lightning_still_hold: ${LIGHTNING_STILL_HOLD:bool:false}
       lightning_still_hold_max_price: ${LIGHTNING_STILL_HOLD_MAX_PRICE:float:0.93}
       lightning_still_hold_min_entry_price: ${LIGHTNING_STILL_HOLD_MIN_ENTRY_PRICE:float:0.55}

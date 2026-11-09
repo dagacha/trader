@@ -155,6 +155,8 @@ class FastParams(TraderParams):
             raise ValueError("Require 0 <= price_margin < min(max_slip, max_price).")
         if not 0 <= self.fast.still_hold_min_price <= 1:
             raise ValueError("Require 0 <= still_hold_min_price <= 1.")
+        if not 0 <= self.fast.still_hold_min_edge < 1:
+            raise ValueError("Require 0 <= still_hold_min_edge < 1.")
         if not 0 <= self.fast.max_price_drop <= 1:
             raise ValueError("Require 0 <= max_price_drop <= 1.")
         if kwargs.get("is_running_on_polymarket"):
@@ -168,6 +170,9 @@ class FastParams(TraderParams):
             "use_dynamic_mech_selection": dynamic,
         }
         super().__init__(*args, **kwargs)
+        self.context.logger.info(
+            "[FAST_CONFIG] still_hold_min_edge=%s", self.fast.still_hold_min_edge
+        )
 
 
 class SharedState(TraderSharedState):
