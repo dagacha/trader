@@ -250,6 +250,7 @@ class LightningLaneBehaviour(FreshMarketPoller):
             self._mempool.start()
         self._take_head()
         candidates = self._mempool.drain()
+        drained_at = time.time()
         if (
             not self._checked
             or not self._safe_ok
@@ -285,10 +286,11 @@ class LightningLaneBehaviour(FreshMarketPoller):
                     "[LIGHTNING_MEMPOOL] market=%s reason=%s", market_id, reason
                 )
                 continue
+            decide_started = time.time()
             result, bounds, reason = lane_decision(
                 market,
                 [pending.initial_funds] * 2,
-                time.time(),
+                decide_started,
                 self.params.fast,
                 cfg,
                 BaseRateCache(self.params.store_path / "lightning_base_rate.json"),
@@ -296,13 +298,20 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 self.params.max_trades,
                 self.params.placement_min_edge,
             )
+            decide_ms = (time.time() - decide_started) * 1000
             if reason or result is None or bounds is None:
                 self.context.logger.info(
                     "[LIGHTNING_MEMPOOL] market=%s reason=%s", market_id, reason
                 )
                 continue
             yield from self._send(
-                market, result, bounds, {}, pending.seen_at, pending=pending
+                market,
+                result,
+                bounds,
+                {},
+                pending.seen_at,
+                pending=pending,
+                mempool_timings=((drained_at - pending.seen_at) * 1000, decide_ms),
             )
 
     def _enabled(self) -> bool:
@@ -619,6 +628,7 @@ class LightningLaneBehaviour(FreshMarketPoller):
         block: Dict[str, Any],
         seen: float,
         pending: Any = None,
+        mempool_timings: tuple[float, float] = (0.0, 0.0),
     ) -> Generator[None, None, bool]:
         """Sign locally encoded calldata and reserve both nonce domains.
 
@@ -628,6 +638,7 @@ class LightningLaneBehaviour(FreshMarketPoller):
         :param block: market creation block.
         :param seen: local block detection time.
         :param pending: optional decoded pending creation with creator fees.
+        :param mempool_timings: queue and decision times in milliseconds.
         :yield: decision-maker signing response.
         :return: whether both broadcast requests were issued.
         """
@@ -760,7 +771,9 @@ class LightningLaneBehaviour(FreshMarketPoller):
             raw_transaction=RawTransaction(self.context.default_ledger_id, tx),
             terms=terms,
         )
+        shot_counted = market_marked = False
         try:
+            signing_started = time.time()
             response = yield from request_with_timeout(
                 self,
                 message,
@@ -769,6 +782,7 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 send=self.context.decision_maker_message_queue.put_nowait,
                 poll_interval=0.05 if self._mempool is not None else 0.2,
             )
+            signed_response_at = time.time()
             if response.performative != SigningMessage.Performative.SIGNED_TRANSACTION:
                 raise ValueError("Signing failed")
             body = response.signed_transaction.body
@@ -787,10 +801,13 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 return False
             info["sent_at"] = time.time()
             self._shots += 1
+            shot_counted = True
             if pending is not None:
-                shared.setdefault("lightning_mempool_sent_markets", set()).add(
-                    market["id"]
+                sent_markets = shared.setdefault(
+                    "lightning_mempool_sent_markets", set()
                 )
+                market_marked = market["id"] not in sent_markets
+                sent_markets.add(market["id"])
             try:
                 self._persist()
             except OSError:
@@ -812,8 +829,12 @@ class LightningLaneBehaviour(FreshMarketPoller):
                     )
                     if cancelled or expired:
                         shared.pop("lightning_lane_inflight", None)
-                        shared["lightning_mempool_sent_markets"].discard(market["id"])
+                        if market_marked:
+                            shared["lightning_mempool_sent_markets"].discard(
+                                market["id"]
+                            )
                         self._shots -= 1
+                        shot_counted = market_marked = False
                         self._persist()
                         self.context.logger.info(
                             "[LIGHTNING_MEMPOOL] market=%s reason=%s",
@@ -831,13 +852,22 @@ class LightningLaneBehaviour(FreshMarketPoller):
                     yield from self.sleep(min(0.05, remaining))
                 info["sent_at"] = time.time()
             self._broadcast(response, raw)
-        except (TimeoutException, ValueError, KeyError, TypeError):
+        except (TimeoutException, ValueError, KeyError, TypeError) as exc:
             shared.pop("lightning_lane_inflight", None)
+            if shot_counted:
+                self._shots -= 1
+            if market_marked:
+                shared["lightning_mempool_sent_markets"].discard(market["id"])
             self._persist()
+            self.context.logger.info(
+                "[LIGHTNING_LANE] market=%s reason=send_failed error=%s",
+                market["id"],
+                type(exc).__name__,
+            )
             return False
         if pending is not None:
             self.context.logger.info(
-                "[LIGHTNING_MEMPOOL] market=%s creation_tx=%s seen_s=%.3f sent_ms=%.3f prio_gwei=%s max_fee_gwei=%s stake=%s ceiling=%s min_out=%s tx=%s",
+                "[LIGHTNING_MEMPOOL] market=%s creation_tx=%s seen_s=%.3f sent_ms=%.3f prio_gwei=%s max_fee_gwei=%s stake=%s ceiling=%s min_out=%s tx=%s drain_ms=%.3f decide_ms=%.3f sign_ms=%.3f wait_ms=%.3f",
                 market["id"],
                 pending.creation_tx,
                 seen - number(self._last_head["timestamp"]) if self._last_head else 0,
@@ -848,6 +878,9 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 bounds[0],
                 bounds[1],
                 info["tx"],
+                *mempool_timings,
+                (signed_response_at - signing_started) * 1000,
+                (info["sent_at"] - signed_response_at) * 1000,
             )
             return True
         self.context.logger.info(

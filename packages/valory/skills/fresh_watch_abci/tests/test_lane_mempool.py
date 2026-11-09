@@ -1019,3 +1019,66 @@ def test_recovery_keeps_identical_bytes_after_due_without_cancellation(
     assert b._broadcast.call_args.args[1] == "0xabcdef"
     assert b._shots == 1
     assert b.context.shared_state["lightning_mempool_sent_markets"] == {MARKET}
+
+
+@pytest.mark.parametrize("decide_ms,sign_ms", [(10, 40), (50, 200)])
+def test_mempool_send_logs_stage_times(
+    tmp_path: Any, decide_ms: int, sign_ms: int
+) -> None:
+    """Report queue, decision, signing, and wait times from the same clock."""
+    from aea.helpers.transaction.base import SignedTransaction
+
+    from packages.open_aea.protocols.signing import SigningMessage
+
+    b = lane(tmp_path, lightning_mempool=True, lightning_wss_url="wss://rpc.test/key")
+    prepared(b)
+    b._checked = b._safe_ok = True
+    b._mempool = MagicMock()
+    b._mempool.take_head.return_value = None
+    b._mempool.drain.return_value = [pending()]
+    clock = [1002.02]
+    decision = SimpleNamespace(stake=4.0, price=0.5, p_hat=0.95)
+
+    def decide(*_args: Any) -> Any:
+        clock[0] += decide_ms / 1000
+        return decision, (0.9, 4444444444444444445), ""
+
+    def response() -> Any:
+        clock[0] += sign_ms / 1000
+        return SimpleNamespace(
+            performative=SigningMessage.Performative.SIGNED_TRANSACTION,
+            signed_transaction=SignedTransaction(
+                "ethereum", {"raw_transaction": "0xabcdef"}
+            ),
+        )
+
+    def advance(delay: float) -> Any:
+        clock[0] += delay
+        return done(None)
+
+    reply_on_send(b, response, signing=True)
+    b.sleep = MagicMock(side_effect=advance)
+    b._broadcast = MagicMock()
+    with (
+        patch.object(type(b), "synchronized_data", new_callable=PropertyMock) as sd,
+        patch(MODULE + ".time.time", side_effect=lambda: clock[0]),
+        patch(MODULE + ".lane_decision", side_effect=decide),
+    ):
+        sd.return_value.safe_contract_address = SAFE
+        sd.return_value.previous_checkpoint = None
+        run(b._drain_mempool(clock[0]))
+    b._broadcast.assert_called_once()
+    args = b.context.logger.info.call_args.args
+    line = args[0] % args[1:]
+    wait_ms = max(0, 150 - 20 - decide_ms - sign_ms)
+    sent_ms = max(150, 20 + decide_ms + sign_ms)
+    assert line.startswith(
+        f"[LIGHTNING_MEMPOOL] market={MARKET} creation_tx=0xcreation "
+        f"seen_s=0.000 sent_ms={sent_ms:.3f} prio_gwei=1.0 "
+        "max_fee_gwei=2.000000007 stake=4.0 ceiling=0.9 "
+        "min_out=4444444444444444445 tx=0x"
+    )
+    assert line.endswith(
+        f" drain_ms=20.000 decide_ms={decide_ms:.3f} "
+        f"sign_ms={sign_ms:.3f} wait_ms={wait_ms:.3f}"
+    )
