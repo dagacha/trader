@@ -284,7 +284,16 @@ has a JSON string in `result` and a mapping of questions keyed by ID.
 [LIGHTNING_BASE_RATE] n=.. yes=.. rate=.. window=..
 [LIGHTNING_DETECT] market=.. delay_s=.. source=chain|subgraph
 [LIGHTNING_PREVIEW] title_hash=.. delivered_at=.. requested_at=.. answered_at=.. market_seen_at=..
+[LIGHTNING_MEMPOOL] market=.. creation_tx=.. seen_s=.. sent_ms=.. prio_gwei=.. max_fee_gwei=.. stake=.. ceiling=.. min_out=.. tx=.. drain_ms=.. decide_ms=.. sign_ms=.. wait_ms=..
+[LIGHTNING_LANE] market=.. reason=send_failed error=..
 ```
+
+The mempool sent line ends with four times in milliseconds, each with three
+decimal places. `drain_ms` runs from first sight to queue removal. `decide_ms`
+measures the lane decision call. `sign_ms` runs from the signing request to its
+response. `wait_ms` runs from that response to broadcast. A failed send logs
+`send_failed` with the exception class only. It releases the lock and restores
+the shot count and market mark if this call applied them.
 
 Use the existing `[FAST_DECISION]`, `[MECH_LATENCY]`, and settlement logs to
 check the resulting decision and transaction. These commands read local logs:

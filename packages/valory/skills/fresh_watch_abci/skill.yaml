@@ -14,7 +14,7 @@ fingerprint:
   fsm_specification.yaml: bafybeifhpatx5365ubtse2g6kqo6cjeuzoruf75dv5r5xg27n4wtyrtrbm
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
   lane.py: bafybeifzqncdgcj6hrz5m26vashmscujaibyhxkphoazs5pcsi2zkrfecu
-  lane_behaviour.py: bafybeiews2c7uop5yypw4ibdwhtholgtsoohg224m4ysf7j6hm3onzkgum
+  lane_behaviour.py: bafybeid7d4cfevirbwfn33k3rs6jelpvsbegrdvkx5jvh4jwxq4la3wvqy
   lightning.py: bafybeiadnp5avslmsqbmjpvjgwvncxfwactxtspjqvplyolq3ycghqlir4
   mempool.py: bafybeihxi7vs5xudtd6tdkxpm6jrlninvgjbv4dynr6rffirzefjquqvlq
   mempool_ws.py: bafybeigoxte3evulaikdbhj7ljmbpt7oqbgarku4gbhw7hfc5isdhczzmq
@@ -43,8 +43,9 @@ fingerprint:
   tests/test_lane_exemption.py: bafybeibwskk7urmetycmtbo2d3kfufwydrrhisot3fqmr4xnes2a64rr5i
   tests/test_lane_journal_recovery.py: bafybeif7vk23ocyvnet6lc6sjqi53gmbu5ksqquilpmqrm7ngjekc2ttfu
   tests/test_lane_limits.py: bafybeidjfi55egsiolcea6b2a4mdbmw5o6ntq3zfzgvfufsc6mdk5qsbta
-  tests/test_lane_mempool.py: bafybeid72gypahxqvncfgw3yeooxxeljopejd4hmgrgs7adhxgsyj3arcq
+  tests/test_lane_mempool.py: bafybeibahmhuqf5cunwpd6tmjdjqxznd6ehhrv7n4qfyfthbm5gxso5foa
   tests/test_lane_rpc_backoff.py: bafybeiduxmsvnwlksdwble5qrmxdfzvc34c7iaktfsydak4eyewxj663wm
+  tests/test_lane_send_failure.py: bafybeiabpbyjlckevqiurpqani2hyzrbsflvjgiypukuwdg2qupujo454i
   tests/test_lane_slot_resync.py: bafybeiea3vts2akhaz2qe47f3ihz6cju4npbegymtjhmexxju7zqds5d3i
   tests/test_lightning.py: bafybeice4q4keo7etxajqklftozs5q3hox3sglnpsg6xkqyu6zp7pbt6fq
   tests/test_mempool.py: bafybeiexhd54nt2l44uwuvnhlnj5t57d3estgt4k6x3hn7tvnrnrqjjh2u
