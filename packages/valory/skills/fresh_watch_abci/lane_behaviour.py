@@ -34,6 +34,7 @@ from packages.valory.protocols.ledger_api import LedgerApiMessage
 from packages.valory.skills.abstract_round_abci.base import LEDGER_API_ADDRESS
 from packages.valory.skills.abstract_round_abci.behaviour_utils import TimeoutException
 from packages.valory.skills.agent_performance_summary_abci.activity_goal import (
+    read_trades,
     record_trade,
 )
 from packages.valory.skills.agent_performance_summary_abci.models import (
@@ -295,7 +296,7 @@ class LightningLaneBehaviour(FreshMarketPoller):
                 cfg,
                 BaseRateCache(self.params.store_path / "lightning_base_rate.json"),
                 self.durable_trade_count(),
-                self.params.max_trades,
+                0 if cfg.lightning_lane_exempt_max_trades else self.params.max_trades,
                 self.params.placement_min_edge,
             )
             decide_ms = (time.time() - decide_started) * 1000
@@ -389,6 +390,7 @@ class LightningLaneBehaviour(FreshMarketPoller):
         :yield: HTTP I/O.
         :return: JSON-RPC result, including a legitimate null result.
         :raises LaneRPCError: when the response is absent or unusable.
+        :raises ValueError: for invalid responses, converted to LaneRPCError.
         """
         if not self._stats.ready(time.time()):
             raise LaneRPCError("Lane RPC reads paused")
@@ -445,9 +447,10 @@ class LightningLaneBehaviour(FreshMarketPoller):
         )
         self._checked = True
         self.context.logger.info(
-            "[LIGHTNING_LANE] startup=%s rpc_host=%s",
+            "[LIGHTNING_LANE] startup=%s rpc_host=%s exempt_max_trades=%s",
             "ready" if self._safe_ok else "unsupported_safe",
             urlparse(self.params.lightning.lightning_rpc_url).hostname,
+            str(self.params.lightning.lightning_lane_exempt_max_trades).lower(),
         )
         return self._safe_ok
 
@@ -562,6 +565,7 @@ class LightningLaneBehaviour(FreshMarketPoller):
 
         :param response: HTTP broadcast response.
         :param tx: transaction hash bound to this callback.
+        :raises ValueError: for malformed responses, handled locally.
         """
         if self.context.shared_state.get("lightning_lane_inflight", {}).get("tx") != tx:
             return
@@ -641,6 +645,8 @@ class LightningLaneBehaviour(FreshMarketPoller):
         :param mempool_timings: queue and decision times in milliseconds.
         :yield: decision-maker signing response.
         :return: whether both broadcast requests were issued.
+        :raises OSError: if the shot journal cannot be saved.
+        :raises ValueError: if signing fails, handled locally.
         """
         shared = self.context.shared_state
         cfg = self.params.lightning
@@ -906,6 +912,9 @@ class LightningLaneBehaviour(FreshMarketPoller):
         :param info: saved signed shot and market metadata.
         :param receipt: mined transaction receipt.
         :param block: receipt block timestamp context.
+        :raises OSError: if a bet write or non-exempt ledger write fails.
+        :raises TypeError: if non-exempt trade data has an invalid type.
+        :raises ValueError: if the non-exempt ledger is invalid.
         """
         shared = self.context.shared_state
         info["receipt"], info["receipt_block"] = receipt, block
@@ -921,7 +930,22 @@ class LightningLaneBehaviour(FreshMarketPoller):
         status = number(receipt["status"])
         if status == 1 and fill is not None:
             key = "omen:" + info["tx"]
-            counted = key in self.read_counted_placement_keys()
+            exempt = self.params.lightning.lightning_lane_exempt_max_trades
+            # An exempt fill counts for activity through the ledger only; a legacy
+            # counter above the ledger can under-count it, which is the safe side.
+            if exempt:
+                try:
+                    counted = any(
+                        trade.get("placement_key") == key
+                        for trade in read_trades(self.params.store_path)
+                    )
+                except (OSError, ValueError, TypeError):
+                    self.context.logger.warning(
+                        "[LIGHTNING_LANE] completion_pending=true reason=trade_ledger_write"
+                    )
+                    return
+            else:
+                counted = key in self.read_counted_placement_keys()
             if not counted:
                 row = info["row"].copy()
                 for field in (
@@ -960,14 +984,31 @@ class LightningLaneBehaviour(FreshMarketPoller):
                     Path(self.multi_bets_filepath),
                     json.loads(json.dumps(self.bets, cls=BetsEncoder)),
                 )
-            record_trade(
-                self.params.store_path, number(block["timestamp"]), info["market"], key
-            )
-            if not counted:
-                self.record_successful_placement(key)
-            if key not in self.read_counted_placement_keys():
+            try:
+                record_trade(
+                    self.params.store_path,
+                    number(block["timestamp"]),
+                    info["market"],
+                    key,
+                )
+                if not exempt and not counted:
+                    self.record_successful_placement(key)
+                complete = (
+                    any(
+                        trade.get("placement_key") == key
+                        for trade in read_trades(self.params.store_path)
+                    )
+                    if exempt
+                    else key in self.read_counted_placement_keys()
+                )
+            except (OSError, ValueError, TypeError):
+                if not exempt:
+                    raise
+                complete = False
+            if not complete:
                 self.context.logger.warning(
-                    "[LIGHTNING_LANE] completion_pending=true reason=trade_count_write"
+                    "[LIGHTNING_LANE] completion_pending=true reason=trade_%s_write",
+                    "ledger" if exempt else "count",
                 )
                 return
             shared.setdefault("lightning_lane_bet_markets", set()).add(info["market"])
@@ -1249,7 +1290,11 @@ class LightningLaneBehaviour(FreshMarketPoller):
             self.params.lightning,
             BaseRateCache(self.params.store_path / "lightning_base_rate.json"),
             self.durable_trade_count(),
-            self.params.max_trades,
+            (
+                0
+                if self.params.lightning.lightning_lane_exempt_max_trades
+                else self.params.max_trades
+            ),
             self.params.placement_min_edge,
             requested=requested,
         )

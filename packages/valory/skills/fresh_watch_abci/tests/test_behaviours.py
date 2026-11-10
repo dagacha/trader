@@ -2164,7 +2164,11 @@ def test_lightning_placement_respects_template_price_cap(tmp_path: Any) -> None:
             type(b),
             "sampled_bet",
             new_callable=PropertyMock,
-            return_value=SimpleNamespace(outcomes=["Yes", "No"]),
+            return_value=SimpleNamespace(
+                outcomes=["Yes", "No"],
+                title="Will it still hold?",
+                creator=FastConfig().creators[0],
+            ),
         ),
         patch.object(
             type(b), "investment_amount", new_callable=PropertyMock, return_value=10**18
@@ -2830,7 +2834,11 @@ def test_direct_execution_uses_direct_cap_and_retains_edge_and_slip(
             type(b),
             "sampled_bet",
             new_callable=PropertyMock,
-            return_value=SimpleNamespace(outcomes=["Yes", "No"]),
+            return_value=SimpleNamespace(
+                outcomes=["Yes", "No"],
+                title="Will it still hold?",
+                creator=FastConfig().creators[0],
+            ),
         ),
         patch.object(
             type(b), "investment_amount", new_callable=PropertyMock, return_value=10**18

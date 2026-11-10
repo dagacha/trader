@@ -144,6 +144,8 @@ def log_decision(behaviour: DecisionMakerBaseBehaviour, result: Dict[str, Any]) 
     """
     result.setdefault("mech", None)
     result.setdefault("latency_s", None)
+    cfg = behaviour.params.fast
+    result.setdefault("min_edge", cfg.min_edge + cfg.price_margin)
     behaviour.context.logger.info(
         "[FAST_DECISION] %s", json.dumps(result, sort_keys=True)
     )
@@ -1070,6 +1072,10 @@ class FastDecisionBehaviour(PreviewMixin, DecisionMakerBaseBehaviour):
             is not None
         )
         still_hold = is_still_hold(bet, db.get("question_template_id", None), lightning)
+        cfg = self.params.fast
+        result["min_edge"] = (
+            cfg.still_hold_min_edge if still_hold else cfg.min_edge + cfg.price_margin
+        )
         direct = db.get("lightning_probability", None) if still_hold else None
         direct = direct if isinstance(direct, (int, float)) else None
         preview_probability = (
@@ -1141,7 +1147,6 @@ class FastDecisionBehaviour(PreviewMixin, DecisionMakerBaseBehaviour):
         if bet.openingTimestamp <= time.time():
             result["reason"] = "market_closed"
             return result
-        cfg = self.params.fast
         if still_hold:
             cache = BaseRateCache(self.params.store_path / "lightning_base_rate.json")
             prior = cache.current_rate(now, lightning)
@@ -1332,6 +1337,14 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
         :return: price ceiling and minimum tokens, or None if no margin remains.
         """
         cfg = self.params.fast
+        min_edge = self.params.placement_min_edge
+        lightning = lightning_controls(self)
+        if lightning.lightning_still_hold and is_still_hold(
+            self.sampled_bet,
+            self.synchronized_data.db.get("question_template_id", None),
+            lightning,
+        ):
+            min_edge = max(min_edge, cfg.still_hold_min_edge - cfg.price_margin)
         return execution_ceiling(
             self.investment_amount,
             self.quoted_tokens,
@@ -1339,7 +1352,7 @@ class FastBetPlacementBehaviour(BetPlacementBehaviour):
             requested_price,
             self._execution_max_price(),
             cfg.max_slip,
-            self.params.placement_min_edge,
+            min_edge,
         )
 
     def _preflight_ok(self) -> Generator[None, None, bool]:

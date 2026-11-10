@@ -35,8 +35,8 @@ skills:
 - valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m
 - valory/chatui_abci:0.1.0:bafybeihj5y6cecuw4iz2gshicoygghrgi5b6rzynnofx25ycsv56ehgdvq
 - valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
-- valory/trader_abci:0.1.0:bafybeifizcskbmjawbskkhztzpv4rbpdotnmtwwvfl4oucv5twcqirzmqm
-- valory/fresh_watch_abci:0.1.0:bafybeiebjppgnezhg55svrqzsowtur63keyufd2fgbmonthmi4cof5uoiy
+- valory/trader_abci:0.1.0:bafybeiegkp2ben6bxmnkq6rirb7wfxqjrohbz273jkrwkhjm5th3ikrzcy
+- valory/fresh_watch_abci:0.1.0:bafybeia5yxmx5rbygipxg5nmt3eqgj5paxci6tfhuy3zragmg54wzb6rla
 behaviours:
   main:
     args: {}
@@ -368,6 +368,7 @@ models:
       active_window_utc: 00:00-05:30
       fast_topup_lead_s: 1800
       still_hold_min_price: 0.6
+      still_hold_min_edge: 0.04
       max_price_drop: 0.15
       housekeeping_interval_s: 600
       tools:
@@ -400,6 +401,7 @@ models:
       lightning_lane_tip_cap_gwei: 1000.0
       lightning_lane_inflight_timeout_s: 60
       lightning_lane_max_per_night: -1
+      lightning_lane_exempt_max_trades: false
       lightning_still_hold: false
       lightning_still_hold_max_price: 0.93
       lightning_still_hold_min_entry_price: 0.55

@@ -65,7 +65,8 @@ transaction excludes the lane. Safe preparation waits for the lane receipt or a
 timeout followed by a pending-nonce read. FSM settlement invalidates the cached
 EOA nonce. A local journal retains the shot budget and pending lock across restart.
 Successful receipts update the bets store, strategy, activity ledger, and durable
-trade counter with `omen:<tx>`. Queue removal prevents a second FSM bet.
+trade counter with `omen:<tx>` unless the lane is exempt from the counter.
+Queue removal prevents a second FSM bet.
 
 | Environment name | Default | Purpose |
 | --- | --- | --- |
@@ -82,9 +83,10 @@ trade counter with `omen:<tx>`. Queue removal prevents a second FSM bet.
 | `LIGHTNING_LANE_TIP_GWEI` | `0` | Fixed nightly tip; zero blocks sends. |
 | `LIGHTNING_LANE_TIP_CAP_GWEI` | `1000` | Tip limit; caps above 2000 are invalid. |
 | `LIGHTNING_LANE_INFLIGHT_TIMEOUT_S` | `60` | Receipt deadline before nonce refresh. |
+| `LIGHTNING_LANE_EXEMPT_MAX_TRADES` | `false` | Exclude lane fills from `MAX_TRADES`; the night cap still applies. An exempt fill counts for activity through the ledger only; with a legacy counter above the ledger it can be under-counted, which is the safe side. |
 | `LIGHTNING_LANE_MAX_PER_NIGHT` | `MAX_TRADES` | Shot budget, including reverts; `-1` selects `MAX_TRADES`. |
 
-Add all fourteen names above to olas-scripts `patch_agent_env_passthrough.py`
+Add all fifteen names above to olas-scripts `patch_agent_env_passthrough.py`
 `_NAMED_VARS`, in addition to the existing names below. Keep the endpoint secret.
 The fixed tip never uses another trader's transaction or tip. The EOA must cover
 three shots at the configured gas limit and maximum fee.
@@ -229,6 +231,7 @@ Other values below are the lightning defaults.
 | --- | --- | --- |
 | `FAST_TOPUP_LEAD_S` | `1800` | Start activity top-up with this lead plus 90 seconds per missing request. |
 | `STILL_HOLD_MIN_PRICE` | `0.60` | Reject still-hold YES below this live pool price. Set `STILL_HOLD_MIN_PRICE=0` to disable. |
+| `STILL_HOLD_MIN_EDGE` | `0.04` | Minimum edge for direct still-hold YES bets. Must be at least 0 and below 1. |
 | `MAX_PRICE_DROP` | `0.15` | Reject a drop above this amount since the request, on any chosen side. Set `MAX_PRICE_DROP=1.0` to disable. |
 | `LIGHTNING_STILL_HOLD_MIN_ENTRY_PRICE` | `0.55` | Require this YES pool price for direct base-rate entry. Set `LIGHTNING_STILL_HOLD_MIN_ENTRY_PRICE=0` to disable. |
 | `LIGHTNING_STILL_HOLD` | `true` | Enable direct still-hold YES decisions. |
@@ -243,6 +246,11 @@ Other values below are the lightning defaults.
 | `LIGHTNING_PREVIEW` | `false` | Enable experimental predictions from proposed titles. |
 | `LIGHTNING_PREVIEW_MAX_PER_NIGHT` | `15` | Maximum paid preview requests per night. |
 | `LIGHTNING_CREATORS` | The two fast-lane creators | Creators allowed for lightning rules. |
+
+Direct still-hold placement uses
+`p_hat - max(MIN_EDGE, STILL_HOLD_MIN_EDGE - PRICE_MARGIN)` as its edge
+ceiling. The default keeps `p_hat - 0.03`. A value of `0.08` gives
+`p_hat - 0.07` with the default margin. The lane keeps its own edge and ceiling.
 
 The creators are `0x89c5cc945dd550bcffb72fe42bff002429f46fec` and
 `0xffc8029154ecd55abed15bd428ba596e7d23f557`. The lightning template sets

@@ -369,3 +369,49 @@ def test_service_exports_irrelevant_tools(service_name: str) -> None:
     exported = {key: str(value) for key, value in exported.items() if value is not None}
     args = _override(_resolve(exported), "trader_abci")["models"]["params"]["args"]
     assert args["irrelevant_tools"] == denylist
+
+
+@pytest.mark.parametrize("service_name", ["omenstrat_fast", "omenstrat_lightning"])
+@pytest.mark.parametrize(
+    "env,expected", [({}, 0.04), ({"STILL_HOLD_MIN_EDGE": "0.08"}, 0.08)]
+)
+def test_fast_still_hold_edge_config(
+    service_name: str, env: Dict[str, str], expected: float
+) -> None:
+    """Resolve the edge through the same channel as the other fast controls.
+
+    :param service_name: the fast service and agent to check.
+    :param env: the operator controls.
+    :param expected: the resolved edge.
+    """
+    for kind, filename in (("agents", "aea-config.yaml"), ("services", "service.yaml")):
+        config_path = _VALORY_DIR / kind / service_name / filename
+        docs = list(yaml_load_all(io.StringIO(config_path.read_text(encoding="utf-8"))))
+        resolved = apply_env_variables_on_agent_config(docs, env)
+        args = _override(resolved, "omenstrat_fast_abci")["models"]["params"]["args"]
+        assert args["still_hold_min_edge"] == expected
+    for skill in ("fresh_watch_abci", "omenstrat_fast_abci"):
+        config_path = _VALORY_DIR / "skills" / skill / "skill.yaml"
+        docs = yaml_load_all(io.StringIO(config_path.read_text(encoding="utf-8")))
+        assert docs[0]["models"]["params"]["args"]["still_hold_min_edge"] == 0.04
+
+
+@pytest.mark.parametrize("service_name", ["omenstrat_fast", "omenstrat_lightning"])
+@pytest.mark.parametrize(
+    "env,expected", [({}, False), ({"LIGHTNING_LANE_EXEMPT_MAX_TRADES": "true"}, True)]
+)
+def test_lane_exemption_config(
+    service_name: str, env: Dict[str, str], expected: bool
+) -> None:
+    """Resolve the opt-in lane exemption in both agents and services.
+
+    :param service_name: the fast service and agent to check.
+    :param env: the operator controls.
+    :param expected: the resolved exemption.
+    """
+    for kind, filename in (("agents", "aea-config.yaml"), ("services", "service.yaml")):
+        config_path = _VALORY_DIR / kind / service_name / filename
+        docs = list(yaml_load_all(io.StringIO(config_path.read_text(encoding="utf-8"))))
+        resolved = apply_env_variables_on_agent_config(docs, env)
+        args = _override(resolved, "omenstrat_fast_abci")["models"]["params"]["args"]
+        assert args["lightning_lane_exempt_max_trades"] is expected

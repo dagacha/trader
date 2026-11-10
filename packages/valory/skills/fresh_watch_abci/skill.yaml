@@ -8,21 +8,21 @@ aea_version: '>=2.0.0, <3.0.0'
 fingerprint:
   README.md: bafybeieurwex74dtimmmndedzrhznyfivsuaf27lteomz4cz23upjtv2pq
   __init__.py: bafybeihyphnywie3dyf7f7mmwm7yvcwekkgsa4mq5273ojuzbjsznvorv4
-  behaviours.py: bafybeie5mm3luu6xgdoutmhj5ivizksaidsvxbdukcuedjd5hawcu5qwki
+  behaviours.py: bafybeigz64rgz2nszkskz3dqsfuikmtsnoa27aw7i26quo64jqpp55zdli
   chain_discovery.py: bafybeie5ztb6kj3qhqhhcjhbeiaqxfij5tbduudvjdaspee24pm2y53icq
   dialogues.py: bafybeibrs2fju4azku3wyvdvm52cyjjbklxkfd67fxaidejywgydf3xuwu
   fsm_specification.yaml: bafybeifhpatx5365ubtse2g6kqo6cjeuzoruf75dv5r5xg27n4wtyrtrbm
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
-  lane.py: bafybeidyifx2v2avdpvgni43n2rywy67jz7k7kgkezsma6k6blj2cuzop4
-  lane_behaviour.py: bafybeibgfzvrz2xxwyy7crozvh6bfp5fgrfqa4sjb724w4evyhrcpdc5oy
-  lightning.py: bafybeigfofqr2xfqnw776y6h42gl2rl55zj7kfodhs5lh4sckojhule6eu
+  lane.py: bafybeifzqncdgcj6hrz5m26vashmscujaibyhxkphoazs5pcsi2zkrfecu
+  lane_behaviour.py: bafybeid7d4cfevirbwfn33k3rs6jelpvsbegrdvkx5jvh4jwxq4la3wvqy
+  lightning.py: bafybeiadnp5avslmsqbmjpvjgwvncxfwactxtspjqvplyolq3ycghqlir4
   mempool.py: bafybeihxi7vs5xudtd6tdkxpm6jrlninvgjbv4dynr6rffirzefjquqvlq
   mempool_ws.py: bafybeigoxte3evulaikdbhj7ljmbpt7oqbgarku4gbhw7hfc5isdhczzmq
-  models.py: bafybeibi6673jyng5xwwrqlfsxzxo4wzp72diqmrktxlwkxg27cnnxmnbi
+  models.py: bafybeibxozdxdyqfcmk7no7pved5mgcfkry7rvd3bmjfsj5nztcwdb6fiy
   preview.py: bafybeic6uo6lpsva2dqly5omyzhhw5a7hzyvltz23z47q7lyhmvsjj3l4u
   rounds.py: bafybeigicry3yubpgnirrzyqahfdzllmus3aifpz4qfrvpak7ttkegf4ly
   rpc.py: bafybeia2tleciknj4jimflwqddp7cdcatv3g6sg6abjh5i5jxbkoqa2hgq
-  strategy.py: bafybeianoqevhd2356ozarkihx22q4ptrouhvj7nm7ytkcrmwajrmpyzee
+  strategy.py: bafybeiec2zpqikgnensy6mcuupl7rwhrkranorgii7lvgmchx2aptjbyqm
   tests/__init__.py: bafybeiebuokdlpgmmm6orggvfnnm537acc3eogkkrn6jyjaxzqyb7t7yzy
   tests/fixtures/chain_creation.json: bafybeibsvrn4ppzzldhqqy4tziri47oxviicqocyoq7hmcs4hgaom7i5ui
   tests/fixtures/create2_fixture.json: bafybeidxpyuotw5yc6znucsidj27kio7amk5l5irto4a36sz2ztdvwz2mm
@@ -30,7 +30,7 @@ fingerprint:
   tests/fixtures/question_preview.json: bafybeie2ouuxhajfkeln7cgcjm3c3ngus64jtdg5rjz4pix5rcgrpj3hzq
   tests/fixtures/question_preview_metadata.json: bafybeihhtgcztco4xdf5zgeny6ldafa7pnshaeun74zppc4ygvuutyro3i
   tests/test_base_rate_deadlines.py: bafybeicsuzvhmbzhbeliuolk3mr7txrvvowayjr7g2ztj4r37pyel2i2ey
-  tests/test_behaviours.py: bafybeihjkdl2umyrusgo3cfcw57v3yg34zqex2r4esunhaczqwtl5cg554
+  tests/test_behaviours.py: bafybeifyihtw4wswedfnswazjut3e4fk5wfbt2cxtsojvjlmc7bpfr2ope
   tests/test_chain_discovery.py: bafybeig7bjaeu32zokugdhah5momnjsfwah5dyqqvjjdthb62qxbtormga
   tests/test_chain_pool_reads.py: bafybeiav26vusjg3nz7ve3ta43oxwnmvvnnfffaa6rayhuveaqj4suocdm
   tests/test_chain_title_reads.py: bafybeic42v2ivrufxfz364kxc745pzbx3c6sysdcdk766uv2k6vpv75glm
@@ -40,6 +40,7 @@ fingerprint:
   tests/test_lane.py: bafybeigxfm4yywpz4nupb7mlszch6ilfdglelfpbolrdaf5h6q5zr2sljm
   tests/test_lane_behaviour.py: bafybeigk25cg3ijion3jpcipzh6b75z57swll64o3dua3wmwlrdlxomn5y
   tests/test_lane_bets_read.py: bafybeicf3igfhgcyeejmcy7pljlvt2avao2cdyjenlbuhjjao6yb4gu4ey
+  tests/test_lane_exemption.py: bafybeibwskk7urmetycmtbo2d3kfufwydrrhisot3fqmr4xnes2a64rr5i
   tests/test_lane_journal_recovery.py: bafybeif7vk23ocyvnet6lc6sjqi53gmbu5ksqquilpmqrm7ngjekc2ttfu
   tests/test_lane_limits.py: bafybeidjfi55egsiolcea6b2a4mdbmw5o6ntq3zfzgvfufsc6mdk5qsbta
   tests/test_lane_mempool.py: bafybeibahmhuqf5cunwpd6tmjdjqxznd6ehhrv7n4qfyfthbm5gxso5foa
@@ -64,6 +65,7 @@ fingerprint:
   tests/test_rpc_cadence.py: bafybeibpyh2adnxwpnumljf3glid7ddrs6o5yjbnamxrqa7ukyxhmdmhu4
   tests/test_rpc_deadlines.py: bafybeigi7q3eithp7dhh65g3do6rpqjxlnbcqei6tksf5456urletwed3e
   tests/test_selection_rollbacks.py: bafybeigkjwte2vlppplyy6tjio3wcmdsecu7rqkeqzlwkbfitz2cgaixvm
+  tests/test_still_hold_edge.py: bafybeidbystbqjhsdnrjofybyiu5duq7o6zdmnwbbtuj63erv7gwuuowee
   tests/test_strategy.py: bafybeihjdyrgfhatn2464ceysdbz4qyzpsnjus6ili7asljiwvqdfgeaom
 fingerprint_ignore_patterns: []
 connections: []
@@ -83,7 +85,7 @@ skills:
 - valory/abstract_round_abci:0.1.0:bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4
 - valory/market_manager_abci:0.1.0:bafybeidsapj2dqxjcndhhtn5my7gjoq66oyhmty4zl6mg4trkjkewnss3e
 - valory/decision_maker_abci:0.1.0:bafybeifybxivsrppz4vkujqjzjqiiwfbnm7agqikhuwz3enrshdvrxbtzy
-- valory/trader_abci:0.1.0:bafybeifizcskbmjawbskkhztzpv4rbpdotnmtwwvfl4oucv5twcqirzmqm
+- valory/trader_abci:0.1.0:bafybeiegkp2ben6bxmnkq6rirb7wfxqjrohbz273jkrwkhjm5th3ikrzcy
 behaviours:
   main:
     args: {}
@@ -409,6 +411,7 @@ models:
       active_window_utc: 00:00-05:30
       fast_topup_lead_s: 1800
       still_hold_min_price: 0.6
+      still_hold_min_edge: 0.04
       max_price_drop: 0.15
       housekeeping_interval_s: 600
       tools:
@@ -441,6 +444,7 @@ models:
       lightning_lane_tip_cap_gwei: 1000.0
       lightning_lane_inflight_timeout_s: 60
       lightning_lane_max_per_night: -1
+      lightning_lane_exempt_max_trades: false
       lightning_still_hold: false
       lightning_still_hold_max_price: 0.93
       lightning_still_hold_min_entry_price: 0.55

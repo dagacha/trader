@@ -94,6 +94,7 @@ settlement logs for that result.
 | `ACTIVE_WINDOW_UTC` | `00:00-05:30` (start included, end excluded) |
 | `FAST_TOPUP_LEAD_S` | `1800`; start activity top-up with this lead plus 90 seconds per missing request |
 | `STILL_HOLD_MIN_PRICE` | `0.60`; reject still-hold YES below this live pool price. Set `STILL_HOLD_MIN_PRICE=0` to disable. |
+| `STILL_HOLD_MIN_EDGE` | `0.04`; minimum edge for direct still-hold YES bets. Must be at least 0 and below 1. |
 | `MAX_PRICE_DROP` | `0.15`; reject a drop above this amount since the request, on any chosen side. Set `MAX_PRICE_DROP=1.0` to disable. |
 | `LIGHTNING_STILL_HOLD_MIN_ENTRY_PRICE` | `0.55`; require this YES pool price for direct base-rate entry. Set `LIGHTNING_STILL_HOLD_MIN_ENTRY_PRICE=0` to disable. |
 | `HOUSEKEEPING_INTERVAL_S` | `600` |
@@ -117,6 +118,11 @@ settlement logs for that result.
 | `RETRY_TIMEOUT` | `1` s, down from `3` |
 | `STOP_TRADING_IF_STAKING_KPI_MET` | `false` |
 | `STRATEGIES_KWARGS.absolute_max_bet_size` | `4000000000000000000` wei (4 xDAI); the fast formula uses `CAP` directly |
+
+Direct still-hold placement uses
+`p_hat - max(MIN_EDGE, STILL_HOLD_MIN_EDGE - PRICE_MARGIN)` as its edge
+ceiling. The default keeps `p_hat - 0.03`. A value of `0.08` gives
+`p_hat - 0.07` with the default margin. The lane keeps its own edge and ceiling.
 
 `MAX_SLIP=0.2` permits an absolute price rise of at most 0.2 from the selected
 outcome's request-time spot price to its average execution price. The operator

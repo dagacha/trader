@@ -43,6 +43,7 @@ class FastConfig:
     active_window_utc: str = "00:00-05:30"
     fast_topup_lead_s: int = 1800
     still_hold_min_price: float = 0.60
+    still_hold_min_edge: float = 0.04
     max_price_drop: float = 0.15
     housekeeping_interval_s: int = 600
     tools: List[str] = field(
@@ -231,7 +232,10 @@ def decide(
             return raw_reason
         if side == 1 and probability < cfg.no_min_p:
             return "no_min_p"
-        if probability - price + 1e-12 < cfg.min_edge + cfg.price_margin:
+        min_edge = (
+            cfg.still_hold_min_edge if yes_only else cfg.min_edge + cfg.price_margin
+        )
+        if probability - price + 1e-12 < min_edge:
             return "min_edge"
         if price - requested[side] > cfg.max_slip - cfg.price_margin + 1e-12:
             return "max_slip"

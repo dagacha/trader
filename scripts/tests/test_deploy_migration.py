@@ -58,6 +58,24 @@ def test_fast_template_uses_main_release():
     assert config["agent_release"]["repository"]["version"] == "main"
 
 
+@pytest.mark.parametrize("cached", ["omenstrat_lightning", "trader_pearl"])
+def test_unknown_hash_uses_cached_service_for_lane_controls(
+    tmp_path: Path, cached: str
+) -> None:
+    """Keep lane controls only when the cached service is lightning."""
+    paths = fixture(tmp_path)
+    for path in paths:
+        data = json.loads(path.read_text())
+        data["env_variables"]["LIGHTNING_LANE"] = entry("true")
+        path.write_text(json.dumps(data))
+    for path in paths[1:]:
+        cached_package(path, cached)
+    run(tmp_path)
+    for path in paths:
+        env = json.loads(path.read_text())["env_variables"]
+        assert ("LIGHTNING_LANE" in env) == (cached == "omenstrat_lightning")
+
+
 def entry(value):
     """Make a quickstart env entry."""
     return {
@@ -2421,6 +2439,7 @@ def test_rollback_without_provenance_keeps_non_lane_settings(tmp_path):
         if key
         not in (
             "LIGHTNING_LANE",
+            "LIGHTNING_LANE_EXEMPT_MAX_TRADES",
             "LIGHTNING_RPC_URL",
             "LIGHTNING_MEMPOOL",
             "LIGHTNING_WSS_URL",
@@ -3692,6 +3711,7 @@ def test_rollback_does_not_save_removed_user_keys(tmp_path, service):
     "name,default,override",
     [
         ("STILL_HOLD_MIN_PRICE", "0.6", "0.65"),
+        ("STILL_HOLD_MIN_EDGE", "0.04", "0.08"),
         ("MAX_PRICE_DROP", "0.15", "0.10"),
         ("LIGHTNING_STILL_HOLD_MIN_ENTRY_PRICE", "0.55", "0.60"),
     ],

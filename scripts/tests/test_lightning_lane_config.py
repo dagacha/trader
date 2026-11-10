@@ -47,6 +47,7 @@ CONTROLS = {
     "lightning_lane_tip_cap_gwei": ("float", 1000.0),
     "lightning_lane_inflight_timeout_s": ("int", 60),
     "lightning_lane_max_per_night": ("int", -1),
+    "lightning_lane_exempt_max_trades": ("bool", False),
 }
 
 
@@ -196,7 +197,11 @@ def test_lane_rollback_removes_operator_controls(
     saved.write_text(json.dumps({"user_provided_args": {}}))
     run(tmp_path, "--service", "omenstrat_lightning")
     url = "https://key.invalid/private-rollback-token"
-    controls = {"LIGHTNING_LANE": "true", "LIGHTNING_RPC_URL": url}
+    controls = {
+        "LIGHTNING_LANE": "true",
+        "LIGHTNING_RPC_URL": url,
+        "LIGHTNING_LANE_EXEMPT_MAX_TRADES": "true",
+    }
     values = {
         **controls,
         "LIGHTNING_STILL_HOLD_MAX_PRICE": "0.87",
@@ -286,7 +291,11 @@ def lane_copies(tmp_path, service):
     paths = fixture(tmp_path)
     packages = json.loads((ROOT / "packages/packages.json").read_text())
     url = "https://key.invalid/stale-lane-token"
-    controls = {"LIGHTNING_LANE": "true", "LIGHTNING_RPC_URL": url}
+    controls = {
+        "LIGHTNING_LANE": "true",
+        "LIGHTNING_RPC_URL": url,
+        "LIGHTNING_LANE_EXEMPT_MAX_TRADES": "true",
+    }
     values = {
         prefix + key: value
         for prefix in (

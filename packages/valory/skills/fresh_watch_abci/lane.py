@@ -284,7 +284,10 @@ def lane_decision(
     if requested is None:
         requested = prices
     cfg = replace(
-        fast, prior_weight=1.0, max_price=lightning.lightning_still_hold_max_price
+        fast,
+        prior_weight=1.0,
+        max_price=lightning.lightning_still_hold_max_price,
+        still_hold_min_edge=fast.min_edge + fast.price_margin,
     )
     decision = decide(
         market["title"],
