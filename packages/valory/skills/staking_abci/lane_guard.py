@@ -27,7 +27,7 @@ from packages.valory.protocols.contract_api import ContractApiMessage
 from packages.valory.protocols.ledger_api import LedgerApiMessage
 from packages.valory.skills.abstract_round_abci.base import LEDGER_API_ADDRESS
 from packages.valory.skills.abstract_round_abci.behaviour_utils import TimeoutException
-from packages.valory.skills.staking_abci.rpc import request_with_timeout
+from packages.valory.skills.staking_abci.rpc import request_with_timeout, rpc_urls
 
 
 class LaneGuardMixin:
@@ -88,7 +88,7 @@ class LaneGuardMixin:
             return body.get(ledger_method + "_result", body)
         message, dialogue = self._build_http_request_message(
             method="POST",
-            url=self.params.lightning.lightning_rpc_url,
+            url=rpc_urls(self.params.lightning.lightning_rpc_url)[0],
             headers={"Content-Type": "application/json"},
             content=json.dumps(
                 {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}

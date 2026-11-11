@@ -71,16 +71,7 @@ from packages.valory.skills.market_manager_abci.bets import (
     PredictionResponse,
     QueueStatus,
 )
-
-
-def rpc_urls(raw: str) -> list:
-    """Split the lane endpoint setting into distinct URLs, first one kept first.
-
-    :param raw: one URL or a comma list of URLs; blank when unset.
-    :return: the listed URLs, or one empty string when none is set.
-    """
-    urls = list(dict.fromkeys(u.strip() for u in (raw or "").split(",") if u.strip()))
-    return urls or [""]
+from packages.valory.skills.staking_abci.rpc import rpc_urls
 
 
 class LaneRPCError(Exception):

@@ -22,7 +22,7 @@ fingerprint:
   tests/test_dialogues.py: bafybeibatogwoj6ieapcbiwonij6vskhogc65vfv53tyauqzeyiwmnd2im
   tests/test_handlers.py: bafybeihl373oleiibafei4qknvszuu4c7axc6nfvn35qp32trvd35n2cea
   tests/test_ledger_receipt_dispatch.py: bafybeiaqkb4ijm2kmdruyu4s2lklksmdnuyjrjfjfiykzns6lvortqcbru
-  tests/test_lightning_lane_guard.py: bafybeiczq3j4rxeymqmsndx4nnljkwt6o4n3xktk6jqnliener6i4dc3yu
+  tests/test_lightning_lane_guard.py: bafybeid6wyzg2njoq3gtzx7zi6octkcpza4h5ic2jvtxrn2qxpqs5lbxgi
   tests/test_lightning_lane_guards.py: bafybeicbjlg7a7z4u2qgxzleo3fhwhbvadbfpgwsm573bjaadpg5dm3m6u
   tests/test_mech_latency.py: bafybeih3aujkkwrrmh47fglsposuqjktfostzluzjsbqxrko3wbq5sl35q
   tests/test_models.py: bafybeicjaf47kro4yee7nav4baixmlohvxu2j5qxyywfxuoojl6dvxaxs4
@@ -69,10 +69,10 @@ skills:
 - valory/transaction_settlement_abci:0.1.0:bafybeidmmhjcgp7chozxovensq3zplkufvaityd2w3zladtssu4ijvqbzm
 - valory/termination_abci:0.1.0:bafybeig5lk6agmjpctxh4smrqvtbylynda7a5kwgtdlss2sjnnabedzuem
 - valory/market_manager_abci:0.1.0:bafybeidsapj2dqxjcndhhtn5my7gjoq66oyhmty4zl6mg4trkjkewnss3e
-- valory/decision_maker_abci:0.1.0:bafybeifybxivsrppz4vkujqjzjqiiwfbnm7agqikhuwz3enrshdvrxbtzy
-- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeibloowytygfctwzbklqdvitgzbyh7atki4byhoen47ek47smlunbq
-- valory/staking_abci:0.1.0:bafybeig4okradpfhtdyawxltl3roq4heqlsyu232i5gyhavszoqa6frpym
-- valory/check_stop_trading_abci:0.1.0:bafybeidwmrttdpjef55ukfdikazo3k5422puktsephe2djjoqtkz4ucdm4
+- valory/decision_maker_abci:0.1.0:bafybeih2pvop3rcdaqozgvcajncunvymit4hvi7azpl5a45dvmyyqjrmvi
+- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeicxsjrgk2i5dbbj7vuuela3fxnuajcqsurhmujpm3ph2ftdg2g5vi
+- valory/staking_abci:0.1.0:bafybeibw5djdxnyx7vyyd3huwlt5ulbtoy4dbabbzfywkdfpb6hhxswq74
+- valory/check_stop_trading_abci:0.1.0:bafybeigf7rrwvakvdqjkqrgpzz33yykdezwt5nqy6i5kuwyj53cxeo2lme
 - valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m
 - valory/chatui_abci:0.1.0:bafybeihj5y6cecuw4iz2gshicoygghrgi5b6rzynnofx25ycsv56ehgdvq
 - valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
