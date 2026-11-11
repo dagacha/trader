@@ -714,6 +714,44 @@ def test_broadcast_sends_http_and_ledger_without_response_wait(tmp_path: Any) ->
     assert "direct" in b.context.requests.request_id_to_callback
 
 
+def test_broadcast_posts_to_every_listed_rpc_once(tmp_path: Any) -> None:
+    """Send the signed bytes to each listed endpoint, but read from the first."""
+    urls = "https://a.invalid/k1, https://b.invalid/k2 ,https://a.invalid/k1"
+    b = lane(tmp_path, lightning_rpc_url=urls)
+    b._build_http_request_message = MagicMock(
+        side_effect=lambda **kw: (kw["url"], MagicMock())
+    )
+    b._get_request_nonce_from_dialogue = MagicMock(side_effect=["n1", "n2", "n3"])
+    b.context.ledger_api_dialogues.create.return_value = ("ledger", MagicMock())
+    b.context.requests.request_id_to_callback = {}
+    b._broadcast(SimpleNamespace(signed_transaction="signed"), "0x1234")
+    sent = [c.kwargs["message"] for c in b.context.outbox.put_message.call_args_list]
+    assert sent == ["https://a.invalid/k1", "https://b.invalid/k2", "ledger"]
+    assert {"n1", "n2"} <= set(b.context.requests.request_id_to_callback)
+    b._request("eth_blockNumber", [])
+    assert (
+        b._build_http_request_message.call_args.kwargs["url"] == "https://a.invalid/k1"
+    )
+
+
+def test_extra_rpc_errors_do_not_count_against_the_lane(tmp_path: Any) -> None:
+    """Ignore a failed or repeated send on a second endpoint."""
+    urls = "https://a.invalid/k1,https://b.invalid/k2"
+    b = lane(tmp_path, lightning_rpc_url=urls)
+    b.context.shared_state["lightning_lane_inflight"] = {"tx": "0xtx"}
+    b._build_http_request_message = MagicMock(
+        side_effect=lambda **kw: (kw["url"], MagicMock())
+    )
+    b._get_request_nonce_from_dialogue = MagicMock(side_effect=["n1", "n2", "n3"])
+    b.context.ledger_api_dialogues.create.return_value = ("ledger", MagicMock())
+    b.context.requests.request_id_to_callback = {}
+    b._broadcast(SimpleNamespace(signed_transaction="signed"), "0x1234")
+    for body in (b'{"error": {"message": "already known"}}', b"not json"):
+        b.context.requests.request_id_to_callback["n2"](SimpleNamespace(body=body), b)
+    assert b.context.shared_state["lightning_lane_inflight"]["tx"] == "0xtx"
+    assert "reconcile" not in b.context.shared_state["lightning_lane_inflight"]
+
+
 def test_nonce_too_low_keeps_inflight_without_counting(tmp_path: Any) -> None:
     """Keep exclusion until the originating transaction can be reconciled."""
     b = lane(tmp_path)

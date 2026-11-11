@@ -73,6 +73,16 @@ from packages.valory.skills.market_manager_abci.bets import (
 )
 
 
+def rpc_urls(raw: str) -> list:
+    """Split the lane endpoint setting into distinct URLs, first one kept first.
+
+    :param raw: one URL or a comma list of URLs; blank when unset.
+    :return: the listed URLs, or one empty string when none is set.
+    """
+    urls = list(dict.fromkeys(u.strip() for u in (raw or "").split(",") if u.strip()))
+    return urls or [""]
+
+
 class LaneRPCError(Exception):
     """A raw RPC request failed without exposing endpoint credentials."""
 
@@ -360,17 +370,18 @@ class LightningLaneBehaviour(FreshMarketPoller):
             "MechOnlySelectionRound",
         }
 
-    def _request(self, method: str, params: Any) -> Any:
+    def _request(self, method: str, params: Any, url: str = "") -> Any:
         """Build one raw JSON-RPC POST through the existing HTTP connection.
 
         :param method: JSON-RPC method.
         :param params: positional method arguments.
+        :param url: endpoint; the first listed one when empty.
         :return: HTTP message and dialogue.
         """
         self._rpc_id += 1
         return self._build_http_request_message(
             method="POST",
-            url=self.params.lightning.lightning_rpc_url,
+            url=url or rpc_urls(self.params.lightning.lightning_rpc_url)[0],
             headers={"Content-Type": "application/json"},
             content=json.dumps(
                 {
@@ -449,7 +460,7 @@ class LightningLaneBehaviour(FreshMarketPoller):
         self.context.logger.info(
             "[LIGHTNING_LANE] startup=%s rpc_host=%s exempt_max_trades=%s",
             "ready" if self._safe_ok else "unsupported_safe",
-            urlparse(self.params.lightning.lightning_rpc_url).hostname,
+            urlparse(rpc_urls(self.params.lightning.lightning_rpc_url)[0]).hostname,
             str(self.params.lightning.lightning_lane_exempt_max_trades).lower(),
         )
         return self._safe_ok
@@ -535,7 +546,10 @@ class LightningLaneBehaviour(FreshMarketPoller):
         self._balance_at = time.time()
 
     def _broadcast(self, signed: Any, raw: str) -> None:
-        """Send through both connections before waiting for either result.
+        """Send through every connection before waiting for any result.
+
+        Extra listed endpoints get the same signed bytes; their replies are
+        ignored, as the first endpoint and the ledger connection decide the shot.
 
         :param signed: decision-maker signed transaction response.
         :param raw: signed EIP-1559 transaction bytes as hex.
@@ -548,6 +562,11 @@ class LightningLaneBehaviour(FreshMarketPoller):
         callbacks[nonce] = lambda response, _behaviour: self._receive_send(response, tx)
         self.context.outbox.put_message(message=message)
         self._stats.called(time.time())
+        for url in rpc_urls(self.params.lightning.lightning_rpc_url)[1:]:
+            message, dialogue = self._request("eth_sendRawTransaction", [raw], url)
+            nonce = self._get_request_nonce_from_dialogue(dialogue)
+            callbacks[nonce] = lambda response, _behaviour: None
+            self.context.outbox.put_message(message=message)
         message, dialogue = self.context.ledger_api_dialogues.create(
             counterparty=LEDGER_API_ADDRESS,
             performative=LedgerApiMessage.Performative.SEND_SIGNED_TRANSACTION,
