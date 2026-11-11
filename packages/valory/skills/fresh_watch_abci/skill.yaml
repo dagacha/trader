@@ -14,7 +14,7 @@ fingerprint:
   fsm_specification.yaml: bafybeifhpatx5365ubtse2g6kqo6cjeuzoruf75dv5r5xg27n4wtyrtrbm
   handlers.py: bafybeieovyvn2wmq6cni7raclh7kl2rz7mzt6xosohavousngdz4hy45ha
   lane.py: bafybeifzqncdgcj6hrz5m26vashmscujaibyhxkphoazs5pcsi2zkrfecu
-  lane_behaviour.py: bafybeid7d4cfevirbwfn33k3rs6jelpvsbegrdvkx5jvh4jwxq4la3wvqy
+  lane_behaviour.py: bafybeiemd47aeouoqna55eoqe5url5pcfvit4vzszwgkbdvs3mpio55qye
   lightning.py: bafybeiadnp5avslmsqbmjpvjgwvncxfwactxtspjqvplyolq3ycghqlir4
   mempool.py: bafybeihxi7vs5xudtd6tdkxpm6jrlninvgjbv4dynr6rffirzefjquqvlq
   mempool_ws.py: bafybeigoxte3evulaikdbhj7ljmbpt7oqbgarku4gbhw7hfc5isdhczzmq
@@ -38,7 +38,7 @@ fingerprint:
   tests/test_event_reader.py: bafybeib6wxe56sudyw4tz3gi5zvv2r3ofqjycwviscadkz2dawk3zieptq
   tests/test_foreground_lane_races.py: bafybeihis2avomce6ydsvwtdbca3mnwlvyhoex6lf56qm63jszmzunx4py
   tests/test_lane.py: bafybeigxfm4yywpz4nupb7mlszch6ilfdglelfpbolrdaf5h6q5zr2sljm
-  tests/test_lane_behaviour.py: bafybeigk25cg3ijion3jpcipzh6b75z57swll64o3dua3wmwlrdlxomn5y
+  tests/test_lane_behaviour.py: bafybeibcld3y42td346orgdx4imqqfhwx76bfba6pois3r7bjlbkmdz2su
   tests/test_lane_bets_read.py: bafybeicf3igfhgcyeejmcy7pljlvt2avao2cdyjenlbuhjjao6yb4gu4ey
   tests/test_lane_exemption.py: bafybeibwskk7urmetycmtbo2d3kfufwydrrhisot3fqmr4xnes2a64rr5i
   tests/test_lane_journal_recovery.py: bafybeif7vk23ocyvnet6lc6sjqi53gmbu5ksqquilpmqrm7ngjekc2ttfu
@@ -79,13 +79,13 @@ protocols:
 - valory/ledger_api:1.0.0:bafybeiecq56phjfws36rgrefw6niyo4ezesloodsfis647mpm5ygqo4ysi
 skills:
 - valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m
-- valory/staking_abci:0.1.0:bafybeig4okradpfhtdyawxltl3roq4heqlsyu232i5gyhavszoqa6frpym
-- valory/check_stop_trading_abci:0.1.0:bafybeidwmrttdpjef55ukfdikazo3k5422puktsephe2djjoqtkz4ucdm4
+- valory/staking_abci:0.1.0:bafybeibw5djdxnyx7vyyd3huwlt5ulbtoy4dbabbzfywkdfpb6hhxswq74
+- valory/check_stop_trading_abci:0.1.0:bafybeigf7rrwvakvdqjkqrgpzz33yykdezwt5nqy6i5kuwyj53cxeo2lme
 - valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na
 - valory/abstract_round_abci:0.1.0:bafybeibbdo4bohw7bzky6pws5ql466lcw73yx4jd3vohqjt3mnvq4e2bh4
 - valory/market_manager_abci:0.1.0:bafybeidsapj2dqxjcndhhtn5my7gjoq66oyhmty4zl6mg4trkjkewnss3e
-- valory/decision_maker_abci:0.1.0:bafybeifybxivsrppz4vkujqjzjqiiwfbnm7agqikhuwz3enrshdvrxbtzy
-- valory/trader_abci:0.1.0:bafybeiegkp2ben6bxmnkq6rirb7wfxqjrohbz273jkrwkhjm5th3ikrzcy
+- valory/decision_maker_abci:0.1.0:bafybeih2pvop3rcdaqozgvcajncunvymit4hvi7azpl5a45dvmyyqjrmvi
+- valory/trader_abci:0.1.0:bafybeicejlmzvm2tiijlciopf2t7jnhbaoprywuqautmm62ohsawmckcke
 behaviours:
   main:
     args: {}

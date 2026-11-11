@@ -70,12 +70,12 @@ skills:
 - valory/reset_pause_abci:0.1.0:bafybeibhpzbwspwbe6xiltrvmdhgks5cn6ybxl4rgs7tvgljurfs742i6u
 - valory/termination_abci:0.1.0:bafybeig5lk6agmjpctxh4smrqvtbylynda7a5kwgtdlss2sjnnabedzuem
 - valory/transaction_settlement_abci:0.1.0:bafybeidmmhjcgp7chozxovensq3zplkufvaityd2w3zladtssu4ijvqbzm
-- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeibloowytygfctwzbklqdvitgzbyh7atki4byhoen47ek47smlunbq
+- valory/tx_settlement_multiplexer_abci:0.1.0:bafybeicxsjrgk2i5dbbj7vuuela3fxnuajcqsurhmujpm3ph2ftdg2g5vi
 - valory/market_manager_abci:0.1.0:bafybeidsapj2dqxjcndhhtn5my7gjoq66oyhmty4zl6mg4trkjkewnss3e
-- valory/decision_maker_abci:0.1.0:bafybeifybxivsrppz4vkujqjzjqiiwfbnm7agqikhuwz3enrshdvrxbtzy
-- valory/trader_abci:0.1.0:bafybeiegkp2ben6bxmnkq6rirb7wfxqjrohbz273jkrwkhjm5th3ikrzcy
-- valory/staking_abci:0.1.0:bafybeig4okradpfhtdyawxltl3roq4heqlsyu232i5gyhavszoqa6frpym
-- valory/check_stop_trading_abci:0.1.0:bafybeidwmrttdpjef55ukfdikazo3k5422puktsephe2djjoqtkz4ucdm4
+- valory/decision_maker_abci:0.1.0:bafybeih2pvop3rcdaqozgvcajncunvymit4hvi7azpl5a45dvmyyqjrmvi
+- valory/trader_abci:0.1.0:bafybeicejlmzvm2tiijlciopf2t7jnhbaoprywuqautmm62ohsawmckcke
+- valory/staking_abci:0.1.0:bafybeibw5djdxnyx7vyyd3huwlt5ulbtoy4dbabbzfywkdfpb6hhxswq74
+- valory/check_stop_trading_abci:0.1.0:bafybeigf7rrwvakvdqjkqrgpzz33yykdezwt5nqy6i5kuwyj53cxeo2lme
 - valory/mech_interact_abci:0.1.0:bafybeieqkbnqmfj3flccjljx3a6c6mfufhebq46l257aozr7d5req2cx5m
 - valory/chatui_abci:0.1.0:bafybeihj5y6cecuw4iz2gshicoygghrgi5b6rzynnofx25ycsv56ehgdvq
 - valory/agent_performance_summary_abci:0.1.0:bafybeihdqb6cqs5yq2thvhsxujvsdwecyps5snd7ezxc3fxdlia5snl7na

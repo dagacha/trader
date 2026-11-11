@@ -71,7 +71,7 @@ Queue removal prevents a second FSM bet.
 | Environment name | Default | Purpose |
 | --- | --- | --- |
 | `LIGHTNING_LANE` | `false` | Enable the optional lane. |
-| `LIGHTNING_RPC_URL` | empty | Private raw JSON-RPC endpoint; secret. |
+| `LIGHTNING_RPC_URL` | empty | Private raw JSON-RPC endpoint; secret. A comma list is allowed: reads use the first URL, and each shot is sent to all of them. |
 | `LIGHTNING_MEMPOOL` | `false` | Enable pending creation detection. Requires the lane. |
 | `LIGHTNING_WSS_URL` | empty | Private full-transaction websocket endpoint; secret. Set it in `configs/config_predict_trader.json`, not only in the environment. |
 | `LIGHTNING_MEMPOOL_DELAY_MS` | `150` | Send delay from first sight, in milliseconds. |

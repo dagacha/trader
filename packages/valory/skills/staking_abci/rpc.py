@@ -29,6 +29,16 @@ from packages.valory.skills.abstract_round_abci.behaviour_utils import TimeoutEx
 from packages.valory.skills.abstract_round_abci.models import Requests
 
 
+def rpc_urls(raw: str) -> List[str]:
+    """Split the lane endpoint setting into distinct URLs, first one kept first.
+
+    :param raw: one URL or a comma list of URLs; blank when unset.
+    :return: the listed URLs, or one empty string when none is set.
+    """
+    urls = list(dict.fromkeys(u.strip() for u in (raw or "").split(",") if u.strip()))
+    return urls or [""]
+
+
 def request_with_timeout(
     behaviour: Any,
     message: Message,

@@ -252,6 +252,35 @@ def test_guard_timeout_checks_consumed_nonce_and_receipt_before_clear(
     assert not guard.context.logger.warning.called
 
 
+def test_guard_reads_only_the_first_listed_rpc_when_recovering(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep a secondary provider key out of recovery reads and still release."""
+    guard = make_guard()
+    guard.params.lightning.lightning_rpc_url = (
+        "https://a.invalid/k1, https://b.invalid/k2"
+    )
+    calls = []
+
+    def build(**kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return "message", "dialogue"
+
+    def request(*args: Any, **kwargs: Any) -> Any:
+        yield
+        body = b'{"result":"0x9"}' if len(calls) == 1 else b'{"result":null}'
+        return SimpleNamespace(status_code=200, body=body)
+
+    guard._build_http_request_message = build
+    monkeypatch.setattr(
+        "packages.valory.skills.staking_abci.lane_guard.request_with_timeout", request
+    )
+    with patch("time.time", return_value=161):
+        assert list(LaneGuardMixin.wait_for_lightning_lane(guard)) == [None, None]
+    assert "lightning_lane_inflight" not in guard.context.shared_state
+    assert [c["url"] for c in calls] == ["https://a.invalid/k1"] * 2
+
+
 def test_guard_pending_nonce_keeps_safe_blocked_and_logs_once_per_minute(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
